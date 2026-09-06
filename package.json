@@ -1,0 +1,27 @@
+{
+  "name": "study-wiki",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "lint:docs": "node scripts/run-gates.mjs --mode doc-quick",
+    "verify:docs": "node scripts/run-gates.mjs --mode doc-sync",
+    "verify:release": "node scripts/run-gates.mjs --mode release",
+    "verify:env-independence": "node scripts/verify-env-independence.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/markdown-it": "^14.1.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0"
+  }
+}

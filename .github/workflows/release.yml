@@ -1,0 +1,80 @@
+name: Release
+
+# 发布门禁：流程与人工清单的 home 是 docs/release-checklist.md。
+# 门禁（机械部分 1–5）任一失败即中止，不产出 release。
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - label: macOS (universal)
+            os: macos-latest
+            args: --target universal-apple-darwin
+          - label: Windows (x64, NSIS)
+            os: windows-latest
+            args: ""
+          - label: Linux (x64, AppImage)
+            os: ubuntu-latest
+            args: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - name: 发布门禁（版本一致 + 环境无关，产物前置检查）
+        run: node scripts/run-gates.mjs --mode release --tag ${{ github.ref_name }}
+      - name: 构建
+        run: pnpm tauri build ${{ matrix.args }}
+      - name: 发布门禁（环境无关 · 产物扫描）
+        run: node scripts/verify-env-independence.mjs
+      - name: 产物非空校验
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(find src-tauri/target -name "*.dmg" -o -name "*.exe" -o -name "*.AppImage" | wc -l)
+          if [ "$count" -eq 0 ]; then echo "未找到任何安装产物"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studywiki-${{ matrix.label }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/**/*.dmg
+            src-tauri/target/**/*.exe
+            src-tauri/target/**/*.AppImage
+
+  draft:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 汇总产物为 draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+        # 产物由各平台 job 的 artifact 提供；draft 评审走 release-checklist 6–8（人工）。
