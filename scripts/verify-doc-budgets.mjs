@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Gate: 常驻文档词数预算（manifest 是唯一权威）。计数规则：CJK 字符按字计，
-// 其余按空白分词——中英混排下两侧权重一致。
+// 其余按空白分词——中英混排下两侧权重一致；生成区是机器写的，不计数。
 // 处置顺序：搬层 → 压缩 → 提预算（PR 里说明理由）。预算是护栏不是瘦身目标。
 
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { partitionGeneratedRegions } from "./translation-pairing-lib.mjs";
 
 const MANIFEST = "scripts/doc-budgets.manifest.json";
 
@@ -14,6 +15,11 @@ export function countWords(text) {
   const stripped = text.replace(/[㐀-鿿豈-﫿぀-ヿ]/g, " ");
   const words = stripped.split(/\s+/).filter(Boolean).length;
   return cjk + words;
+}
+
+/** 只数人写的部分：生成区整体剔除。 */
+function authoredWords(text) {
+  return countWords(partitionGeneratedRegions(text).stripped);
 }
 
 export default async function verifyDocBudgets() {
@@ -29,7 +35,7 @@ export default async function verifyDocBudgets() {
       continue;
     }
     const text = await readFile(full, "utf8");
-    const count = countWords(text);
+    const count = authoredWords(text);
     if (count > ceiling)
       errors.push(`${file}: ${count} 词超预算 ${ceiling}（先搬层/压缩，提预算须 PR 说明）`);
   }

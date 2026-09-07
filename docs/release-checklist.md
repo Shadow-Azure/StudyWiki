@@ -1,5 +1,7 @@
 # 发布门禁清单
 
+[English](release-checklist.en.md) | 中文
+
 > 类型：参考 | 层级：发布流程。release.yml 机械执行 1–5；6–8 目前人工，逐步机械化。
 
 ## 机械门禁（CI 自动）

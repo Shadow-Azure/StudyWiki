@@ -25,7 +25,11 @@ export default async function verifyMdLinks() {
   for (const root of ROOTS) {
     for (const file of await collectMarkdown(root)) {
       const text = await readFile(file, "utf8");
-      for (const [, target] of text.matchAll(linkRe)) {
+      // 只查正文：围栏代码与行内代码里的"链接"是示例/代码，不是链接。
+      const prose = text
+        .replace(/```[\s\S]*?(?:```|$)/g, " ")
+        .replace(/`[^`\n]*`/g, " ");
+      for (const [, target] of prose.matchAll(linkRe)) {
         if (/^[a-z]+:\/\//i.test(target)) continue;
         const resolved = path.resolve(path.dirname(file), decodeURIComponent(target));
         if (!existsSync(resolved))

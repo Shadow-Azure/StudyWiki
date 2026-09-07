@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/notes/implemented/process/2026-09-06-docs-as-code-gates.md
+2026-09-06-docs-as-code-gates.md: 1afdb57d48c7a1a0ac3d560ea19b367ce6f21319
+2026-09-06-docs-as-code-gates.en.md: 0d5f4d8cdddcc8dbf7ac15035760f506eb3f855c

@@ -1,5 +1,7 @@
 # 事故复盘（postmortem）
 
+[English](README.en.md) | 中文
+
 事故记录的唯一层级：只有这里允许叙事。一篇一个编号文件 `NNNN-主题.md`，结构固定：
 
 1. **Executive summary** —— 一段话说清影响与结论

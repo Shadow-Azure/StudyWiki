@@ -46,7 +46,10 @@ function checkLinks(filePath, lines) {
 export default async function verifyAgentNotes() {
   const errors = [];
   const files = (await collectMarkdown(NOTES_ROOT)).filter(
-    (f) => !f.endsWith(path.join("notes", "README.md")) && !f.endsWith("AGENTS.md"),
+    (f) =>
+      !f.endsWith(".en.md") && // 英文侧结构随 base，由配对门禁管辖
+      !f.endsWith(path.join("notes", "README.md")) &&
+      !f.endsWith("AGENTS.md"),
   );
 
   for (const file of files) {

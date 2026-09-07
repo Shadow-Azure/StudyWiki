@@ -2,6 +2,8 @@
 
 Status: proposed
 
+[English](2026-09-06-dynamic-asset-scope.en.md) | 中文
+
 ## Problem
 
 `tauri.conf.json` 当前 `assetProtocol.scope: ["**"]`，允许 webview 通过 asset 协议读任意本地文件。用户只授权了一个资料库文件夹，应用却持有全盘读权限——权限面与用户意图不匹配。

@@ -1,0 +1,9 @@
+# 仓库规范文本形态是 LF，checkout 也强制 LF：工作树与仓库之间没有 smudge
+# 边界，字节级门禁（blob hash、配对记录、结构签名）在任意主机上看到同一形态。
+# Windows 工作树若确需 CRLF 的文件类，在下方加 `*.bat text eol=crlf` 覆盖：
+# 仓内形态仍 LF，CRLF 只发生在 checkout 时。
+* text=auto eol=lf
+
+# 配对记录由确认过的三件套生成；merge driver 由 scripts/install-merge-driver.mjs
+# 注册（fail-closed：未注册时退回默认文本合并，hash 行照常冲突）。
+*.i18n.yaml merge=studywiki-i18n
