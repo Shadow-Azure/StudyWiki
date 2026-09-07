@@ -1,0 +1,8 @@
+{
+  "//": "双语配对豁免清单（唯一字段 excluded）：只有显式豁免，没有逐文件滚动名单。AGENTS.md 系列（agent 指令层）与蓝本一致保持单语；archived/ 冻结件由归档门禁管辖。",
+  "excluded": [
+    "docs/AGENTS.md",
+    ".agents/notes/AGENTS.md",
+    ".agents/notes/archived/"
+  ]
+}

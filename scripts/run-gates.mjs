@@ -8,6 +8,9 @@ import verifyDocIndex from "./verify-doc-index.mjs";
 import verifyDocBudgets from "./verify-doc-budgets.mjs";
 import verifyMdLinks from "./verify-md-links.mjs";
 import verifyEnvIndependence from "./verify-env-independence.mjs";
+import verifyTranslationPairing from "./verify-translation-pairing.mjs";
+import verifyTypeEquiv from "./verify-type-equiv.mjs";
+import docTypecheck from "./doc-typecheck.mjs";
 
 const args = process.argv.slice(2);
 const modeIdx = args.indexOf("--mode");
@@ -20,6 +23,20 @@ const LEAVES = {
   "verify-doc-budgets": verifyDocBudgets,
   "verify-md-links": verifyMdLinks,
   "verify-env-independence": verifyEnvIndependence,
+  "verify-translation-pairing": () => verifyTranslationPairing([]),
+  "verify-type-equiv": verifyTypeEquiv,
+  "doc-typecheck": docTypecheck,
+  "verify-commands-catalog": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["scripts/gen-commands-catalog.mjs", "--check"], {
+        stdio: "inherit",
+      });
+      return { ok: true, errors: [] };
+    } catch {
+      return { ok: false, errors: ["scripts/gen-commands-catalog.mjs --check 退出非零（跑 pnpm gen:commands 重生成）"] };
+    }
+  },
   "verify-release": async () => {
     const { execFileSync } = await import("node:child_process");
     try {
@@ -34,13 +51,23 @@ const LEAVES = {
 };
 
 const MODES = {
-  // 快速档：无构建、秒级，提交前随手跑。
-  "doc-quick": ["verify-agent-notes", "verify-doc-index", "verify-doc-budgets"],
-  // 全量文档档：死链 + 环境无关源检查。
+  // 快速档：无构建、秒级，提交前随手跑。配对/类型等价两叶读盘即可判。
+  "doc-quick": [
+    "verify-agent-notes",
+    "verify-doc-index",
+    "verify-doc-budgets",
+    "verify-translation-pairing",
+    "verify-type-equiv",
+  ],
+  // 全量文档档：死链 + 环境无关源检查 + ts 围栏真实编译 + 生成区新鲜度。
   "doc-sync": [
     "verify-agent-notes",
     "verify-doc-index",
     "verify-doc-budgets",
+    "verify-translation-pairing",
+    "verify-type-equiv",
+    "doc-typecheck",
+    "verify-commands-catalog",
     "verify-md-links",
     "verify-env-independence",
   ],
@@ -49,6 +76,10 @@ const MODES = {
     "verify-agent-notes",
     "verify-doc-index",
     "verify-doc-budgets",
+    "verify-translation-pairing",
+    "verify-type-equiv",
+    "doc-typecheck",
+    "verify-commands-catalog",
     "verify-md-links",
     "verify-env-independence",
     "verify-release",

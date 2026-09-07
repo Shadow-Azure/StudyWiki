@@ -1,0 +1,10 @@
+{
+  "//": "type-equiv 清单：{doc, symbol, source} 三元组与围栏 1:1。doc 是 base 侧路径（英文侧围栏须字节相同）；source 是导出该符号的源码。多贴未登记的围栏、登记无围栏都红。",
+  "entries": [
+    {
+      "doc": "docs/architecture.md",
+      "symbol": "LibraryEntry",
+      "source": "src/types.ts"
+    }
+  ]
+}

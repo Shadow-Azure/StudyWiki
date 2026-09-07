@@ -1,5 +1,7 @@
 # 环境无关性
 
+[English](environment-independence.en.md) | 中文
+
 > 类型：参考 | 层级：约束唯一 home。本文件定义"客户端完全不依赖环境"的可验证含义，AGENTS.md 只放一句摘要并链接到这里。
 
 ## 约束定义

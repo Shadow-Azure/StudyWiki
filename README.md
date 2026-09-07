@@ -1,5 +1,7 @@
 # StudyWiki
 
+[English](README.en.md) | 中文
+
 本地资料库客户端：阅读 Markdown 笔记 + 播放本地视频，**完全离线、产物不依赖运行环境**（约束定义见 [AGENTS.md](AGENTS.md)，机制见 [docs/environment-independence.md](docs/environment-independence.md)）。
 
 ## 开发
@@ -15,6 +17,8 @@ pnpm tauri build    # 构建发布产物（dmg / nsis / appimage）
 ## 文档与门禁
 
 - 文档维护机制：[docs/README.md](docs/README.md)
+- 双语配对契约：[docs/i18n/README.md](docs/i18n/README.md)
+- Tauri 命令目录：[docs/commands.md](docs/commands.md)
 - CI 门禁：[.github/workflows/ci.yml](.github/workflows/ci.yml)
 - 发布门禁：[.github/workflows/release.yml](.github/workflows/release.yml)
 - 设计决策记录：[.agents/notes/](.agents/notes/README.md)

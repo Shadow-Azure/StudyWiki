@@ -38,6 +38,7 @@ export default async function verifyDocIndex() {
     if (f === INDEX) return false; // 索引自身是登记处，不登记
     if (rel.startsWith(`postmortem${path.sep}`) && /^\d{4}-/.test(path.basename(rel)))
       return false; // 事故件按编号浏览，不进索引
+    if (rel.endsWith(".en.md")) return false; // 英文侧随 base 侧登记，由配对门禁管辖
     return true;
   });
 

@@ -12,7 +12,10 @@
     "lint:docs": "node scripts/run-gates.mjs --mode doc-quick",
     "verify:docs": "node scripts/run-gates.mjs --mode doc-sync",
     "verify:release": "node scripts/run-gates.mjs --mode release",
-    "verify:env-independence": "node scripts/verify-env-independence.mjs"
+    "verify:env-independence": "node scripts/verify-env-independence.mjs",
+    "record:i18n": "node scripts/verify-translation-pairing.mjs --write",
+    "gen:commands": "node scripts/gen-commands-catalog.mjs",
+    "verify:commands": "node scripts/gen-commands-catalog.mjs --check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

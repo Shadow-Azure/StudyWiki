@@ -1,5 +1,7 @@
 # 架构
 
+[English](architecture.en.md) | 中文
+
 > 类型：参考 | 层级：架构地图。改 `src/` 或 `src-tauri/` 前必读。决策理由不在这里——见对应 Agent Note。
 
 ## 组成
@@ -14,6 +16,22 @@ src-tauri/      Rust 壳
   lib.rs          tauri::Builder + 两条命令
   main.rs         入口壳（Windows 隐藏控制台）
 ```
+
+`types.ts` 与 Rust 侧 `LibraryEntry` 是前后端共享的唯一形状。文档侧贴的声明用 type-equiv 围栏与源码公证（`scripts/verify-type-equiv.mjs`，逐字等价，改源码不同步文档即红）：
+
+```ts type-equiv
+/** A playable or readable file inside the opened library. */
+export type LibraryEntry = {
+  /** File name including extension. */
+  name: string;
+  /** Absolute path, used for reads and asset-protocol URLs. */
+  path: string;
+  /** Dispatches the viewer: markdown or video. */
+  kind: "markdown" | "video";
+};
+```
+
+命令面的权威清单（含签名）在 [commands.md](commands.md) 的生成区，源码改后跑 `pnpm gen:commands` 同步。
 
 数据流：用户选文件夹（dialog 插件）→ `list_library` 命令扫描并按扩展名分类 → 前端渲染侧栏 → 点开文件 → Markdown 走 `read_text_file` + markdown-it 前端渲染；视频走 `convertFileSrc`（asset protocol）交给系统 webview 的 `<video>` 解码。
 

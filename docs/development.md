@@ -1,5 +1,7 @@
 # 开发指南
 
+[English](development.en.md) | 中文
+
 > 类型：教程 | 层级：贡献者上手。CI 与门禁的权威清单在 `package.json` scripts 与 [scripts/run-gates.mjs](../scripts/run-gates.mjs)，本页只讲怎么用。
 
 ## 环境
@@ -22,6 +24,19 @@ pnpm tauri dev     # 开发：改 src/ 或 src-tauri/ 均热更/重编
 | 前端代码 | `pnpm build`（含 tsc） |
 | Rust 代码 | `cargo fmt --check && cargo clippy && cargo test`（在 `src-tauri/`） |
 | 涉及产物行为的任何代码 | `pnpm verify:docs` + 上述代码检查 |
+
+改配对文档任一侧：同一 PR 内最小修补另一侧并 `pnpm record:i18n -- <pair>` 重录（契约见 [i18n/README.md](i18n/README.md)）；改 `src-tauri/src/lib.rs` 命令后跑 `pnpm gen:commands`。
+
+普通 ```ts 围栏会被 doc-typecheck 真实编译（import 以仓库根为基准），围栏逐字复制到英文侧：
+
+```ts
+import { invoke } from "@tauri-apps/api/core";
+import type { LibraryEntry } from "./src/types";
+
+// 侧栏数据源：已按扩展名分类、按名称排序的条目
+const root = "/path/to/library";
+const entries: LibraryEntry[] = await invoke("list_library", { root });
+```
 
 ## 提交与发布
 

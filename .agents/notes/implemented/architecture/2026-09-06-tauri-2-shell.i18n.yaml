@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.md
+2026-09-06-tauri-2-shell.md: 410c31b9d51e579b328f8b512cdc4003dfec3e7f
+2026-09-06-tauri-2-shell.en.md: ff145efac0d2750bd7e7664355c1f4c4fd1adf11

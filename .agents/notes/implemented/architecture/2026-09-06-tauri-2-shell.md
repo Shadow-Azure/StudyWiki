@@ -2,6 +2,8 @@
 
 Status: implemented
 
+[English](2026-09-06-tauri-2-shell.en.md) | 中文
+
 ## Problem
 
 StudyWiki 需要一个跨 macOS/Windows/Linux 的桌面客户端，同时满足硬约束：产物完全不依赖用户环境（不预装运行时、完全离线）。壳层选型决定体积、依赖面与发布流水线形态。
