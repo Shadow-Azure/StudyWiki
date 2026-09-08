@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Gate: docs 与 Agent Notes 内的相对 markdown 链接可达（死链检查）。
-// 外链（http/https）不在范围——那是发布投影的职责。
+// 外链（http/https）不在范围：本库无站点投影，外链不做机械检查（引入投影时收编）。
+// archived/ 冻结快照不查——其中的链接是历史事实，改它须解封。
 
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -24,6 +25,7 @@ export default async function verifyMdLinks() {
 
   for (const root of ROOTS) {
     for (const file of await collectMarkdown(root)) {
+      if (file.startsWith(path.resolve(".agents/notes/archived") + path.sep)) continue;
       const text = await readFile(file, "utf8");
       // 只查正文：围栏代码与行内代码里的"链接"是示例/代码，不是链接。
       const prose = text

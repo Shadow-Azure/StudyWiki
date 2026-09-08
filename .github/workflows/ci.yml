@@ -24,6 +24,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: 门禁自测试（vitest）
+        run: pnpm test
       - name: TypeScript + Vite 构建
         run: pnpm build
       - name: 文档门禁（doc-sync，含产物扫描）

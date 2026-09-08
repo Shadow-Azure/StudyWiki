@@ -34,7 +34,7 @@ The `architecture`/`process` boundary: the former is about the source we ship; t
 
 **Every non-trivial change must add or update at least one Agent Note in the same PR.** Non-trivial = changing behavior, architecture, cross-file contracts, process/tooling, test strategy, or any decision a maintainer might revisit. Updating the owning note counts; do not create duplicates. Purely mechanical local edits are exempt.
 
-Archiving: an implemented note with low future value may be frozen into `archived/{class}/` (not enabled at this repo's current scale; enabling requires a sha256 + append-only manifest gate, per the blueprint's mechanism).
+Archiving: an implemented note with low future value may be frozen into `archived/{class}/`. **The semantic call belongs to humans** — judge every note on its own; word count and age are discovery aids, never archive criteria; do not archive toward a quota. The mechanical part is `pnpm archive:note -- <base.md>`: the triplet moves whole, `Status` becomes `archived`, and every file's sha256 lands in the append-only `.agents/notes/archived/manifest.json` (add-only, never modify or remove; deleting or unfreezing requires explicit justification in the PR). Frozen records leave the living-corpus checks — pairing, fence compilation, links — and any one-byte change goes red.
 
 ## File format
 
@@ -56,4 +56,4 @@ Body skeleton: `## Problem` (the motivation, standing on its own without the sol
 
 ## Gates
 
-`pnpm lint:docs` runs [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs): legal paths (lifecycle × class closed sets), first-three-lines format, `Status` matching its folder, reachable cross-reference links.
+`pnpm lint:docs` runs [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs): legal paths (lifecycle × class closed sets), first-three-lines format, `Status` matching its folder, reachable cross-reference links; frozen records are checked separately by [scripts/verify-archived-agent-notes.mjs](../../scripts/verify-archived-agent-notes.mjs) (sha256 + append-only, also in lint:docs).

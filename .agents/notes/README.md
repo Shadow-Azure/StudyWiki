@@ -34,7 +34,7 @@ Note 之间的互引用用相对 markdown 链接，不用裸描述或编号—�
 
 **每个非平凡变更必须在同一 PR 内新增或更新至少一条 Agent Note。** 非平凡 = 改动行为、架构、跨文件契约、流程/工具、测试策略，或维护者可能 revisit 的任何决策。更新已有 owning Note 即满足，不建重复。纯机械的局部编辑豁免。
 
-归档：低未来价值的 implemented note 可冻结移入 `archived/{class}/`（本库体量暂未启用 `archived/`；启用时须配 sha256 + append-only manifest 门禁，见蓝本机制）。
+归档：低未来价值的 implemented note 可冻结移入 `archived/{class}/`。**语义判断归人**——逐条判断，字数与年龄只是发现辅助，不是归档标准；不向配额归档。机械部分走 `pnpm archive:note -- <base.md>`：三件套整体移动、`Status` 改 `archived`、每文件 sha256 记入 append-only 的 `.agents/notes/archived/manifest.json`（只增不改不删；删除或解封须在 PR 显式说明理由）。冻结件不再参与配对、围栏编译、链接等活语料检查——改一个字节即红。
 
 ## 文件格式
 
@@ -56,4 +56,4 @@ Status: <status>
 
 ## 门禁
 
-`pnpm lint:docs` 运行 [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs)：路径合法（lifecycle × class 封闭集合）、前三行格式、`Status` 与文件夹一致、互引链接可达。
+`pnpm lint:docs` 运行 [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs)：路径合法（lifecycle × class 封闭集合）、前三行格式、`Status` 与文件夹一致、互引链接可达；归档件另由 [scripts/verify-archived-agent-notes.mjs](../../scripts/verify-archived-agent-notes.mjs) 冻结校验（sha256 + append-only，同在 lint:docs）。

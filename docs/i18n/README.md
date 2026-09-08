@@ -27,4 +27,4 @@
 
 ## 范围与豁免
 
-语料 = 根 `README.md`、`docs/**`、`.agents/notes/**`（`archived/` 除外——冻结件由归档门禁管辖）。豁免唯一登记处是 [scripts/translation-pairing.manifest.json](../../scripts/translation-pairing.manifest.json)（只有 excluded 字段）：目前为两处 AGENTS.md（agent 指令层，与蓝本一致单语）。新增豁免须改 manifest 并在 PR 说明理由。
+语料 = 根 `README.md`、`docs/**`、`.agents/notes/**`（`archived/` 除外——冻结件由归档门禁管辖，sha256 冻结强于配对）。豁免唯一登记处是 [scripts/translation-pairing.manifest.json](../../scripts/translation-pairing.manifest.json)（只有 excluded 字段）：目前为两处 AGENTS.md（agent 指令层，与蓝本一致单语）。新增豁免须改 manifest 并在 PR 说明理由。

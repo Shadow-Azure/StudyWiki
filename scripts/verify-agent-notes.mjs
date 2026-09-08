@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // Gate: Agent Note 体系完整性（路径状态机 + 前三行格式 + 互引链接）。
 // 规则 home：.agents/notes/README.md。加 class/lifecycle 须同步改本文件的封闭集合。
+// archived/ 树不在此列——冻结件由 verify-archived-agent-notes 管辖（sha256 + append-only）。
 
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
 const NOTES_ROOT = path.resolve(".agents/notes");
-// 与 README.md「分类（封闭集合）」互为镜像，改一处必改另一处。
-const LIFECYCLES = new Set(["proposed", "implemented", "rejected", "archived"]);
-const CLASSES = new Set([
+// 与 README.md「分类（封闭集合）」互为镜像，改一处必改另一处（spec 互检）。
+export const LIFECYCLES = new Set(["proposed", "implemented", "rejected", "archived"]);
+export const CLASSES = new Set([
   "feature",
   "bug-fix",
   "simplification",
@@ -48,6 +49,7 @@ export default async function verifyAgentNotes() {
   const files = (await collectMarkdown(NOTES_ROOT)).filter(
     (f) =>
       !f.endsWith(".en.md") && // 英文侧结构随 base，由配对门禁管辖
+      !f.startsWith(path.join(NOTES_ROOT, "archived") + path.sep) && // 冻结件归 verify-archived-agent-notes
       !f.endsWith(path.join("notes", "README.md")) &&
       !f.endsWith("AGENTS.md"),
   );
@@ -64,9 +66,7 @@ export default async function verifyAgentNotes() {
     const [lifecycle, cls, name] = segments;
     if (!LIFECYCLES.has(lifecycle))
       errors.push(`${rel}: 非法 lifecycle "${lifecycle}"（合法：${[...LIFECYCLES].join("/")}）`);
-    if (lifecycle === "archived" && cls === "implemented") {
-      // archived 树省略 implemented 层（只有 implemented 才能进 archived）
-    } else if (!CLASSES.has(cls)) {
+    if (!CLASSES.has(cls)) {
       errors.push(`${rel}: 非法 class "${cls}"（合法：${[...CLASSES].join("/")}）`);
     }
     if (!/^\d{4}-\d{2}-\d{2}-.+\.md$/.test(name))
