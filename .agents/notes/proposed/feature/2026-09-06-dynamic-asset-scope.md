@@ -8,7 +8,7 @@ Status: proposed
 
 `tauri.conf.json` 当前 `assetProtocol.scope: ["**"]`，允许 webview 通过 asset 协议读任意本地文件。用户只授权了一个资料库文件夹，应用却持有全盘读权限——权限面与用户意图不匹配。
 
-## Decision（提案）
+## Decision
 
 dialog 返回所选目录后，通过运行时 capability（Tauri 2 `app.asset_protocol().scope()` 动态授权 API）把 scope 收窄到该目录；静态配置改为空 scope。`list_library`/`read_text_file` 两条命令同步改为校验路径在已授权 scope 内。
 
