@@ -20,7 +20,7 @@ const NON_SOURCE_SEGMENTS = new Set(["node_modules", "dist"]);
 export function isScopeFile(file) {
   if (file === "README.md" || file === "README.en.md" || file === "README.i18n.yaml")
     return true;
-  if (file.startsWith(".agents/notes/archived/")) return false; // 冻结件由归档门禁管辖
+  if (file.startsWith(".agents/notes/archived/")) return false; // 冻结件由归档门禁 verify-archived-agent-notes 管辖（sha256 冻结强于配对）
   if (!SCOPE_ROOTS.some((root) => file.startsWith(root))) return false;
   return !file.split("/").some((segment) => NON_SOURCE_SEGMENTS.has(segment));
 }
@@ -372,8 +372,9 @@ export function isManifestExcluded(file, manifest) {
  * @param {string[]} argv 脚本名之后的参数。
  */
 export function parsePairingCliArgs(argv) {
-  const flags = argv.filter((a) => a.startsWith("--"));
-  const anchors = [...new Set(argv.filter((a) => !a.startsWith("--")).map(pairAnchorOfArgument))].sort();
+  const args = argv.filter((a) => a !== "--"); // pnpm run 会把 -- 分隔符原样透传
+  const flags = args.filter((a) => a.startsWith("--"));
+  const anchors = [...new Set(args.filter((a) => !a.startsWith("--")).map(pairAnchorOfArgument))].sort();
   const unknown = flags.filter((f) => !["--list", "--write", "--all"].includes(f));
   if (unknown.length) throw new Error(`未知参数：${unknown.join(", ")}`);
   const listMode = flags.includes("--list");

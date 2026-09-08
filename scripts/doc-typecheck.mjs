@@ -70,11 +70,12 @@ function readTsFile(file) {
 }
 
 export default async function docTypecheck() {
+  // archived/ 冻结快照不编译（改它须解封）。
   const files = [
     ...(await collectMarkdown(path.join(ROOT, "docs"))),
     ...(await collectMarkdown(path.join(ROOT, ".agents", "notes"))),
     path.join(ROOT, "README.md"),
-  ];
+  ].filter((f) => !f.startsWith(path.join(ROOT, ".agents", "notes", "archived") + path.sep));
   const relOf = (file) => path.relative(ROOT, file).split(path.sep).join("/");
 
   let blocks = [];

@@ -10,6 +10,8 @@ import verifyMdLinks from "./verify-md-links.mjs";
 import verifyEnvIndependence from "./verify-env-independence.mjs";
 import verifyTranslationPairing from "./verify-translation-pairing.mjs";
 import verifyTypeEquiv from "./verify-type-equiv.mjs";
+import verifyExportDocs from "./verify-export-docs.mjs";
+import verifyArchivedAgentNotes from "./verify-archived-agent-notes.mjs";
 import docTypecheck from "./doc-typecheck.mjs";
 
 const args = process.argv.slice(2);
@@ -19,12 +21,14 @@ const tag = args.includes("--tag") ? args[args.indexOf("--tag") + 1] : undefined
 
 const LEAVES = {
   "verify-agent-notes": verifyAgentNotes,
+  "verify-archived-agent-notes": verifyArchivedAgentNotes,
   "verify-doc-index": verifyDocIndex,
   "verify-doc-budgets": verifyDocBudgets,
   "verify-md-links": verifyMdLinks,
   "verify-env-independence": verifyEnvIndependence,
   "verify-translation-pairing": () => verifyTranslationPairing([]),
   "verify-type-equiv": verifyTypeEquiv,
+  "verify-export-docs": verifyExportDocs,
   "doc-typecheck": docTypecheck,
   "verify-commands-catalog": async () => {
     const { execFileSync } = await import("node:child_process");
@@ -54,18 +58,22 @@ const MODES = {
   // 快速档：无构建、秒级，提交前随手跑。配对/类型等价两叶读盘即可判。
   "doc-quick": [
     "verify-agent-notes",
+    "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-doc-budgets",
     "verify-translation-pairing",
     "verify-type-equiv",
+    "verify-export-docs",
   ],
   // 全量文档档：死链 + 环境无关源检查 + ts 围栏真实编译 + 生成区新鲜度。
   "doc-sync": [
     "verify-agent-notes",
+    "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-doc-budgets",
     "verify-translation-pairing",
     "verify-type-equiv",
+    "verify-export-docs",
     "doc-typecheck",
     "verify-commands-catalog",
     "verify-md-links",
@@ -74,10 +82,12 @@ const MODES = {
   // 发布档：doc-sync + 版本一致性（在 build 之后跑会连同 dist 一起扫描）。
   release: [
     "verify-agent-notes",
+    "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-doc-budgets",
     "verify-translation-pairing",
     "verify-type-equiv",
+    "verify-export-docs",
     "doc-typecheck",
     "verify-commands-catalog",
     "verify-md-links",

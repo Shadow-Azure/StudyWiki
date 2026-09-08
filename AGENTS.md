@@ -17,6 +17,8 @@ pnpm verify:docs         # 全量文档门禁
 pnpm verify:release      # 发布前校验（含环境无关性）
 pnpm record:i18n -- <pair>  # 双语配对重录（契约见 docs/i18n/README.md）
 pnpm gen:commands        # 重建命令目录生成区（改 lib.rs 命令后）
+pnpm test                # 门禁自测试（vitest）
+pnpm install:hooks       # 装 git 钩子（每 clone 一次，内容见 docs/development.md）
 ```
 
 ## 惯例
@@ -25,6 +27,7 @@ pnpm gen:commands        # 重建命令目录生成区（改 lib.rs 命令后）
 - 前端不加 UI 框架；依赖只进 `dependencies` 且必须是构建期可打包的库，禁止任何 CDN/运行时加载。
 - 本地文件访问只走 `src-tauri/src/lib.rs` 的两条命令 + asset protocol，扩展名分派在 Rust 侧完成。
 - 文档现状优先：写"现在是什么"，不写"以前是什么"；变更史进 Agent Note 或 commit。
+- TS 导出与 Tauri 命令必须带文档注释（契约语义，命令目录的原料）；门禁校验。
 - 常驻文档中英成对（三件套）：改任一侧须最小修补另一侧并重录，围栏与生成区逐字复制不翻译；契约见 [docs/i18n/README.md](docs/i18n/README.md)。
 - 提交信息用中文，正文说明动机；门禁脚本改动要同步更新本文件的命令清单。
 

@@ -27,4 +27,4 @@ Both sides must mirror: heading depths and order, code fences (info string and c
 
 ## Scope and exclusions
 
-The corpus = root `README.md`, `docs/**`, `.agents/notes/**` (except `archived/` — frozen records governed by the archival gate). The sole exclusion registry is [scripts/translation-pairing.manifest.json](../../scripts/translation-pairing.manifest.json) (a single excluded field): currently the two AGENTS.md files (the agent-instruction tier, monolingual like the blueprint). New exclusions must edit the manifest with justification in the PR.
+The corpus = root `README.md`, `docs/**`, `.agents/notes/**` (except `archived/` — frozen records governed by the archival gate, whose sha256 freeze is stronger than pairing). The sole exclusion registry is [scripts/translation-pairing.manifest.json](../../scripts/translation-pairing.manifest.json) (a single excluded field): currently the two AGENTS.md files (the agent-instruction tier, monolingual like the blueprint). New exclusions must edit the manifest with justification in the PR.

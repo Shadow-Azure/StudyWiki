@@ -26,6 +26,10 @@ fn kind_for_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
+/// Lists every openable entry (markdown note or playable video) directly
+/// inside the opened library root, sorted case-insensitively by file name.
+/// Files whose extension is neither are skipped silently. Errors carry the
+/// OS failure verbatim (root unopenable, directory entry unreadable).
 #[tauri::command]
 fn list_library(root: String) -> Result<Vec<LibraryEntry>, String> {
     let root_path = Path::new(&root);
@@ -52,6 +56,8 @@ fn list_library(root: String) -> Result<Vec<LibraryEntry>, String> {
     Ok(entries)
 }
 
+/// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
+/// Errors carry the OS failure verbatim.
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
