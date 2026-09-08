@@ -13,6 +13,7 @@ Status: implemented
 - 自测试补齐到全叶覆盖。夹具机制：临时仓库根 + chdir 窗口同时罩住 import 与调用（门禁在 import 时锚定 cwd，`path.relative("")` 又在调用时取 cwd），公用层抽到 `scripts/spec-fixture.mjs`；CLI 型脚本（gen-commands-catalog、archive-agent-note）走子进程端到端。gen-commands-catalog 为可测导出纯函数并加 main guard，run-gates 导出 `LEAVES`/`MODES`——均为纯重构，CLI 行为不变。
 - 新增 `ci-wiring.spec.mjs` 钉死接线：模式完整性（doc-quick ⊆ doc-sync、release = doc-sync + verify-release、关键叶子在列）、ci.yml / release.yml 内嵌步骤、AGENTS.md 命令清单 ↔ package.json 双向一致——门禁类 script（`verify:`/`lint:`/`gen:`/`record:`/`archive:`/`install:`/`test`）必须列进清单，软性要求从此有会红的门禁背书。
 - `pnpm install:hooks` 顺带注册 merge driver：install-merge-driver 重构为导出 `registerMergeDriver()` + main guard，钩子脚本调用之；安装漏斗收拢回一条命令。
+- 补立 postmortem 结构门禁 `verify-postmortem`（首判"推迟到首篇事故件"，用户决定立即立）：NNNN-主题 从 0001 连续不重复、四段标题（Executive summary / Timeline / Root cause / Action items）两侧逐字且顺序固定，`SECTIONS` 与 README 互为镜像（spec 断言）；挂入 doc-quick 与 doc-sync。
 
 ## Alternatives considered
 
@@ -24,4 +25,4 @@ Status: implemented
 
 - `pnpm test` 从 4 个 spec 增至 12 个（70 用例）；"改门禁先动它的 spec"成为可行纪律。
 - AGENTS.md 预算 600→660：命令清单结构性增长（三条门禁命令补列 + merge driver 提示），已先压缩，余量在此说明理由。docs/development.md 两侧补一句 driver 说明并重录。
-- 遗留（显式登记，见 [2026-09-08-close-pipeline-gaps.md](2026-09-08-close-pipeline-gaps.md) 同轮分析）：postmortem 结构门禁推迟到首篇事故件出现时再立；站点投影整步缺席，等产品决策。
+- 遗留：站点投影整步缺席，等产品决策（分析见 [2026-09-08-close-pipeline-gaps.md](2026-09-08-close-pipeline-gaps.md)）。

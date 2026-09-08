@@ -24,6 +24,7 @@ describe("run-gates 模式组合", () => {
       "verify-agent-notes",
       "verify-archived-agent-notes",
       "verify-doc-index",
+      "verify-postmortem",
       "verify-doc-budgets",
       "verify-translation-pairing",
       "verify-type-equiv",

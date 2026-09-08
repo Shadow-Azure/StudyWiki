@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/notes/implemented/process/2026-09-08-meta-guards.md
-2026-09-08-meta-guards.md: 559e5b2d82875052f09e734f66d1b860cc2899f6
-2026-09-08-meta-guards.en.md: 82158ed108eac44e7ac886f16498a3124118906b
+2026-09-08-meta-guards.md: 651613d9c6d4b6e7941815e7b8fc5c18fa2bc283
+2026-09-08-meta-guards.en.md: 053167caacc72e139b8c4dd9fd5ba482842e4ac3

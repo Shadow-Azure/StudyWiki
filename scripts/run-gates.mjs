@@ -5,6 +5,7 @@
 
 import verifyAgentNotes from "./verify-agent-notes.mjs";
 import verifyDocIndex from "./verify-doc-index.mjs";
+import verifyPostmortem from "./verify-postmortem.mjs";
 import verifyDocBudgets from "./verify-doc-budgets.mjs";
 import verifyMdLinks from "./verify-md-links.mjs";
 import verifyEnvIndependence from "./verify-env-independence.mjs";
@@ -21,6 +22,7 @@ export const LEAVES = {
   "verify-agent-notes": verifyAgentNotes,
   "verify-archived-agent-notes": verifyArchivedAgentNotes,
   "verify-doc-index": verifyDocIndex,
+  "verify-postmortem": verifyPostmortem,
   "verify-doc-budgets": verifyDocBudgets,
   "verify-md-links": verifyMdLinks,
   "verify-env-independence": verifyEnvIndependence,
@@ -58,6 +60,7 @@ export const MODES = {
     "verify-agent-notes",
     "verify-archived-agent-notes",
     "verify-doc-index",
+    "verify-postmortem",
     "verify-doc-budgets",
     "verify-translation-pairing",
     "verify-type-equiv",
@@ -68,6 +71,7 @@ export const MODES = {
     "verify-agent-notes",
     "verify-archived-agent-notes",
     "verify-doc-index",
+    "verify-postmortem",
     "verify-doc-budgets",
     "verify-translation-pairing",
     "verify-type-equiv",
@@ -82,6 +86,7 @@ export const MODES = {
     "verify-agent-notes",
     "verify-archived-agent-notes",
     "verify-doc-index",
+    "verify-postmortem",
     "verify-doc-budgets",
     "verify-translation-pairing",
     "verify-type-equiv",
