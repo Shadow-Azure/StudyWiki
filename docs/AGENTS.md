@@ -29,7 +29,7 @@
 ## 门禁
 
 ```sh
-pnpm lint:docs    # doc-quick：索引、Note、预算、配对、type-equiv、导出注释（秒级）
+pnpm lint:docs    # doc-quick：索引、Note、预算、配对、type-equiv、导出注释、postmortem 结构（秒级）
 pnpm verify:docs  # doc-sync：上述 + ts 围栏编译 + 生成区新鲜度 + 死链 + 环境无关
 ```
 

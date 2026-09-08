@@ -27,7 +27,7 @@ pnpm tauri dev     # 开发：改 src/ 或 src-tauri/ 均热更/重编
 
 改配对文档任一侧：同一 PR 内最小修补另一侧并 `pnpm record:i18n -- <pair>` 重录（契约见 [i18n/README.md](i18n/README.md)）；改 `src-tauri/src/lib.rs` 命令后跑 `pnpm gen:commands`。
 
-本地钩子刻意窄：`pnpm install:hooks` 装 pre-commit（暂存区尾随空白）与 pre-push（doc-quick）；穷尽覆盖归 CI，钩子是提醒不是门禁。门禁脚本自身有 vitest 测试（`pnpm test`），CI 静态 lane 同跑。
+本地钩子刻意窄：`pnpm install:hooks` 装 pre-commit（暂存区尾随空白）与 pre-push（doc-quick），并注册 `.i18n.yaml` 的 fail-closed merge driver（`.gitattributes` 已引用）；穷尽覆盖归 CI，钩子是提醒不是门禁。门禁脚本自身有 vitest 测试（`pnpm test`），CI 静态 lane 同跑。
 
 普通 ```ts 围栏会被 doc-typecheck 真实编译（import 以仓库根为基准），围栏逐字复制到英文侧：
 

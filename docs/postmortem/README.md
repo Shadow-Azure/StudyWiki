@@ -9,4 +9,6 @@
 3. **Root cause** —— 根因，指向机制而非个人
 4. **Action items** —— 对应到门禁/代码/文档的具体改动
 
+机械校验（verify-postmortem，doc-quick/doc-sync）：编号从 0001 连续不重复；四段标题两侧逐字、顺序固定。
+
 写完同 PR 内落地 action items；若引入新门禁，同步登记到 [docs/AGENTS.md](../AGENTS.md) 的门禁清单。
