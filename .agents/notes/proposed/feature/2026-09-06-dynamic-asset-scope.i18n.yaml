@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/notes/proposed/feature/2026-09-06-dynamic-asset-scope.md
-2026-09-06-dynamic-asset-scope.md: ff8063d8e27b4d5d7f51f4a9bc8e7d5d1b736730
-2026-09-06-dynamic-asset-scope.en.md: 500ab6d82bdf8db74c55415ecbcb5207247905f0
+2026-09-06-dynamic-asset-scope.md: 8bfacda6318c447578e27bad81263945e3a06465
+2026-09-06-dynamic-asset-scope.en.md: 09fb082396c42a503e7cd9413a336c3b8e22cd07

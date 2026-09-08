@@ -56,4 +56,4 @@ Body skeleton: `## Problem` (the motivation, standing on its own without the sol
 
 ## Gates
 
-`pnpm lint:docs` runs [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs): legal paths (lifecycle × class closed sets), first-three-lines format, `Status` matching its folder, reachable cross-reference links; frozen records are checked separately by [scripts/verify-archived-agent-notes.mjs](../../scripts/verify-archived-agent-notes.mjs) (sha256 + append-only, also in lint:docs).
+`pnpm lint:docs` runs [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs): legal paths (lifecycle × class closed sets), first-three-lines format, `Status` matching its folder, body skeleton (literal section names, `Problem` first, pinned on both sides), reachable cross-reference links; frozen records are checked separately by [scripts/verify-archived-agent-notes.mjs](../../scripts/verify-archived-agent-notes.mjs) (sha256 + append-only, also in lint:docs).

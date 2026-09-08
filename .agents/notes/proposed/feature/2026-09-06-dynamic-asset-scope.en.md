@@ -8,7 +8,7 @@ English | [中文](2026-09-06-dynamic-asset-scope.md)
 
 `tauri.conf.json` currently sets `assetProtocol.scope: ["**"]`, letting the webview read any local file via the asset protocol. The user authorized exactly one library folder, yet the application holds whole-disk read permission — the permission surface does not match user intent.
 
-## Decision (proposal)
+## Decision
 
 After the dialog returns the chosen directory, narrow the scope to that directory via a runtime capability (the Tauri 2 `app.asset_protocol().scope()` dynamic-grant API); the static config becomes an empty scope. The `list_library`/`read_text_file` commands simultaneously grow a check that paths lie inside the granted scope.
 

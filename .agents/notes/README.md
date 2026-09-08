@@ -56,4 +56,4 @@ Status: <status>
 
 ## 门禁
 
-`pnpm lint:docs` 运行 [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs)：路径合法（lifecycle × class 封闭集合）、前三行格式、`Status` 与文件夹一致、互引链接可达；归档件另由 [scripts/verify-archived-agent-notes.mjs](../../scripts/verify-archived-agent-notes.mjs) 冻结校验（sha256 + append-only，同在 lint:docs）。
+`pnpm lint:docs` 运行 [scripts/verify-agent-notes.mjs](../../scripts/verify-agent-notes.mjs)：路径合法（lifecycle × class 封闭集合）、前三行格式、`Status` 与文件夹一致、正文四段骨架（段名逐字、首段 `Problem`、两侧各自）、互引链接可达；归档件另由 [scripts/verify-archived-agent-notes.mjs](../../scripts/verify-archived-agent-notes.mjs) 冻结校验（sha256 + append-only，同在 lint:docs）。
