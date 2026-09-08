@@ -27,7 +27,7 @@ Pick gates by change surface before committing (don't default to the full suite;
 
 When either side of a paired document changes: patch the counterpart minimally in the same PR and re-record with `pnpm record:i18n -- <pair>` (contract: [i18n/README.en.md](i18n/README.en.md)); after touching `src-tauri/src/lib.rs` commands, run `pnpm gen:commands`.
 
-Local hooks are deliberately narrow: `pnpm install:hooks` installs pre-commit (staged trailing whitespace) and pre-push (doc-quick); exhaustive coverage belongs to CI — hooks are reminders, not gates. The gate scripts themselves carry vitest tests (`pnpm test`), also run in CI's static lane.
+Local hooks are deliberately narrow: `pnpm install:hooks` installs pre-commit (staged trailing whitespace) and pre-push (doc-quick), and registers the fail-closed merge driver for `.i18n.yaml` (already referenced by `.gitattributes`); exhaustive coverage belongs to CI — hooks are reminders, not gates. The gate scripts themselves carry vitest tests (`pnpm test`), also run in CI's static lane.
 
 Plain ```ts fences are really compiled by doc-typecheck (imports resolve from the repo root); copy fences verbatim to the English side:
 

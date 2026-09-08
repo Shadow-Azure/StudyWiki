@@ -14,11 +14,14 @@ pnpm tauri dev           # 开发
 pnpm tauri build         # 发布构建
 pnpm lint:docs           # 快速文档门禁（无构建）
 pnpm verify:docs         # 全量文档门禁
+pnpm verify:env-independence  # 环境无关性单项（doc-sync 已含）
 pnpm verify:release      # 发布前校验（含环境无关性）
+pnpm verify:commands     # 命令目录新鲜度 --check（doc-sync 已含）
 pnpm record:i18n -- <pair>  # 双语配对重录（契约见 docs/i18n/README.md）
 pnpm gen:commands        # 重建命令目录生成区（改 lib.rs 命令后）
+pnpm archive:note -- <base.md>  # 冻结归档一条 implemented note
 pnpm test                # 门禁自测试（vitest）
-pnpm install:hooks       # 装 git 钩子（每 clone 一次，内容见 docs/development.md）
+pnpm install:hooks       # 装 git 钩子并注册 i18n merge driver（每 clone 一次，内容见 docs/development.md）
 ```
 
 ## 惯例
