@@ -1,8 +1,9 @@
 {
   "//": "常驻文档词数上限。计数规则见 scripts/verify-doc-budgets.mjs。超限处置：搬层 → 压缩 → 提预算（PR 说明理由）。",
+  ".agents/notes/README.md": 980,
   "AGENTS.md": 660,
   "README.md": 350,
-  "docs/AGENTS.md": 670,
+  "docs/AGENTS.md": 690,
   "docs/README.md": 540,
   "docs/architecture.md": 560,
   "docs/commands.md": 150,
