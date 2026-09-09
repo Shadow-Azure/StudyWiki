@@ -1,6 +1,7 @@
 // 双语配对的纯逻辑层：三件套路径推导、blob hash、结构签名、生成区切分、
-// 配对记录渲染/解析、豁免 manifest、CLI 解析。与 CLI（verify-translation-pairing.mjs）
-// 分离：本文件不读不写仓库树，只做可复用的推导。契约 home：docs/i18n/README.md。
+// 链接目标解析与锚点推导、配对记录渲染/解析、豁免 manifest、CLI 解析。与 CLI
+// （verify-translation-pairing.mjs）分离：本文件不读不写仓库树，只做可复用的推导。
+// 契约 home：docs/i18n/README.md。
 // 结构签名用自带的极简 Markdown 行扫描（标题/围栏/表格/列表/链接/HTML 注释），
 // 覆盖本库语料的全部语法；语料引入本扫描器不认的语法时，先扩展这里再写文档。
 
@@ -133,13 +134,21 @@ const LIST_MARKER_RE = /^(\s*)([-*+]|\d{1,9}[.)])(?:\s|$)/;
 export const FENCE_OPEN_RE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
 const HTML_COMMENT_START = /^\s*<!--/;
 
-/** 签名里链接目标的归一：语料内 `.en.md` 后缀折算成 base 形态后比较。 */
+/**
+ * 签名里链接目标的归一：语料内 `.en.md` 后缀折算成 base 形态后比较。
+ * md 目标的 fragment 是标题的 locale 投影（标题两侧各自本地化），不进镜像，
+ * 由死锚门禁按侧校验；query 与非 md 目标（如代码行号）的 query/fragment
+ * 逐字保留进镜像。
+ * @param {string} target
+ */
 export function normalizeLinkTarget(target) {
   const boundary = target.search(/[?#]/);
   const path = boundary === -1 ? target : target.slice(0, boundary);
   const suffix = boundary === -1 ? "" : target.slice(boundary);
-  if (path.endsWith(".en.md")) return `${path.slice(0, -".en.md".length)}.md${suffix}`;
-  return target;
+  const folded = path.endsWith(".en.md") ? `${path.slice(0, -".en.md".length)}.md` : path;
+  if (!folded.endsWith(".md")) return folded + suffix;
+  const hashAt = suffix.indexOf("#");
+  return hashAt === -1 ? folded + suffix : folded + suffix.slice(0, hashAt);
 }
 
 /**
@@ -294,6 +303,89 @@ export function structureDiff(base, en) {
     }
   }
   return out;
+}
+
+// ── 链接目标与锚点 ────────────────────────────────────────────────────────────
+
+/**
+ * 解析链接目标：判外链（scheme / 协议相对 / 根绝对）、剥 query、拆 #fragment、
+ * percent-decode（坏转义回退原文——%zz 不是谁真想链的目标，让它红在存在性检查）。
+ * 纯 `#frag`（同文件锚）的 path 为空串。
+ * @param {string} url 链接目标原样（含可选 ?query 与 #fragment）。
+ * @returns {{external:boolean, path:string, fragment:string|null}} path 已解码；
+ * fragment 已解码，无 fragment 或为空串时为 null。
+ */
+export function parseLinkTarget(url) {
+  if (url.startsWith("//") || url.startsWith("/") || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url))
+    return { external: true, path: "", fragment: null };
+  const hashAt = url.indexOf("#");
+  const rawPath = (hashAt === -1 ? url : url.slice(0, hashAt)).replace(/\?.*$/, "");
+  const rawFragment = hashAt === -1 ? "" : url.slice(hashAt + 1).replace(/\?.*$/, "");
+  const decode = (text) => {
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  };
+  return { external: false, path: decode(rawPath), fragment: rawFragment === "" ? null : decode(rawFragment) };
+}
+
+/** GitHub 风格 heading slug：小写；丢字母/数字/下划线/空格/连字符之外的一切；空格→连字符。 */
+export function githubSlug(heading) {
+  return heading.toLowerCase().replace(/[^\p{L}\p{N}_ -]/gu, "").replaceAll(" ", "-");
+}
+
+/**
+ * 一份 markdown 暴露的全部锚点：每个标题的 GitHub slug（重复标题按 GitHub 占位
+ * 计数得 `-1`、`-2`…；标题里的链接取其可见文字再求 slug）+ 正文里显式的
+ * `<a id="…">`。围栏与 HTML 注释里的标题/id 是示例或注释，不贡献锚点。
+ * @param {string} text 完整 Markdown 文本。
+ * @returns {Set<string>} 可被 #fragment 命中的锚点集合。
+ */
+export function documentAnchors(text) {
+  const anchors = new Set();
+  const occurrences = new Map();
+  const headingRe = /^ {0,3}#{1,6}\s+(.+?)\s*$/;
+  const aIdRe = /<a\s+id="([^"]+)"/g;
+  let fence = null;
+  let inComment = false;
+  for (const line of text.split("\n")) {
+    if (fence) {
+      const close = new RegExp(`^\\s{0,3}\\${fence.char}{${fence.length},}\\s*$`).exec(line);
+      if (close) fence = null;
+      continue;
+    }
+    if (inComment) {
+      if (line.includes("-->")) inComment = false;
+      continue;
+    }
+    const open = FENCE_OPEN_RE.exec(line);
+    if (open) {
+      fence = { char: open[1][0], length: open[1].length };
+      continue;
+    }
+    if (HTML_COMMENT_START.test(line)) {
+      if (!line.includes("-->")) inComment = true;
+      continue; // 注释行不贡献锚点（生成区标记也在此列）
+    }
+    const heading = headingRe.exec(line);
+    if (heading) {
+      const visible = heading[1].replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+      const base = githubSlug(visible);
+      let slug = base;
+      let bump = occurrences.get(base) ?? 0;
+      while (anchors.has(slug)) {
+        bump += 1;
+        slug = `${base}-${bump}`;
+      }
+      occurrences.set(base, bump);
+      anchors.add(slug);
+      continue;
+    }
+    for (const [, id] of line.matchAll(aIdRe)) anchors.add(id);
+  }
+  return anchors;
 }
 
 // ── 配对记录（foo.i18n.yaml）────────────────────────────────────────────────

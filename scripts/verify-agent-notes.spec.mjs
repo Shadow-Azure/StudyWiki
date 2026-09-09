@@ -91,6 +91,16 @@ describe("verify-agent-notes（夹具集成）", () => {
     const result = await run({ [PATH]: base(SKELETON), [EN_PATH]: en });
     expect(result.ok).toBe(true);
   });
+  it("互引链接死锚红：#fragment 必须命中目标 note 的标题", async () => {
+    const TARGET = ".agents/notes/implemented/process/2026-09-02-target.md";
+    const withLink = base(SKELETON).replace(
+      "## Problem\n\n正文。",
+      "## Problem\n\n[引](2026-09-02-target.md#nope)",
+    );
+    const result = await run({ [PATH]: withLink, [TARGET]: base(SKELETON) });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("死锚 → 2026-09-02-target.md#nope");
+  });
 
   afterAll(cleanup);
 });
