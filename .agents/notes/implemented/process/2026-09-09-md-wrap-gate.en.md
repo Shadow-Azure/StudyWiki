@@ -25,4 +25,4 @@ A gate-gap review against the blueprint's verify-md-wrap (same line of review as
 - The existing corpus has zero hard wraps, so the gate lands green with no migration cost; only the docs/README.md pair needed re-recording.
 - ci-wiring's deletion-proof list gains verify-md-wrap; removing the leaf goes red.
 - If YAML frontmatter or indented-code style ever lands, the scanner semantics must be revised alongside (current boundaries are in the script header).
-- The map-table/manifest dual-home debt remains: a future budget raise that misses the table is invisible to gates; the real fix is dropping the column, which deserves its own note.
+- The manifest is the single home for word budgets and the map table is index-only — the dual-home debt is cured by dropping the column (tradeoffs in [2026-09-09-budget-map-single-home.en.md](2026-09-09-budget-map-single-home.en.md)).
