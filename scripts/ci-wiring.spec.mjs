@@ -75,3 +75,18 @@ describe("AGENTS.md 命令清单 ↔ package.json scripts", () => {
       expect(agents, `package.json 有门禁 script "${script}"，AGENTS.md 命令清单未列`).toContain(`pnpm ${script}`);
   });
 });
+
+describe("次级命令清单（docs/AGENTS.md、docs/development.md、README.md）↔ package.json", () => {
+  it("每页写出的 pnpm 命令都真实存在（写错即红；根清单的完备方向由上一节反向钉）", async () => {
+    const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts;
+    for (const doc of ["docs/AGENTS.md", "docs/development.md", "README.md"]) {
+      const text = await readFile(doc, "utf8");
+      const cmds = [...text.matchAll(/pnpm ([A-Za-z0-9:_-]+)/g)].map((m) => m[1]);
+      expect(cmds.length, `${doc} 没扫到 pnpm 命令——提取器或语料漂移`).toBeGreaterThan(0);
+      for (const cmd of new Set(cmds)) {
+        if (cmd === "install") continue; // pnpm 内建，不是 script
+        expect(scripts[cmd], `${doc} 写了 pnpm ${cmd}，package.json 无此 script`).toBeDefined();
+      }
+    }
+  });
+});
