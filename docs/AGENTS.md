@@ -24,7 +24,7 @@
 - 段落一行到底（soft-wrap），表格与代码块保持原样（红门禁：verify-md-wrap）。
 - 文档内代码示例必须可用；贴类型声明用 ` ```ts type-equiv ` 围栏（源码漂移即红）；命令面走生成区（`pnpm gen:commands`），标记之间不手编。导出面须带文档注释（verify-export-docs）。
 - 每个非平凡变更在同一 PR 内新增或更新至少一条 Agent Note。
-- 常驻文档受词数预算约束（[scripts/doc-budgets.manifest.json](../scripts/doc-budgets.manifest.json)），超限红门禁；处置顺序：搬层 → 压缩 → 提预算（须在 PR 说明）。
+- 常驻文档受词数预算约束（[scripts/doc-budgets.manifest.json](../scripts/doc-budgets.manifest.json)），常驻即须登记（未登记红门禁）；超限处置顺序：搬层 → 压缩 → 提预算（须在 PR 说明）。
 
 ## 门禁
 

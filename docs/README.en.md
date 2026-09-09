@@ -16,7 +16,7 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 | [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract | 790 |
 | [i18n/terminology.md](i18n/terminology.en.md) | Terminology alignment (banned alternates gate-backed) | 300 |
 | [i18n/translation-prompt.md](i18n/translation-prompt.en.md) | Operational template for adding the English side | 320 |
-| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 690 |
+| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 700 |
 | [release-checklist.md](release-checklist.en.md) | Release gate checklist | 350 |
 | [postmortem/README.md](postmortem/README.en.md) | Incident-review tier description | 170 |
 

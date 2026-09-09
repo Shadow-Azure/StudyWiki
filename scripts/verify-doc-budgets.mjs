@@ -3,7 +3,7 @@
 // 其余按空白分词——中英混排下两侧权重一致；生成区是机器写的，不计数。
 // 处置顺序：搬层 → 压缩 → 提预算（PR 里说明理由）。预算是护栏不是瘦身目标。
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { partitionGeneratedRegions } from "./translation-pairing-lib.mjs";
@@ -20,6 +20,28 @@ export function countWords(text) {
 /** 只数人写的部分：生成区整体剔除。 */
 function authoredWords(text) {
   return countWords(partitionGeneratedRegions(text).stripped);
+}
+
+/** 发现必须登记预算的常驻文档（存在的 base 侧）：docs/**\/*.md、根
+ *  README.md、AGENTS.md（CLAUDE.md 是它的 symlink，不单列）、
+ *  .agents/notes/README.md；.en.md 除外（预算按 base 侧计），postmortem
+ *  事故件除外（冻结历史，README.md 才是常驻规则文档）。 */
+async function residentDocs() {
+  const files = new Set(
+    ["README.md", "AGENTS.md", ".agents/notes/README.md"].filter((f) => existsSync(f)),
+  );
+  const walk = async (dir) => {
+    if (!existsSync(dir)) return;
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) await walk(rel);
+      else if (entry.name.endsWith(".md") && !entry.name.endsWith(".en.md")) files.add(rel);
+    }
+  };
+  await walk("docs");
+  return [...files]
+    .filter((f) => f === "docs/postmortem/README.md" || !f.startsWith("docs/postmortem/"))
+    .sort();
 }
 
 export default async function verifyDocBudgets() {
@@ -39,6 +61,12 @@ export default async function verifyDocBudgets() {
     if (count > ceiling)
       errors.push(`${file}: ${count} 词超预算 ${ceiling}（先搬层/压缩，提预算须 PR 说明）`);
   }
+
+  // 反向对账：只查 manifest 内条目会令"未登记即免检"成为绕过预算的漏洞。
+  const registered = new Set(Object.keys(budgets).filter((key) => !key.startsWith("//")));
+  for (const file of await residentDocs())
+    if (!registered.has(file))
+      errors.push(`${file}: 常驻文档未登记预算（scripts/doc-budgets.manifest.json），登记即受检`);
   return { ok: errors.length === 0, errors };
 }
 
