@@ -8,13 +8,13 @@
 
 | 文档 | 职责 | 预算（词） |
 |---|---|---|
-| [AGENTS.md](../AGENTS.md) | 常驻指令（根） | 550 |
-| [architecture.md](architecture.md) | 架构地图（含 type-equiv 围栏） | 480 |
+| [AGENTS.md](../AGENTS.md) | 常驻指令（根） | 660 |
+| [architecture.md](architecture.md) | 架构地图（含 type-equiv 围栏） | 560 |
 | [environment-independence.md](environment-independence.md) | 环境无关约束 + 豁免登记 | 720 |
-| [development.md](development.md) | 贡献者上手 | 320 |
+| [development.md](development.md) | 贡献者上手 | 460 |
 | [commands.md](commands.md) | Tauri 命令目录（生成区） | 150 |
-| [i18n/README.md](i18n/README.md) | 双语配对契约 | 380 |
-| [AGENTS.md](AGENTS.md)（docs 子树标准） | 层级分工、写作规则、门禁 | 650 |
+| [i18n/README.md](i18n/README.md) | 双语配对契约 | 700 |
+| [AGENTS.md](AGENTS.md)（docs 子树标准） | 层级分工、写作规则、门禁 | 690 |
 | [release-checklist.md](release-checklist.md) | 发布门禁清单 | 350 |
 | [postmortem/README.md](postmortem/README.md) | 事故复盘层级说明 | 170 |
 

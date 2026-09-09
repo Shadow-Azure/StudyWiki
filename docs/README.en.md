@@ -8,13 +8,13 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 
 | Document | Role | Budget (words) |
 |---|---|---|
-| [AGENTS.md](../AGENTS.md) | Standing orders (root) | 550 |
-| [architecture.md](architecture.en.md) | Architecture map (with type-equiv fence) | 480 |
+| [AGENTS.md](../AGENTS.md) | Standing orders (root) | 660 |
+| [architecture.md](architecture.en.md) | Architecture map (with type-equiv fence) | 560 |
 | [environment-independence.md](environment-independence.en.md) | Environment-independence constraints + exemption registry | 720 |
-| [development.md](development.en.md) | Contributor onboarding | 320 |
+| [development.md](development.en.md) | Contributor onboarding | 460 |
 | [commands.md](commands.en.md) | Tauri command catalog (generated region) | 150 |
-| [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract | 380 |
-| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 650 |
+| [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract | 700 |
+| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 690 |
 | [release-checklist.md](release-checklist.en.md) | Release gate checklist | 350 |
 | [postmortem/README.md](postmortem/README.en.md) | Incident-review tier description | 170 |
 

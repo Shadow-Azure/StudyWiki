@@ -63,8 +63,8 @@ export function blobHash(content) {
 
 // ── 生成区 ───────────────────────────────────────────────────────────────────
 // 完整标记行：`<!-- BEGIN GENERATED <slug> … -->` / `<!-- END GENERATED <slug> -->`。
-const REGION_BEGIN = /^<!-- BEGIN GENERATED (\S+)(?: [^>]*)? -->$/;
-const REGION_END = /^<!-- END GENERATED (\S+) -->$/;
+export const REGION_BEGIN = /^<!-- BEGIN GENERATED (\S+)(?: [^>]*)? -->$/;
+export const REGION_END = /^<!-- END GENERATED (\S+) -->$/;
 const REGION_HINT = /^<!-- (?:BEGIN|END) GENERATED /;
 
 /**
@@ -130,7 +130,7 @@ export function isSwitcherLine(line) {
 const LINK_RE = /(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const HEADING_RE = /^\s{0,3}(#{1,6})(?:\s|$)/;
 const LIST_MARKER_RE = /^(\s*)([-*+]|\d{1,9}[.)])(?:\s|$)/;
-const FENCE_OPEN_RE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+export const FENCE_OPEN_RE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
 const HTML_COMMENT_START = /^\s*<!--/;
 
 /** 签名里链接目标的归一：语料内 `.en.md` 后缀折算成 base 形态后比较。 */
