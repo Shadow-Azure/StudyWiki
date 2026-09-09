@@ -17,7 +17,7 @@ Every corpus document carries a switcher: `[English](foo.en.md) | 中文` on the
 
 ## Structural mirroring
 
-Both sides must mirror: heading depths and order, code fences (info string and content **byte-identical** — comments and diagram text inside fences are not translated), table row/column counts, list kinds/ordered starts/item counts, link targets (the switcher excepted). In-scope relative links: the base side uses `.md`, the English side uses `.en.md`; query/fragment suffixes are preserved verbatim. Generated regions (`<!-- BEGIN GENERATED -->`) are byte-identical apart from locale-projected document paths.
+Both sides must mirror: heading depths and order, code fences (info string and content **byte-identical** — comments and diagram text inside fences are not translated), table row/column counts, list kinds/ordered starts/item counts, link targets (the switcher excepted). In-scope relative links: the base side uses `.md`, the English side uses `.en.md`; query strings and fragments onto non-Markdown targets are preserved verbatim; a fragment onto a Markdown target is the locale projection of its heading, exempt from mirroring and validated per side by the dead-anchor gate. Generated regions (`<!-- BEGIN GENERATED -->`) are byte-identical apart from locale-projected document paths.
 
 ## Gate and workflow
 
