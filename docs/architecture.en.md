@@ -36,7 +36,7 @@ The authoritative command surface (with signatures) lives in the generated regio
 ## Key decision points
 
 - **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS` / `VIDEO_EXTS`): a single decision point; the frontend never re-classifies.
-- **`assetProtocol.scope: ["**"]`**: the user may open any folder, so it cannot be pre-narrowed; the CSP's `media-src`/`img-src` restrict other resources. Tightening the scope is a [known debt](environment-independence.en.md#已知欠账).
+- **`assetProtocol.scope: ["**"]`**: the user may open any folder, so it cannot be pre-narrowed; the CSP's `media-src`/`img-src` restrict other resources. Tightening the scope is a [known debt](environment-independence.en.md#known-debts).
 - **markdown-it is bundled at build time**, `html: false` disables inline HTML: a direct corollary of the environment-independence constraint below, and it shrinks the XSS surface.
 - **The system webview does rendering and video decoding** (macOS WKWebView / Windows WebView2 / Linux webkit2gtk): a volume-vs-dependencies tradeoff; boundary and mitigations in [environment-independence.en.md](environment-independence.en.md).
 

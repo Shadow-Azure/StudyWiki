@@ -4,8 +4,9 @@
 // archived/ 树不在此列——冻结件由 verify-archived-agent-notes 管辖（sha256 + append-only）。
 
 import { readdir, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { documentAnchors, parseLinkTarget } from "./translation-pairing-lib.mjs";
 
 const NOTES_ROOT = path.resolve(".agents/notes");
 // 与 README.md「分类（封闭集合）」互为镜像，改一处必改另一处（spec 互检）。
@@ -31,17 +32,22 @@ async function collectMarkdown(dir, out = []) {
   return out;
 }
 
-/** 相对链接可达性；返回损坏链接列表。 */
+/** 相对链接可达性与锚点命中；返回损坏链接列表。 */
 function checkLinks(filePath, lines) {
   const broken = [];
-  const linkRe = /\]\(([^)#\s]+)(?:#[^)\s]*)?\)/g;
+  const linkRe = /\]\(([^)\s]+)\)/g;
   for (const line of lines) {
     for (const [, target] of line.matchAll(linkRe)) {
-      if (/^[a-z]+:\/\//i.test(target)) continue; // 外链不在本门禁范围
-      const resolved = path.resolve(path.dirname(filePath), target);
+      const { external, path: targetPath, fragment } = parseLinkTarget(target);
+      if (external) continue; // 外链不在本门禁范围
+      // 纯 #frag 是同文件锚：目标就是链接所在文件。
+      const resolved = targetPath ? path.resolve(path.dirname(filePath), targetPath) : filePath;
       if (!existsSync(resolved)) {
         broken.push(`${path.relative("", filePath)}: 链接目标不存在 → ${target}`);
+        continue;
       }
+      if (fragment && resolved.endsWith(".md") && !documentAnchors(readFileSync(resolved, "utf8")).has(fragment))
+        broken.push(`${path.relative("", filePath)}: 死锚 → ${target}`);
     }
   }
   return broken;
