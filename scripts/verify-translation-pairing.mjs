@@ -13,6 +13,7 @@ import {
   isScopeFile,
   pairPaths,
   blobHash,
+  FENCE_OPEN_RE,
   parseSignature,
   structureDiff,
   partitionGeneratedRegions,
@@ -62,19 +63,34 @@ function expectedSwitcher(side, counterpartBasename) {
 
 /**
  * 链接 locale 校验：指向语料内文档的相对链接，base 侧用 `.md`、en 侧用 `.en.md`。
+ * 行内代码与围栏里的"链接"是示例（如 i18n README 引用切换行原文），不算数；
+ * 行号按原文保留（逐行清洗，不删除行）。
  * @returns {string[]} 违规描述。
  */
 function localeViolations(text, relPath, side, manifest) {
   const violations = [];
   const lines = text.split("\n");
+  let inFence = false;
+  const prose = lines
+    .map((line) => {
+      if (FENCE_OPEN_RE.test(line)) {
+        inFence = !inFence;
+        return "";
+      }
+      if (inFence) return "";
+      return line.replace(/`[^`\n]*`/g, " ");
+    })
+    .join("\n");
   const seen = new Set();
-  for (const { line, target } of markdownLinks(text)) {
+  for (const { line, target } of markdownLinks(prose)) {
     if (isSwitcherLine(lines[line - 1] ?? "")) continue; // 切换行本身跨语言，豁免
     if (/^[a-z]+:\/\//i.test(target) || target.startsWith("#")) continue;
     const pathPart = target.split(/[?#]/)[0];
     if (!pathPart.endsWith(".md") && !pathPart.endsWith(".en.md")) continue;
+    // 仓库相对解析（path.join 归一 ../）：isScopeFile 吃仓库相对路径，
+    // path.resolve 会产出绝对路径、令语料判定恒假。
     const resolved = path
-      .resolve(path.dirname(relPath), decodeURIComponent(pathPart))
+      .join(path.dirname(relPath), decodeURIComponent(pathPart))
       .split(path.sep)
       .join("/");
     const collapsed = resolved.replace(/\.en\.md$/, ".md");
