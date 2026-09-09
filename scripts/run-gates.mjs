@@ -47,6 +47,29 @@ export const LEAVES = {
       return { ok: false, errors: ["scripts/gen-commands-catalog.mjs --check 退出非零（跑 pnpm gen:commands 重生成）"] };
     }
   },
+  "verify-code-map": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["scripts/gen-code-map.mjs", "--check"], { stdio: "inherit" });
+      return { ok: true, errors: [] };
+    } catch {
+      return {
+        ok: false,
+        errors: ["scripts/gen-code-map.mjs --check 退出非零（跑 pnpm gen:code-map；新文件先在 code-map.manifest.json 登记职责）"],
+      };
+    }
+  },
+  // 文档标准自测试也进来：本地 verify:docs 与 CI 静态 lane 跑同一套（vitest 启动
+  // 秒级成本，刻意不进 doc-quick——快速档的"秒级"承诺优先）。
+  "gate-self-tests": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["node_modules/vitest/vitest.mjs", "run"], { stdio: "inherit" });
+      return { ok: true, errors: [] };
+    } catch {
+      return { ok: false, errors: ["vitest run 退出非零（门禁自测试失败，具体用例见上方输出）"] };
+    }
+  },
   "verify-release": async () => {
     const { execFileSync } = await import("node:child_process");
     try {
@@ -74,8 +97,9 @@ export const MODES = {
     "verify-type-equiv",
     "verify-export-docs",
     "verify-doc-refs",
+    "verify-code-map",
   ],
-  // 全量文档档：死链 + 环境无关源检查 + ts 围栏真实编译 + 生成区新鲜度。
+  // 全量文档档：死链 + 环境无关源检查 + ts 围栏真实编译 + 生成区新鲜度 + 自测试。
   "doc-sync": [
     "verify-agent-notes",
     "verify-archived-agent-notes",
@@ -88,10 +112,12 @@ export const MODES = {
     "verify-type-equiv",
     "verify-export-docs",
     "verify-doc-refs",
+    "verify-code-map",
     "doc-typecheck",
     "verify-commands-catalog",
     "verify-md-links",
     "verify-env-independence",
+    "gate-self-tests",
   ],
   // 发布档：doc-sync + 版本一致性（在 build 之后跑会连同 dist 一起扫描）。
   release: [
@@ -106,10 +132,12 @@ export const MODES = {
     "verify-type-equiv",
     "verify-export-docs",
     "verify-doc-refs",
+    "verify-code-map",
     "doc-typecheck",
     "verify-commands-catalog",
     "verify-md-links",
     "verify-env-independence",
+    "gate-self-tests",
     "verify-release",
   ],
 };

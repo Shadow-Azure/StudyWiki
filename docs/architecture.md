@@ -8,16 +8,19 @@
 
 StudyWiki 是单窗口 Tauri 2 桌面应用，两层：
 
+<!-- BEGIN GENERATED code-map (scripts/gen-code-map.mjs) — do not edit between markers -->
+```text
+src/          前端（TypeScript + Vite，无 UI 框架）
+  main.ts     入口：侧栏文件列表 + 查看器分发（→ styles.css、types.ts）
+  styles.css  样式（无逻辑）
+  types.ts    LibraryEntry —— 前后端共享的唯一形状
+src-tauri/    Rust 壳
+  lib.rs      tauri::Builder + 两条命令
+  main.rs     入口壳（Windows 隐藏控制台）（→ lib.rs）
 ```
-src/            前端（TypeScript + Vite，无 UI 框架）
-  main.ts         入口：侧栏文件列表 + 查看器分发
-  types.ts        LibraryEntry —— 前后端共享的唯一形状
-src-tauri/      Rust 壳
-  lib.rs          tauri::Builder + 两条命令
-  main.rs         入口壳（Windows 隐藏控制台）
-```
+<!-- END GENERATED code-map -->
 
-`types.ts` 与 Rust 侧 `LibraryEntry` 是前后端共享的唯一形状。文档侧贴的声明用 type-equiv 围栏与源码公证（`scripts/verify-type-equiv.mjs`，逐字等价，改源码不同步文档即红）：
+组成树走生成区：文件职责登记在 [code-map.manifest.json](../scripts/code-map.manifest.json)，内部依赖（→）从源码 import 推导；加/删源文件或改 import 后登记并跑 `pnpm gen:code-map`。`types.ts` 与 Rust 侧 `LibraryEntry` 是前后端共享的唯一形状。文档侧贴的声明用 type-equiv 围栏与源码公证（`scripts/verify-type-equiv.mjs`，逐字等价，改源码不同步文档即红）：
 
 ```ts type-equiv
 /** A playable or readable file inside the opened library. */
