@@ -2,4 +2,4 @@
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- docs/architecture.md
 architecture.md: bfaadd05d5c19bafc17928b04b0c3ac2502d8a17
-architecture.en.md: ac230ec0e37bf0c0f07c165b0bc78e114e4bcf76
+architecture.en.md: 47157671bc9039d066b773755da42f97b381ec8c

@@ -3,15 +3,15 @@
   ".agents/notes/README.md": 980,
   "AGENTS.md": 660,
   "README.md": 350,
-  "docs/AGENTS.md": 690,
+  "docs/AGENTS.md": 700,
   "docs/README.md": 570,
   "docs/architecture.md": 560,
   "docs/commands.md": 150,
   "docs/development.md": 460,
   "docs/environment-independence.md": 720,
-  "docs/i18n/README.md": 780,
-  "docs/postmortem/README.md": 170,
-  "docs/release-checklist.md": 350,
+  "docs/i18n/README.md": 790,
   "docs/i18n/terminology.md": 300,
-  "docs/i18n/translation-prompt.md": 320
+  "docs/i18n/translation-prompt.md": 320,
+  "docs/postmortem/README.md": 170,
+  "docs/release-checklist.md": 350
 }

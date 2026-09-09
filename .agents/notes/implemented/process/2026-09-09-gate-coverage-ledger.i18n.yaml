@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/notes/implemented/process/2026-09-09-gate-coverage-ledger.md
+2026-09-09-gate-coverage-ledger.md: f6de0153e1916231f6df43b2a04f0e3742d2998a
+2026-09-09-gate-coverage-ledger.en.md: eb4f7625785136d825a70d1a9cf963de6c036ed2

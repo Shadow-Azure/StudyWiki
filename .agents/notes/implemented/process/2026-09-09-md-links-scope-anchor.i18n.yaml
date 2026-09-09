@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/notes/implemented/process/2026-09-09-md-links-scope-anchor.md
+2026-09-09-md-links-scope-anchor.md: 1afa955905e661710cd19a5fff22881104b76f14
+2026-09-09-md-links-scope-anchor.en.md: e01e72738e9205895f2852ea6fc48ffb0b744e6c

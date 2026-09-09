@@ -31,6 +31,7 @@ describe("run-gates 模式组合", () => {
       "verify-translation-pairing",
       "verify-type-equiv",
       "verify-export-docs",
+      "verify-doc-refs",
       "doc-typecheck",
       "verify-commands-catalog",
       "verify-md-links",
