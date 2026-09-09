@@ -19,6 +19,10 @@ Every corpus document carries a switcher: `[English](foo.en.md) | 中文` on the
 
 Both sides must mirror: heading depths and order, code fences (info string and content **byte-identical** — comments and diagram text inside fences are not translated), table row/column counts, list kinds/ordered starts/item counts, link targets (the switcher excepted). In-scope relative links: the base side uses `.md`, the English side uses `.en.md`; query strings and fragments onto non-Markdown targets are preserved verbatim; a fragment onto a Markdown target is the locale projection of its heading, exempt from mirroring and validated per side by the dead-anchor gate. Generated regions (`<!-- BEGIN GENERATED -->`) are byte-identical apart from locale-projected document paths.
 
+## Terminology and prompt
+
+The translation supply chain is mechanically endorsed: [terminology.en.md](terminology.en.md) keeps data rows byte-identical across both sides, and a registered banned alternate goes red when it appears in English-side prose; [translation-prompt.en.md](translation-prompt.en.md) is the operational template for adding the English side, its placeholder set checked by verify-terminology.
+
 ## Gate and workflow
 
 - `pnpm verify:docs` includes verify-translation-pairing: triplet completeness, hash match, switchers, link locale, generated regions, structure signature — any miss goes red.

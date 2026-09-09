@@ -11,6 +11,7 @@ import verifyMdWrap from "./verify-md-wrap.mjs";
 import verifyMdLinks from "./verify-md-links.mjs";
 import verifyEnvIndependence from "./verify-env-independence.mjs";
 import verifyTranslationPairing from "./verify-translation-pairing.mjs";
+import verifyTerminology from "./verify-terminology.mjs";
 import verifyTypeEquiv from "./verify-type-equiv.mjs";
 import verifyExportDocs from "./verify-export-docs.mjs";
 import verifyDocRefs from "./verify-doc-refs.mjs";
@@ -27,6 +28,7 @@ export const LEAVES = {
   "verify-postmortem": verifyPostmortem,
   "verify-doc-budgets": verifyDocBudgets,
   "verify-md-wrap": verifyMdWrap,
+  "verify-terminology": verifyTerminology,
   "verify-md-links": verifyMdLinks,
   "verify-env-independence": verifyEnvIndependence,
   "verify-translation-pairing": () => verifyTranslationPairing([]),
@@ -67,6 +69,7 @@ export const MODES = {
     "verify-postmortem",
     "verify-doc-budgets",
     "verify-md-wrap",
+    "verify-terminology",
     "verify-translation-pairing",
     "verify-type-equiv",
     "verify-export-docs",
@@ -80,6 +83,7 @@ export const MODES = {
     "verify-postmortem",
     "verify-doc-budgets",
     "verify-md-wrap",
+    "verify-terminology",
     "verify-translation-pairing",
     "verify-type-equiv",
     "verify-export-docs",
@@ -97,6 +101,7 @@ export const MODES = {
     "verify-postmortem",
     "verify-doc-budgets",
     "verify-md-wrap",
+    "verify-terminology",
     "verify-translation-pairing",
     "verify-type-equiv",
     "verify-export-docs",

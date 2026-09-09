@@ -27,6 +27,7 @@ describe("run-gates 模式组合", () => {
       "verify-postmortem",
       "verify-doc-budgets",
       "verify-md-wrap",
+      "verify-terminology",
       "verify-translation-pairing",
       "verify-type-equiv",
       "verify-export-docs",

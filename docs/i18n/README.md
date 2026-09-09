@@ -19,6 +19,10 @@
 
 两侧结构必须镜像：标题层级与顺序、代码围栏（info 串与内容**逐字相同**——围栏内的注释、图示文字不翻译）、表格行列数、列表种类/有序起点/条数、链接目标（切换行除外）。语料内相对链接：base 侧用 `.md`、英文侧用 `.en.md`；query 与非 md 目标的 fragment 逐字保留；md 目标的 fragment 是标题的 locale 投影，不进镜像，由死锚门禁按侧校验。生成区（`<!-- BEGIN GENERATED -->`）除 locale 投影的文档路径外逐字节一致。
 
+## 术语与提示词
+
+翻译供给链受机械背书：[terminology.md](terminology.md) 数据行两侧逐字一致，登记的禁用替写出现在英文侧散文即红；[translation-prompt.md](translation-prompt.md) 是补英文侧的操作模板，占位符集合由 verify-terminology 校验。
+
 ## 门禁与工作流
 
 - `pnpm verify:docs` 含 verify-translation-pairing：三件齐、hash 相符、切换行、链接 locale、生成区、结构签名，任一不符即红。
