@@ -25,4 +25,4 @@ Status: implemented
 - 存量语料零硬换行，门禁上线即全绿，无迁移成本；i18n 哈希仅 docs/README.md 一对重录。
 - ci-wiring 防误删清单新增 verify-md-wrap，删叶即红。
 - 若未来引入 YAML frontmatter 或缩进代码块风格，扫描语义须同步修订（现行边界见脚本头注释）。
-- 地图表词数列与 manifest 的双 home 欠账仍在：下次调预算若再漏同步只能靠人眼，根治须删列，另立 note。
+- 词数预算唯一 home 是 manifest，地图表只做索引——双 home 欠账已删列根治（取舍见 [2026-09-09-budget-map-single-home.md](2026-09-09-budget-map-single-home.md)）。

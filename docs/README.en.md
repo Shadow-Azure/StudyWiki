@@ -6,19 +6,19 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 
 ## Document map
 
-| Document | Role | Budget (words) |
-|---|---|---|
-| [AGENTS.md](../AGENTS.md) | Standing orders (root) | 660 |
-| [architecture.md](architecture.en.md) | Architecture map (with type-equiv fence) | 560 |
-| [environment-independence.md](environment-independence.en.md) | Environment-independence constraints + exemption registry | 720 |
-| [development.md](development.en.md) | Contributor onboarding | 460 |
-| [commands.md](commands.en.md) | Tauri command catalog (generated region) | 150 |
-| [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract | 790 |
-| [i18n/terminology.md](i18n/terminology.en.md) | Terminology alignment (banned alternates gate-backed) | 300 |
-| [i18n/translation-prompt.md](i18n/translation-prompt.en.md) | Operational template for adding the English side | 320 |
-| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 700 |
-| [release-checklist.md](release-checklist.en.md) | Release gate checklist | 350 |
-| [postmortem/README.md](postmortem/README.en.md) | Incident-review tier description | 170 |
+| Document | Role |
+|---|---|
+| [AGENTS.md](../AGENTS.md) | Standing orders (root) |
+| [architecture.md](architecture.en.md) | Architecture map (with type-equiv fence) |
+| [environment-independence.md](environment-independence.en.md) | Environment-independence constraints + exemption registry |
+| [development.md](development.en.md) | Contributor onboarding |
+| [commands.md](commands.en.md) | Tauri command catalog (generated region) |
+| [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract |
+| [i18n/terminology.md](i18n/terminology.en.md) | Terminology alignment (banned alternates gate-backed) |
+| [i18n/translation-prompt.md](i18n/translation-prompt.en.md) | Operational template for adding the English side |
+| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates |
+| [release-checklist.md](release-checklist.en.md) | Release gate checklist |
+| [postmortem/README.md](postmortem/README.en.md) | Incident-review tier description |
 
 Every new `docs/**/*.md` must be registered in this table or the index gate goes red (`scripts/verify-doc-index.mjs`; the `.en.md` side registers with its base, not separately). Word budgets are enforced by `scripts/doc-budgets.manifest.json` (base side only); this table is just the index.
 

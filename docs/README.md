@@ -6,19 +6,19 @@
 
 ## 文档地图
 
-| 文档 | 职责 | 预算（词） |
-|---|---|---|
-| [AGENTS.md](../AGENTS.md) | 常驻指令（根） | 660 |
-| [architecture.md](architecture.md) | 架构地图（含 type-equiv 围栏） | 560 |
-| [environment-independence.md](environment-independence.md) | 环境无关约束 + 豁免登记 | 720 |
-| [development.md](development.md) | 贡献者上手 | 460 |
-| [commands.md](commands.md) | Tauri 命令目录（生成区） | 150 |
-| [i18n/README.md](i18n/README.md) | 双语配对契约 | 790 |
-| [i18n/terminology.md](i18n/terminology.md) | 术语对齐表（禁用替写受门禁背书） | 300 |
-| [i18n/translation-prompt.md](i18n/translation-prompt.md) | 补英文侧的操作模板 | 320 |
-| [AGENTS.md](AGENTS.md)（docs 子树标准） | 层级分工、写作规则、门禁 | 700 |
-| [release-checklist.md](release-checklist.md) | 发布门禁清单 | 350 |
-| [postmortem/README.md](postmortem/README.md) | 事故复盘层级说明 | 170 |
+| 文档 | 职责 |
+|---|---|
+| [AGENTS.md](../AGENTS.md) | 常驻指令（根） |
+| [architecture.md](architecture.md) | 架构地图（含 type-equiv 围栏） |
+| [environment-independence.md](environment-independence.md) | 环境无关约束 + 豁免登记 |
+| [development.md](development.md) | 贡献者上手 |
+| [commands.md](commands.md) | Tauri 命令目录（生成区） |
+| [i18n/README.md](i18n/README.md) | 双语配对契约 |
+| [i18n/terminology.md](i18n/terminology.md) | 术语对齐表（禁用替写受门禁背书） |
+| [i18n/translation-prompt.md](i18n/translation-prompt.md) | 补英文侧的操作模板 |
+| [AGENTS.md](AGENTS.md)（docs 子树标准） | 层级分工、写作规则、门禁 |
+| [release-checklist.md](release-checklist.md) | 发布门禁清单 |
+| [postmortem/README.md](postmortem/README.md) | 事故复盘层级说明 |
 
 新增 `docs/**/*.md` 必须同步登记进本表，否则索引门禁红（`scripts/verify-doc-index.mjs`；英文侧 `.en.md` 随 base 登记，不单列）。词数预算由 `scripts/doc-budgets.manifest.json` 执行（只挂 base 侧），本表只做索引。
 

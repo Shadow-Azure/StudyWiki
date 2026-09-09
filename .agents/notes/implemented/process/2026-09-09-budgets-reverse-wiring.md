@@ -26,4 +26,4 @@ Status: implemented
 - 上线即绿：manifest 与语料树恰好互为镜像（#6 的存量补全此刻还成立）；从下次起新增常驻文档忘登记即在 doc-quick 红。
 - 常驻定义与配对语料定义（translation-pairing 的 docs + .agents/notes + 根 README）刻意一致，仅豁免口径不同（postmortem 事故件两边都不管，archived 只有配对管）——两套发现逻辑并存，改目录结构须同步两处。
 - `pnpm <token>` 提取对全文生效（含表格行内代码与散文），次级页写新命令自动入网；写非 script 命令（如未来的 `pnpm dlx`）须加豁免。
-- docs/README.md 地图表词数列与 manifest 的双 home 欠账（[2026-09-09-md-wrap-gate.md](2026-09-09-md-wrap-gate.md) Consequences 登记）不受本次影响，仍待根治。
+- docs/README.md 地图表只做索引，词数预算唯一 home 是 manifest——双 home 欠账已删列根治（见 [2026-09-09-budget-map-single-home.md](2026-09-09-budget-map-single-home.md)）。
