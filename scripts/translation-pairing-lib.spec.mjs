@@ -5,13 +5,16 @@
 import { describe, expect, it } from "vitest";
 import {
   blobHash,
+  documentAnchors,
   generatedRegionsEqual,
+  githubSlug,
   isManifestExcluded,
   isSwitcherLine,
   markdownLinks,
   normalizeLinkTarget,
   pairAnchorOfArgument,
   pairPaths,
+  parseLinkTarget,
   parsePairRecord,
   parsePairingCliArgs,
   parsePairingManifest,
@@ -140,11 +143,11 @@ describe("parseSignature", () => {
     expect(sig.code).toEqual(["```ts\nlet x = 1;"]);
     expect(sig.tables).toEqual(["3x2"]);
     expect(sig.lists).toEqual(["bullet:items=2", "bullet:items=1", "ordered:start=1:items=2"]);
-    expect(sig.links).toEqual(["foo.md", "bar.md#sec"]);
+    expect(sig.links).toEqual(["foo.md", "bar.md"]);
   });
-  it("切换行不进链接签名；语料内 .en.md 目标折算到 base", () => {
+  it("切换行不进链接签名；语料内 .en.md 目标折算到 base；md 目标的 fragment 不进镜像", () => {
     const sig = parseSignature("[English](a.en.md) | 中文\nsee [x](b.en.md) and [y](c.en.md#s)");
-    expect(sig.links).toEqual(["b.md", "c.md#s"]);
+    expect(sig.links).toEqual(["b.md", "c.md"]);
   });
   it("HTML 注释行不贡献结构；跨行注释整体跳过", () => {
     const sig = parseSignature("<!-- one -->\n<!-- open\n# not a heading\n-->\n# real");
@@ -164,11 +167,15 @@ describe("isSwitcherLine", () => {
 });
 
 describe("normalizeLinkTarget", () => {
-  it(".en.md 折算，query/fragment 保留", () => {
+  it(".en.md 折算；md 目标的 fragment 是 locale 内容不进镜像（query 保留）；非 md 目标 query/fragment 保留", () => {
     expect(normalizeLinkTarget("foo.en.md")).toBe("foo.md");
-    expect(normalizeLinkTarget("foo.en.md#s")).toBe("foo.md#s");
+    expect(normalizeLinkTarget("foo.en.md#s")).toBe("foo.md");
+    expect(normalizeLinkTarget("foo.en.md#已知欠账")).toBe("foo.md");
     expect(normalizeLinkTarget("foo.en.md?q=1")).toBe("foo.md?q=1");
+    expect(normalizeLinkTarget("foo.en.md?q=1#s")).toBe("foo.md?q=1");
     expect(normalizeLinkTarget("bar.md")).toBe("bar.md");
+    expect(normalizeLinkTarget("bar.md#s")).toBe("bar.md");
+    expect(normalizeLinkTarget("../scripts/x.mjs#L3")).toBe("../scripts/x.mjs#L3");
   });
 });
 
@@ -261,5 +268,80 @@ describe("parsePairingCliArgs", () => {
       anchors: ["docs/a.md"],
     });
     expect(parsePairingCliArgs(["--", "docs/a.md"]).mode).toBe("check");
+  });
+});
+
+describe("parseLinkTarget", () => {
+  it("拆 path 与 fragment，剥 query，percent-decode", () => {
+    expect(parseLinkTarget("b.md")).toEqual({ external: false, path: "b.md", fragment: null });
+    expect(parseLinkTarget("b.md#sec")).toEqual({ external: false, path: "b.md", fragment: "sec" });
+    expect(parseLinkTarget("b.md?raw#sec")).toEqual({ external: false, path: "b.md", fragment: "sec" });
+    expect(parseLinkTarget("#sec")).toEqual({ external: false, path: "", fragment: "sec" });
+    expect(parseLinkTarget("My%20File.md")).toEqual({ external: false, path: "My File.md", fragment: null });
+    expect(parseLinkTarget("b.md#")).toEqual({ external: false, path: "b.md", fragment: null });
+  });
+  it("坏 percent 转义回退原文（%zz 不是谁真想链的文件）", () => {
+    expect(parseLinkTarget("%zz.md").path).toBe("%zz.md");
+    expect(parseLinkTarget("b.md#%zz").fragment).toBe("%zz");
+  });
+  it("外链识别：scheme、协议相对、根绝对", () => {
+    expect(parseLinkTarget("https://x/y#z").external).toBe(true);
+    expect(parseLinkTarget("mailto:a@b").external).toBe(true);
+    expect(parseLinkTarget("//host/x.md").external).toBe(true);
+    expect(parseLinkTarget("/abs/x.md").external).toBe(true);
+  });
+});
+
+describe("githubSlug", () => {
+  it("小写、丢标点、空格→连字符；下划线保留、CJK 保留", () => {
+    expect(githubSlug("Status 与文件夹互检")).toBe("status-与文件夹互检");
+    expect(githubSlug("Showcase: web_fetch")).toBe("showcase-web_fetch");
+    expect(githubSlug("What the model sees / Token effect")).toBe("what-the-model-sees--token-effect");
+  });
+});
+
+describe("documentAnchors", () => {
+  it("标题 slug + 显式 <a id>；重复 slug 占位计数 -1、-2", () => {
+    const text = [
+      "# T",
+      "",
+      "## Repeat",
+      "",
+      "## Repeat",
+      "",
+      "## Repeat",
+      "",
+      '<a id="explicit"></a>',
+      "",
+    ].join("\n");
+    const anchors = documentAnchors(text);
+    expect(anchors.has("t")).toBe(true);
+    expect(anchors.has("repeat")).toBe(true);
+    expect(anchors.has("repeat-1")).toBe(true);
+    expect(anchors.has("repeat-2")).toBe(true);
+    expect(anchors.has("explicit")).toBe(true);
+    expect(anchors.has("nope")).toBe(false);
+  });
+  it("围栏与 HTML 注释里的标题/id 不算数；标题里的链接取可见文字", () => {
+    const text = [
+      "## See [docs](x.md)",
+      "",
+      "```md",
+      "## Fenced",
+      '```',
+      "",
+      "<!--",
+      '## Commented <a id="ghost">',
+      "-->",
+      "",
+      '<a id="real"></a>',
+    ].join("\n");
+    const anchors = documentAnchors(text);
+    expect(anchors.has("see-docs")).toBe(true);
+    expect(anchors.has("see-docsxmd")).toBe(false);
+    expect(anchors.has("fenced")).toBe(false);
+    expect(anchors.has("commented")).toBe(false);
+    expect(anchors.has("ghost")).toBe(false);
+    expect(anchors.has("real")).toBe(true);
   });
 });
