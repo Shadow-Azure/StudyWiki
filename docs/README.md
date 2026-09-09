@@ -14,7 +14,7 @@
 | [development.md](development.md) | 贡献者上手 | 460 |
 | [commands.md](commands.md) | Tauri 命令目录（生成区） | 150 |
 | [i18n/README.md](i18n/README.md) | 双语配对契约 | 700 |
-| [AGENTS.md](AGENTS.md)（docs 子树标准） | 层级分工、写作规则、门禁 | 690 |
+| [AGENTS.md](AGENTS.md)（docs 子树标准） | 层级分工、写作规则、门禁 | 700 |
 | [release-checklist.md](release-checklist.md) | 发布门禁清单 | 350 |
 | [postmortem/README.md](postmortem/README.md) | 事故复盘层级说明 | 170 |
 

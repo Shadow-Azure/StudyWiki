@@ -14,7 +14,7 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 | [development.md](development.en.md) | Contributor onboarding | 460 |
 | [commands.md](commands.en.md) | Tauri command catalog (generated region) | 150 |
 | [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract | 700 |
-| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 690 |
+| [AGENTS.md](AGENTS.md) (docs subtree standard) | Tiering, writing rules, gates | 700 |
 | [release-checklist.md](release-checklist.en.md) | Release gate checklist | 350 |
 | [postmortem/README.md](postmortem/README.en.md) | Incident-review tier description | 170 |
 
