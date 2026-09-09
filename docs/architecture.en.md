@@ -8,16 +8,19 @@ English | [中文](architecture.md)
 
 StudyWiki is a single-window Tauri 2 desktop app with two layers:
 
+<!-- BEGIN GENERATED code-map (scripts/gen-code-map.mjs) — do not edit between markers -->
+```text
+src/          前端（TypeScript + Vite，无 UI 框架）
+  main.ts     入口：侧栏文件列表 + 查看器分发（→ styles.css、types.ts）
+  styles.css  样式（无逻辑）
+  types.ts    LibraryEntry —— 前后端共享的唯一形状
+src-tauri/    Rust 壳
+  lib.rs      tauri::Builder + 两条命令
+  main.rs     入口壳（Windows 隐藏控制台）（→ lib.rs）
 ```
-src/            前端（TypeScript + Vite，无 UI 框架）
-  main.ts         入口：侧栏文件列表 + 查看器分发
-  types.ts        LibraryEntry —— 前后端共享的唯一形状
-src-tauri/      Rust 壳
-  lib.rs          tauri::Builder + 两条命令
-  main.rs         入口壳（Windows 隐藏控制台）
-```
+<!-- END GENERATED code-map -->
 
-`types.ts` and the Rust-side `LibraryEntry` are the single shape shared across the frontend/backend boundary. Declarations pasted into docs use type-equiv fences notarized against source (`scripts/verify-type-equiv.mjs`, verbatim equivalence; changing source without syncing the doc goes red):
+The composition tree is a generated region: file roles are registered in [code-map.manifest.json](../scripts/code-map.manifest.json) and internal dependencies (→) are derived from source imports; register and run `pnpm gen:code-map` after adding/removing source files or changing imports. `types.ts` and the Rust-side `LibraryEntry` are the single shape shared across the frontend/backend boundary. Declarations pasted into docs use type-equiv fences notarized against source (`scripts/verify-type-equiv.mjs`, verbatim equivalence; changing source without syncing the doc goes red):
 
 ```ts type-equiv
 /** A playable or readable file inside the opened library. */

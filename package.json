@@ -15,8 +15,10 @@
     "verify:env-independence": "node scripts/verify-env-independence.mjs",
     "record:i18n": "node scripts/verify-translation-pairing.mjs --write",
     "gen:commands": "node scripts/gen-commands-catalog.mjs",
+    "gen:code-map": "node scripts/gen-code-map.mjs",
     "verify:commands": "node scripts/gen-commands-catalog.mjs --check",
     "install:hooks": "node scripts/install-git-hooks.mjs",
+    "route:gates": "node scripts/route-gates.mjs",
     "archive:note": "node scripts/archive-agent-note.mjs",
     "test": "vitest run"
   },

@@ -32,12 +32,19 @@ describe("run-gates 模式组合", () => {
       "verify-type-equiv",
       "verify-export-docs",
       "verify-doc-refs",
+      "verify-code-map",
       "doc-typecheck",
       "verify-commands-catalog",
       "verify-md-links",
       "verify-env-independence",
+      "gate-self-tests",
     ])
       expect(MODES["doc-sync"], `doc-sync 缺 ${leaf}`).toContain(leaf);
+  });
+
+  it("gate-self-tests 刻意不进 doc-quick（快速档保秒级，vitest 启动秒级成本归全量档）", () => {
+    expect(MODES["doc-quick"]).not.toContain("gate-self-tests");
+    expect(MODES["doc-sync"]).toContain("gate-self-tests");
   });
 });
 

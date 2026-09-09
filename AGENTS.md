@@ -19,9 +19,11 @@ pnpm verify:release      # 发布前校验（含环境无关性）
 pnpm verify:commands     # 命令目录新鲜度 --check（doc-sync 已含）
 pnpm record:i18n -- <pair>  # 双语配对重录（契约见 docs/i18n/README.md）
 pnpm gen:commands        # 重建命令目录生成区（改 lib.rs 命令后）
+pnpm gen:code-map        # 重建架构组成树生成区（源文件或职责变更后）
+pnpm route:gates         # 按改动面推荐门禁组合（默认工作树，--base <ref> 看区间）
 pnpm archive:note -- <base.md>  # 冻结归档一条 implemented note
 pnpm test                # 门禁自测试（vitest）
-pnpm install:hooks       # 装 git 钩子并注册 i18n merge driver（每 clone 一次，内容见 docs/development.md）
+pnpm install:hooks       # 装 git 钩子并注册 i18n merge driver（每 clone 一次）
 ```
 
 ## 惯例
