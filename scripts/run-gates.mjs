@@ -13,6 +13,7 @@ import verifyEnvIndependence from "./verify-env-independence.mjs";
 import verifyTranslationPairing from "./verify-translation-pairing.mjs";
 import verifyTypeEquiv from "./verify-type-equiv.mjs";
 import verifyExportDocs from "./verify-export-docs.mjs";
+import verifyDocRefs from "./verify-doc-refs.mjs";
 import verifyArchivedAgentNotes from "./verify-archived-agent-notes.mjs";
 import docTypecheck from "./doc-typecheck.mjs";
 
@@ -31,6 +32,7 @@ export const LEAVES = {
   "verify-translation-pairing": () => verifyTranslationPairing([]),
   "verify-type-equiv": verifyTypeEquiv,
   "verify-export-docs": verifyExportDocs,
+  "verify-doc-refs": verifyDocRefs,
   "doc-typecheck": docTypecheck,
   "verify-commands-catalog": async () => {
     const { execFileSync } = await import("node:child_process");
@@ -68,6 +70,7 @@ export const MODES = {
     "verify-translation-pairing",
     "verify-type-equiv",
     "verify-export-docs",
+    "verify-doc-refs",
   ],
   // 全量文档档：死链 + 环境无关源检查 + ts 围栏真实编译 + 生成区新鲜度。
   "doc-sync": [
@@ -80,6 +83,7 @@ export const MODES = {
     "verify-translation-pairing",
     "verify-type-equiv",
     "verify-export-docs",
+    "verify-doc-refs",
     "doc-typecheck",
     "verify-commands-catalog",
     "verify-md-links",
@@ -96,6 +100,7 @@ export const MODES = {
     "verify-translation-pairing",
     "verify-type-equiv",
     "verify-export-docs",
+    "verify-doc-refs",
     "doc-typecheck",
     "verify-commands-catalog",
     "verify-md-links",

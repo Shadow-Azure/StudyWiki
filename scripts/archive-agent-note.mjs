@@ -3,7 +3,7 @@
 // 是否归档是语义判断，归人（README：不向配额归档，字数/年龄只是发现辅助）；
 // 本脚本只做机械部分：移动三件套 → base/en 第三行改 "Status: archived" →
 // 每文件 sha256 记入 append-only manifest → 报告活语料里指向旧路径的链接（须同 PR 修补）。
-// 用法：pnpm archive:note -- .agents/notes/implemented/process/2026-01-01-x.md
+// 用法：pnpm archive:note -- `.agents/notes/implemented/process/2026-01-01-x.md`
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { readdir } from "node:fs/promises";
