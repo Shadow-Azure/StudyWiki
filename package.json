@@ -14,6 +14,7 @@
     "verify:release": "node scripts/run-gates.mjs --mode release",
     "verify:env-independence": "node scripts/verify-env-independence.mjs",
     "verify:dep-audit": "node scripts/verify-dep-audit.mjs",
+    "verify:layering": "node scripts/verify-layering.mjs",
     "record:i18n": "node scripts/verify-translation-pairing.mjs --write",
     "gen:commands": "node scripts/gen-commands-catalog.mjs",
     "gen:code-map": "node scripts/gen-code-map.mjs",

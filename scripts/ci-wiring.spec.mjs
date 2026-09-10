@@ -38,6 +38,7 @@ describe("run-gates 模式组合", () => {
       "verify-md-links",
       "verify-env-independence",
       "dep-audit",
+      "layering",
       "gate-self-tests",
     ])
       expect(MODES["doc-sync"], `doc-sync 缺 ${leaf}`).toContain(leaf);

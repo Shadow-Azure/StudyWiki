@@ -40,6 +40,15 @@ export const LEAVES = {
       return { ok: false, errors: ["scripts/verify-dep-audit.mjs 退出非零（依赖面审计失败，明细见上方输出）"] };
     }
   },
+  "layering": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["scripts/verify-layering.mjs"], { stdio: "inherit" });
+      return { ok: true, errors: [] };
+    } catch {
+      return { ok: false, errors: ["scripts/verify-layering.mjs 退出非零（分层/装载缝扫描失败，明细见上方输出）"] };
+    }
+  },
   "verify-translation-pairing": () => verifyTranslationPairing([]),
   "verify-type-equiv": verifyTypeEquiv,
   "verify-export-docs": verifyExportDocs,
@@ -127,6 +136,7 @@ export const MODES = {
     "verify-md-links",
     "verify-env-independence",
     "dep-audit",
+    "layering",
     "gate-self-tests",
   ],
   // 发布档：doc-sync + 版本一致性（在 build 之后跑会连同 dist 一起扫描）。
@@ -148,6 +158,7 @@ export const MODES = {
     "verify-md-links",
     "verify-env-independence",
     "dep-audit",
+    "layering",
     "gate-self-tests",
     "verify-release",
   ],
