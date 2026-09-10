@@ -39,3 +39,21 @@ test("loadManifest: 缺失时生成默认并写回", async () => {
 test("loadManifest: 损坏清单 fail-loud", async () => {
   await expect(loadManifest(async () => "{oops", async () => {}, {})).rejects.toThrow();
 });
+
+test("loadManifest: 行缺 enabled fail-loud 点名", async () => {
+  const raw = JSON.stringify({ plugins: [{ id: "p-x", config: {} }] });
+  await expect(loadManifest(async () => raw, async () => {}, {}))
+    .rejects.toThrow(/插件清单损坏.*enabled/);
+  const rawStr = JSON.stringify({ plugins: [{ id: "p-x", enabled: "yes", config: {} }] });
+  await expect(loadManifest(async () => rawStr, async () => {}, {}))
+    .rejects.toThrow(/插件清单损坏.*enabled/);
+});
+
+test("loadManifest: config 非 object fail-loud 点名 id", async () => {
+  const raw = JSON.stringify({ plugins: [{ id: "p-y", enabled: true, config: "nope" }] });
+  await expect(loadManifest(async () => raw, async () => {}, {}))
+    .rejects.toThrow(/插件清单损坏.*p-y.*config/);
+  const rawArr = JSON.stringify({ plugins: [{ id: "p-z", enabled: true, config: [1] }] });
+  await expect(loadManifest(async () => rawArr, async () => {}, {}))
+    .rejects.toThrow(/插件清单损坏.*p-z.*config/);
+});

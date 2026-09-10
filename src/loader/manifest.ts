@@ -33,6 +33,16 @@ export async function loadManifest(
     }
     const plugins = (parsed as Manifest).plugins;
     if (!Array.isArray(plugins)) throw new Error("插件清单损坏：plugins 不是数组");
+    // 逐行形状校验：残缺行若静默跳过会伪装成"禁用"，fail-loud 点名行索引或 id。
+    plugins.forEach((row: ManifestRow, i: number) => {
+      if (typeof row?.id !== "string") throw new Error(`插件清单损坏：第 ${i} 行缺字符串 id`);
+      if (typeof row?.enabled !== "boolean") {
+        throw new Error(`插件清单损坏：条目 "${row?.id ?? i}" 的 enabled 缺失或不是布尔`);
+      }
+      if (typeof row?.config !== "object" || row?.config === null || Array.isArray(row?.config)) {
+        throw new Error(`插件清单损坏：条目 "${row?.id ?? i}" 的 config 不是对象`);
+      }
+    });
     return parsed as Manifest;
   }
   const manifest: Manifest = {
