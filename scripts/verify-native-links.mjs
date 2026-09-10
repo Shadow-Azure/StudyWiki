@@ -42,8 +42,42 @@ export function auditLinuxLinks(lines) {
     .filter((name) => !LINUX_LIBS.has(name));
 }
 
+/**
+ * Resolve the linux raw release binary name from Cargo.toml `[package].name`
+ * (cargo 产物名的权威源；无 [[bin]] 覆盖时产物即该名。按段解析，[lib] 等后续
+ * 段的同名键不掺和——本仓库 [lib].name 是 study_wiki_lib，与产物名不同）。
+ * @param {string} cargoTomlText src-tauri/Cargo.toml 的完整文本。
+ * @returns {string | null} 包名（如 "study-wiki"）；无 [package] 段或 name 键时 null。
+ */
+export function resolveLinuxBinName(cargoTomlText) {
+  let inPackage = false;
+  for (const line of cargoTomlText.split("\n")) {
+    const header = line.match(/^\s*\[(.+)\]\s*$/);
+    if (header) {
+      inPackage = header[1].trim() === "package";
+      continue;
+    }
+    if (!inPackage) continue;
+    const m = line.match(/^\s*name\s*=\s*["']([^"']+)["']\s*$/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Empty-scan verdict: bundle dir exists but nothing scannable was collected =
+ * 定位失败（fail-loud）；bundle 目录不存在 = 尚未构建（跳过）。
+ * @param {string[]} binaries collectBinaries 的收集结果。
+ * @param {boolean} bundleExists src-tauri/target/release/bundle 目录是否存在。
+ * @returns {boolean} true 即应报错退 1（而非跳过退 0）。
+ */
+export function shouldFailLoud(binaries, bundleExists) {
+  return bundleExists && binaries.length === 0;
+}
+
 /** Collect scannable binaries: darwin = every .app/Contents/MacOS file;
- * linux = the raw release binary (same link set as the deb/AppImage payload). */
+ * linux = the raw release binary named by Cargo.toml [package].name
+ * (same link set as the deb/AppImage payload; no [[bin]] override assumed). */
 function collectBinaries(root, bundleDir) {
   const out = [];
   const macosDir = path.join(bundleDir, "macos");
@@ -56,11 +90,14 @@ function collectBinaries(root, bundleDir) {
       }
     }
   }
-  // linux：productName 归一化（StudyWiki → studywiki）定位裸二进制
-  const conf = JSON.parse(readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
-  const binName = String(conf.productName ?? "studywiki").toLowerCase().replace(/[^a-z0-9-]/g, "");
-  const linuxBin = path.join(root, "src-tauri/target/release", binName);
-  if (process.platform === "linux" && existsSync(linuxBin)) out.push(linuxBin);
+  if (process.platform === "linux") {
+    const cargoToml = readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
+    const binName = resolveLinuxBinName(cargoToml);
+    if (binName) {
+      const linuxBin = path.join(root, "src-tauri/target/release", binName);
+      if (existsSync(linuxBin)) out.push(linuxBin);
+    }
+  }
   return out;
 }
 
@@ -74,6 +111,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const root = process.cwd();
   const bundleDir = path.join(root, "src-tauri/target/release/bundle");
   const binaries = collectBinaries(root, bundleDir);
+  if (shouldFailLoud(binaries, existsSync(bundleDir))) {
+    console.error(
+      `[native-links] bundle 目录存在（${bundleDir}）但未收集到可扫产物——linux 裸二进制定位失败` +
+        `（对照 src-tauri/Cargo.toml 的 [package].name 与 target/release 实际产物名）`,
+    );
+    process.exit(1);
+  }
   if (binaries.length === 0) {
     console.log("[native-links] 跳过：未找到发布产物（先 pnpm tauri build；release 档在其后运行）");
     process.exit(0);
