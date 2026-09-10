@@ -24,10 +24,33 @@ export function apply(
   let state: DocState = openDoc("");
   let editor: EditorHandle | null = null;
   let offGuard: (() => void) | null = null;
+  let error: string | null = null;
+
+  // 读/写失败的用户可见信号（Rust 命令错误原样显示）；× 按钮清除。
+  const errorBanner = (parent: HTMLElement): HTMLElement => {
+    const bar = document.createElement("div");
+    bar.className = "doc-error";
+    const msg = document.createElement("span");
+    msg.textContent = error ?? "";
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "×";
+    dismiss.addEventListener("click", () => { error = null; bar.remove(); });
+    bar.append(msg, dismiss);
+    parent.prepend(bar);
+    return bar;
+  };
 
   const save = async (): Promise<void> => {
     if (!current || !isDirty(state)) return;
-    await ctx.files.writeText(current.path, state.text);
+    try {
+      await ctx.files.writeText(current.path, state.text);
+    } catch (e) {
+      error = `保存失败：${(e as Error).message}`;
+      if (host) errorBanner(host);
+      return;
+    }
+    error = null;
     state = markSaved(state);
     paintChrome();
   };
@@ -43,6 +66,7 @@ export function apply(
     host.replaceChildren();
     editor?.destroy();
     editor = null;
+    if (error) errorBanner(host);
     if (!current || current.kind !== "markdown") {
       paintChrome();
       return;
@@ -80,8 +104,25 @@ export function apply(
   };
 
   const open = async (file: FileNode | null): Promise<void> => {
+    if (file?.kind === "markdown") {
+      let text: string;
+      try {
+        text = await ctx.files.readText(file.path);
+      } catch (e) {
+        current = file;
+        state = openDoc(""); // 清空正文：读失败不得停留在上一个文档的内容上
+        error = `读取失败：${(e as Error).message}`;
+        render();
+        return;
+      }
+      current = file;
+      state = openDoc(text);
+      error = null;
+      render();
+      return;
+    }
     current = file;
-    if (file?.kind === "markdown") state = openDoc(await ctx.files.readText(file.path));
+    error = null;
     render();
   };
 
