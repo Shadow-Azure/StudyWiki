@@ -27,8 +27,8 @@ fn kind_for_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
-fn kind_of(path: &Path) -> String {
-    if path.is_dir() {
+fn kind_of(path: &Path, file_type: std::fs::FileType) -> String {
+    if file_type.is_dir() {
         return "dir".into();
     }
     let ext = path
@@ -42,18 +42,23 @@ fn kind_of(path: &Path) -> String {
 }
 
 /// 纯遍历（可测）：目录在前、同级大小写不敏感排序；读取失败原样上抛。
+/// 目录性取自 `read_dir` 条目的 `file_type()`（不解析符号链接）：
+/// 指向目录的符号链接按普通条目列出（走扩展名分派）且不递归，杜绝循环。
 fn walk_dir(root: &Path) -> Result<Vec<FileNode>, String> {
     let mut out = Vec::new();
     for item in fs::read_dir(root).map_err(|e| format!("open {}: {e}", root.display()))? {
         let item = item.map_err(|e| format!("read entry: {e}"))?;
         let path = item.path();
+        let file_type = item
+            .file_type()
+            .map_err(|e| format!("file_type {}: {e}", path.display()))?;
         let mut node = FileNode {
             name: item.file_name().to_string_lossy().into_owned(),
             path: path.to_string_lossy().into_owned(),
-            kind: kind_of(&path),
+            kind: kind_of(&path, file_type),
             children: None,
         };
-        if path.is_dir() {
+        if file_type.is_dir() {
             node.children = Some(walk_dir(&path)?);
         }
         out.push(node);
@@ -127,6 +132,9 @@ mod tests {
         std::fs::write(dir.join("Sub/b.MP4"), b"x").unwrap();
         std::fs::write(dir.join("Sub/a.md"), b"x").unwrap();
         std::fs::write(dir.join("Sub/notes.txt"), b"x").unwrap();
+        // 指向 fixture 根自身的目录符号链接：验证遍历不跟随、不递归（防循环）。
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&dir, dir.join("self-loop")).unwrap();
         dir
     }
 
@@ -144,6 +152,13 @@ mod tests {
         assert_eq!(children[2].name, "notes.txt");
         assert_eq!(children[2].kind, "other");
         assert_eq!(tree[1].name, "Readme.md");
+        // 符号链接列作普通条目：kind=other、无 children、树有限（能返回即未递归成环）。
+        #[cfg(unix)]
+        {
+            assert_eq!(tree[2].name, "self-loop");
+            assert_eq!(tree[2].kind, "other");
+            assert!(tree[2].children.is_none());
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
