@@ -14,6 +14,7 @@
   "src/loader/types.ts": "内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集",
   "src/main.ts": "入口：调用每窗口 bootstrap（三行）",
   "src/plugins/app-shell/index.ts": "app-shell 插件：topbar/sidebar/main 栅格 + 三槽容器挂载 + 无 root 欢迎态",
+  "src/plugins/app-windows/index.ts": "app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口",
   "src/plugins/doc-markdown/editor.ts": "doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（basicSetup + markdown 高亮 + Mod-s 键位），测试注入假工厂",
   "src/plugins/doc-markdown/index.ts": "doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 脏标记 + Ctrl+S 保存 + 关窗守卫（file-opened 挂渲染，kind 不符清空）",
   "src/plugins/doc-markdown/mode.ts": "doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）",
