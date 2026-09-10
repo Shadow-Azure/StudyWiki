@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-// 分层纪律扫描：src/plugins/** 禁值导入 @tauri-apps/* 与 host 实现；src/** 禁动态装载（import()/eval/new Function）。
+// 分层纪律扫描：src/plugins/** 禁触达 @tauri-apps/* 与 host 实现（值导入/副作用导入/转口导出）；
+// src/** 禁动态装载（import()/eval/new Function）。
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const IMPORT_FROM = /import\s+(type\s+)?[^"';]*?from\s*["']([^"']+)["']/g;
+const SIDE_EFFECT_IMPORT = /(?<![\w.$])import\s*["']([^"']+)["']/g;
+const EXPORT_FROM = /export\s+(type\s+)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s*from\s*["']([^"']+)["']/g;
 const REQUIRE = /require\(\s*["']([^"']+)["']\s*\)/g;
+const HOST_RE = /(\.\.\/)+host(\/|$)/;
+const FORBIDDEN = (spec) => spec.startsWith("@tauri-apps/") || HOST_RE.test(spec);
 const SEAMS = [
   { name: "动态 import()", re: /(?<![.\w])import\s*\(/g },
   { name: "eval(", re: /(?<![.\w])eval\s*\(/g },
@@ -12,7 +17,9 @@ const SEAMS = [
 ];
 
 /**
- * Plugin-layer scan: value imports of @tauri-apps/* or ../host are violations.
+ * Plugin-layer scan: runtime reach of @tauri-apps/* or ../host is a violation —
+ * value imports, side-effect imports (`import "spec"`) and re-exports (`export … from "spec"`);
+ * `import type` / `export type` are compile-time-only and allowed.
  * @param {string} relPath 相对仓库根的文件路径（仅用于报错信息定位）。
  * @param {string} code 该文件的完整源码文本。
  * @returns {string[]} 违规明细列表（每项一条，空数组即该文件合规）。
@@ -23,10 +30,18 @@ export function scanPluginSource(relPath, code) {
     const [, isType, spec] = m;
     if (isType) continue;
     if (spec.startsWith("@tauri-apps/")) violations.push(`${relPath}: 值导入 ${spec}（插件只能经 ctx.* 宿主服务）`);
-    if (/(\.\.\/)+host(\/|$)/.test(spec)) violations.push(`${relPath}: 值导入宿主实现 ${spec}（import type 放行）`);
+    if (HOST_RE.test(spec)) violations.push(`${relPath}: 值导入宿主实现 ${spec}（import type 放行）`);
+  }
+  for (const m of code.matchAll(SIDE_EFFECT_IMPORT)) {
+    if (FORBIDDEN(m[1])) violations.push(`${relPath}: 副作用导入 ${m[1]}（插件只能经 ctx.* 宿主服务）`);
+  }
+  for (const m of code.matchAll(EXPORT_FROM)) {
+    const [, isType, spec] = m;
+    if (isType) continue;
+    if (FORBIDDEN(spec)) violations.push(`${relPath}: 转口值导出 ${spec}（插件只能经 ctx.* 宿主服务）`);
   }
   for (const m of code.matchAll(REQUIRE)) {
-    if (m[1].startsWith("@tauri-apps/") || /(\.\.\/)+host(\/|$)/.test(m[1])) {
+    if (FORBIDDEN(m[1])) {
       violations.push(`${relPath}: require ${m[1]}`);
     }
   }
