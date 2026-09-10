@@ -13,7 +13,7 @@
     "skipLibCheck": true,
     "useDefineForClassFields": true,
     "paths": {
-      "cordis": ["./vendor/cordis/src/index.ts"],
+      "cordis": ["./vendor/cordis/index.d.ts"],
       "cosmokit": ["./vendor/cosmokit/lib/index.d.ts"]
     }
   },
