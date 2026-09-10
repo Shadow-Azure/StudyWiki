@@ -15,6 +15,7 @@ pnpm tauri build         # 发布构建
 pnpm lint:docs           # 快速文档门禁（无构建）
 pnpm verify:docs         # 全量文档门禁
 pnpm verify:env-independence  # 环境无关性单项（doc-sync 已含）
+pnpm verify:dep-audit     # 依赖白名单精确 diff + node: 引用扫描（doc-sync 已含）
 pnpm verify:release      # 发布前校验（含环境无关性）
 pnpm verify:commands     # 命令目录新鲜度 --check（doc-sync 已含）
 pnpm record:i18n -- <pair>  # 双语配对重录（契约见 docs/i18n/README.md）
