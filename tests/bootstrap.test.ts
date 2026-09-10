@@ -13,6 +13,8 @@ function fakeEnv(table: ModuleTable) {
     if (cmd === "read_manifest") return null;
     if (cmd === "write_manifest") { written.push(String(args?.json)); return null; }
     if (cmd === "get_window_state") return null;
+    // view-filetree（内置插件）在 root 变更后重读树；桩回空树，本文件用例不断言树内容。
+    if (cmd === "read_tree") return [];
     throw new Error(`unexpected ${cmd}`);
   });
   return {

@@ -14,6 +14,8 @@
   "src/loader/types.ts": "内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集",
   "src/main.ts": "入口：调用每窗口 bootstrap（三行）",
   "src/plugins/app-shell/index.ts": "app-shell 插件：topbar/sidebar/main 栅格 + 三槽容器挂载 + 无 root 欢迎态",
+  "src/plugins/view-filetree/index.ts": "view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/手动刷新/fs 变更重读）",
+  "src/plugins/view-filetree/tree.ts": "view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）",
   "src/types.ts": "FileNode —— 前后端共享的唯一形状",
   "src/styles.css": "样式（无逻辑）",
   "src-tauri": "Rust 壳",
