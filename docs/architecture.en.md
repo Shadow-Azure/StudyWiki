@@ -10,14 +10,17 @@ StudyWiki is a single-window Tauri 2 desktop app with two layers:
 
 <!-- BEGIN GENERATED code-map (scripts/gen-code-map.mjs) — do not edit between markers -->
 ```text
-src/          前端（TypeScript + Vite，无 UI 框架）
-  main.ts     入口：侧栏文件列表 + 查看器分发（→ styles.css、types.ts）
-  styles.css  样式（无逻辑）
-  types.ts    LibraryEntry —— 前后端共享的唯一形状
-src-tauri/    Rust 壳
-  lib.rs      tauri::Builder + 文件命令 + 窗口事件接线（→ windows.rs）
-  main.rs     入口壳（Windows 隐藏控制台）（→ lib.rs）
-  windows.rs  窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO
+src/               前端（TypeScript + Vite，无 UI 框架）
+  host/emitter.ts  极简类型化事件发射器（on 返回反订阅）
+  host/files.ts    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
+  host/windows.ts  窗口服务：label/建窗/root 查询/确认框/关闭守卫（deps 可注入）
+  main.ts          入口：侧栏文件列表 + 查看器分发（→ styles.css、types.ts）
+  styles.css       样式（无逻辑）
+  types.ts         LibraryEntry —— 前后端共享的唯一形状
+src-tauri/         Rust 壳
+  lib.rs           tauri::Builder + 文件命令 + 窗口事件接线（→ windows.rs）
+  main.rs          入口壳（Windows 隐藏控制台）（→ lib.rs）
+  windows.rs       窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO
 ```
 <!-- END GENERATED code-map -->
 

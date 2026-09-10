@@ -1,6 +1,9 @@
 {
   "//": "架构组成树登记表（唯一 home）：根目录与源文件 → 一句话职责。新源文件必须登记（gen-code-map 直接红）；内部依赖从源码 import 推导，不在此登记。",
   "src": "前端（TypeScript + Vite，无 UI 框架）",
+  "src/host/emitter.ts": "极简类型化事件发射器（on 返回反订阅）",
+  "src/host/files.ts": "文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）",
+  "src/host/windows.ts": "窗口服务：label/建窗/root 查询/确认框/关闭守卫（deps 可注入）",
   "src/main.ts": "入口：侧栏文件列表 + 查看器分发",
   "src/types.ts": "LibraryEntry —— 前后端共享的唯一形状",
   "src/styles.css": "样式（无逻辑）",
