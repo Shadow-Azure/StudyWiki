@@ -5,6 +5,7 @@
   "src/types.ts": "LibraryEntry —— 前后端共享的唯一形状",
   "src/styles.css": "样式（无逻辑）",
   "src-tauri": "Rust 壳",
-  "src-tauri/src/lib.rs": "tauri::Builder + 两条命令",
+  "src-tauri/src/lib.rs": "tauri::Builder + 文件命令 + 窗口事件接线",
+  "src-tauri/src/windows.rs": "窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO",
   "src-tauri/src/main.rs": "入口壳（Windows 隐藏控制台）"
 }

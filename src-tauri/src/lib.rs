@@ -1,7 +1,9 @@
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+
+mod windows;
 
 /// 递归树节点：`kind` 由扩展名分派（单一决策点），目录递归展开。
 #[derive(Serialize)]
@@ -99,10 +101,25 @@ fn read_text_file(path: String) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let label = window.label().to_string();
+                let app = window.app_handle().clone();
+                if let Some(state) = app.try_state::<std::sync::Mutex<windows::WindowRegistry>>() {
+                    state.lock().unwrap().remove(&label);
+                }
+                let _ = app.emit("win://closed", &label);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             read_tree,
             read_text_file,
-            write_text_file
+            write_text_file,
+            windows::create_window,
+            windows::get_window_state,
+            windows::read_manifest,
+            windows::write_manifest
         ])
         .run(tauri::generate_context!())
         .expect("error while running StudyWiki");

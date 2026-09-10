@@ -15,8 +15,9 @@ src/          前端（TypeScript + Vite，无 UI 框架）
   styles.css  样式（无逻辑）
   types.ts    LibraryEntry —— 前后端共享的唯一形状
 src-tauri/    Rust 壳
-  lib.rs      tauri::Builder + 两条命令
+  lib.rs      tauri::Builder + 文件命令 + 窗口事件接线（→ windows.rs）
   main.rs     入口壳（Windows 隐藏控制台）（→ lib.rs）
+  windows.rs  窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO
 ```
 <!-- END GENERATED code-map -->
 
