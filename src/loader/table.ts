@@ -2,6 +2,7 @@ import type { PluginModule } from "./types";
 import * as appShell from "../plugins/app-shell";
 import * as viewFiletree from "../plugins/view-filetree";
 import * as docMarkdown from "../plugins/doc-markdown";
+import * as docVideo from "../plugins/doc-video";
 
 /** One static module table row. */
 export interface TableEntry {
@@ -20,4 +21,5 @@ Object.assign(MODULE_TABLE, {
   "app-shell": { plugin: appShell as PluginModule, defaults: { title: "StudyWiki" } },
   "view-filetree": { plugin: viewFiletree as PluginModule, defaults: { ignoreDotfiles: true } },
   "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
+  "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
 });
