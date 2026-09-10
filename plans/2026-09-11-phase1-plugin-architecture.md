@@ -286,13 +286,13 @@ fn write_text_file(app: tauri::AppHandle, path: String, contents: String) -> Res
 - [ ] **Step 4: 跑测试通过 + 命令目录重生成**
 
 Run: `cd src-tauri && cargo test` → PASS；`cargo fmt`。
-Run: `pnpm gen:commands`
-Expected: `docs/commands.md` 与 `.en.md` 生成区更新为三条命令。
+Run: `pnpm gen:commands` && `pnpm record:i18n -- docs/commands.md`
+Expected: `docs/commands.md` 与 `.en.md` 生成区更新为三条命令；三件套 yaml 重录（commands 是语料，改了双侧不重录配对门禁即红）。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src-tauri/src/lib.rs docs/commands.md docs/commands.en.md
+git add src-tauri/src/lib.rs docs/commands.md docs/commands.en.md docs/commands.i18n.yaml
 git commit -m "Rust 文件面：read_tree 递归树 + write_text_file 落盘广播 fs://changed
 
 list_library 退役：文件树需要目录递归与展开折叠，平铺清单不够用；
@@ -435,10 +435,10 @@ mod windows;
 
 - [ ] **Step 4: 测试 + 生成 + 提交**
 
-Run: `cd src-tauri && cargo test` → PASS；`cargo fmt`；`pnpm gen:commands`。
+Run: `cd src-tauri && cargo test` → PASS；`cargo fmt`；`pnpm gen:commands` && `pnpm record:i18n -- docs/commands.md`（三件套重录）。
 
 ```bash
-git add src-tauri/src/ docs/commands.md docs/commands.en.md
+git add src-tauri/src/ docs/commands.md docs/commands.en.md docs/commands.i18n.yaml
 git commit -m "Rust 窗口注册表 + manifest IO：label→root 权威、win://closed、原子清单
 
 多窗口的根基：窗口由 Rust 创建，root 的唯一权威在注册表（重载不丢）；
@@ -2660,7 +2660,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 - `AGENTS.md` 命令清单补 `pnpm verify:dep-audit` / `pnpm verify:layering` / `pnpm verify:native-links` 三行。
 - 更新 `scripts/gate-coverage.spec.mjs` 与 `scripts/ci-wiring.spec.mjs` 的期望（新叶进 LEAVES、release 档组合、ROUTES 条数）——先读这两个 spec 的现有断言再改，保持风格一致。
 
-- [ ] **Step 4: 跑全部门禁自测试** — Run: `pnpm test` → PASS（含三个新 spec 与更新后的两个旧 spec）；`pnpm lint:docs` → 通过。
+- [ ] **Step 4: 跑全部门禁自测试** — Run: `pnpm test` → PASS（含三个新 spec 与更新后的两个旧 spec）。`pnpm lint:docs` **不在本任务跑**：commands/architecture 三件套的计划内漂移到 Task 16 才收口，此处跑了必红；全量文档校验收敛在 Task 16 Step 5。
 
 - [ ] **Step 5: Commit**
 
