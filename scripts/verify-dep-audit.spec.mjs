@@ -29,13 +29,14 @@ test("白名单过期（登记未用）也红", () => {
   expect(r.errors.some((e) => e.includes("过期"))).toBe(true);
 });
 
-test("nodeRefExempt 按包内相对路径豁免 node: 命中（其余检查不受影响）", () => {
+test("nodeRefExempt 按包内相对路径豁免：命中文件放行，同表下非豁免文件仍红", () => {
   const r = auditDependencies(
     { dependencies: { sample: "1.0.0", sneaky: "2.0.0" } },
     ["sample"],
     fx("dirty/node_modules"),
     { sample: ["index.js"] },
   );
-  expect(r.errors.some((e) => e.includes("node:"))).toBe(false);
-  expect(r.errors.some((e) => e.includes("sneaky") && e.includes("未登记"))).toBe(true);
+  expect(r.errors.some((e) => e.includes("sample/index.js"))).toBe(false); // 豁免文件放行
+  expect(r.errors.some((e) => e.includes("sample/other.js") && e.includes("node:path"))).toBe(true); // 非豁免命中仍红（防退化成包级豁免）
+  expect(r.errors.some((e) => e.includes("sneaky") && e.includes("未登记"))).toBe(true); // 白名单检查不受影响
 });
