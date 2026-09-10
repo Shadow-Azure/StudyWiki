@@ -33,11 +33,11 @@ pnpm tauri dev     # 开发：改 src/ 或 src-tauri/ 均热更/重编
 
 ```ts
 import { invoke } from "@tauri-apps/api/core";
-import type { LibraryEntry } from "./src/types";
+import type { FileNode } from "./src/types";
 
 // 侧栏数据源：已按扩展名分类、按名称排序的条目
 const root = "/path/to/library";
-const entries: LibraryEntry[] = await invoke("list_library", { root });
+const entries: FileNode[] = await invoke("read_tree", { root });
 ```
 
 ## 提交与发布

@@ -9,6 +9,3 @@ export type FileNode = {
   /** Present only for directories. */
   children?: FileNode[];
 };
-
-/** @deprecated 旧名，Task 7 重写 main.ts 时删除。 */
-export type LibraryEntry = FileNode;
