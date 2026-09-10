@@ -23,13 +23,13 @@ fn write_text_file(app: tauri::AppHandle, path: String, contents: String) -> Res
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String>;
 
-/// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow。
+/// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]
 pub fn create_window(app: AppHandle, state: tauri::State<'_, Mutex<WindowRegistry>>, root: Option<String>) -> Result<String, String>;
 
-/// 查询某窗口的工作区根（main 窗口启动时为 None）。
+/// 查询某窗口的工作区根；未登记或未设 root 均返回 None（前端归一为欢迎态）。
 #[tauri::command]
-pub fn get_window_state(state: tauri::State<'_, Mutex<WindowRegistry>>, label: String) -> Option<Option<String>>;
+pub fn get_window_state(state: tauri::State<'_, Mutex<WindowRegistry>>, label: String) -> Option<String>;
 
 /// 读插件清单（app 配置目录 plugins.json）；不存在返回 None，由前端生成默认。
 #[tauri::command]

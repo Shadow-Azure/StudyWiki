@@ -25,7 +25,7 @@ impl WindowRegistry {
     }
 }
 
-/// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow。
+/// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]
 pub fn create_window(
     app: AppHandle,
@@ -33,21 +33,25 @@ pub fn create_window(
     root: Option<String>,
 ) -> Result<String, String> {
     let label = state.lock().unwrap().register(root.clone());
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
+    if let Err(e) = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
         .title("StudyWiki")
         .inner_size(1180.0, 760.0)
         .build()
-        .map_err(|e| format!("create window {label}: {e}"))?;
+    {
+        // build 失败的窗口不会触发 Destroyed 事件，登记项必须手动回滚。
+        state.lock().unwrap().remove(&label);
+        return Err(format!("create window {label}: {e}"));
+    }
     Ok(label)
 }
 
-/// 查询某窗口的工作区根（main 窗口启动时为 None）。
+/// 查询某窗口的工作区根；未登记或未设 root 均返回 None（前端归一为欢迎态）。
 #[tauri::command]
 pub fn get_window_state(
     state: tauri::State<'_, Mutex<WindowRegistry>>,
     label: String,
-) -> Option<Option<String>> {
-    state.lock().unwrap().get(&label)
+) -> Option<String> {
+    state.lock().unwrap().get(&label).flatten()
 }
 
 /// 读插件清单（app 配置目录 plugins.json）；不存在返回 None，由前端生成默认。
@@ -90,7 +94,20 @@ mod tests {
         assert_eq!(a, "win-1");
         assert_eq!(b, "win-2");
         assert_eq!(reg.get("win-2"), Some(Some("/tmp/x".into())));
+        // 注册表层保留两层语义：未设 root = Some(None)，未知窗口 = None。
+        assert_eq!(reg.get("win-1"), Some(None));
         reg.remove("win-2");
         assert_eq!(reg.get("win-2"), None);
+    }
+
+    #[test]
+    fn command_view_flattens_rootless_and_unknown_to_none() {
+        // get_window_state 对 wire 的契约：两层压平后未设 root 与未登记同形。
+        let mut reg = WindowRegistry::default();
+        let rootless = reg.register(None);
+        assert_eq!(reg.get(&rootless).flatten(), None);
+        assert_eq!(reg.get("ghost").flatten(), None);
+        let rooted = reg.register(Some("/tmp/y".into()));
+        assert_eq!(reg.get(&rooted).flatten(), Some("/tmp/y".into()));
     }
 }
