@@ -723,7 +723,8 @@ deps 注入是全前端唯一 mock 点，透传与错误上抛由测试锁死。
 ### Task 5: 宿主服务 workspace / slots
 
 **Files:**
-- Create: `src/host/workspace.ts`、`src/host/slots.ts`、`src/host/context.d.ts`
+- Create: `src/host/workspace.ts`、`src/host/slots.ts`、`src/host/context.d.ts`、`vendor/cordis/index.d.ts`
+- Modify: `tsconfig.json`（paths 的 `cordis` 换向，见 Step 3）
 - Test: `tests/host-workspace-slots.test.ts`
 
 **Interfaces:**
@@ -900,12 +901,63 @@ declare module "cordis" {
 }
 ```
 
-- [ ] **Step 3: 跑测试通过** — Run: `pnpm test -- host-workspace-slots` → PASS。
+- [ ] **Step 3: cordis 类型面换向（手写声明，vendor 源码零 tsc 补丁）**
 
-- [ ] **Step 4: Commit**
+背景：vendor 源码直接进 tsc 程序会在 strict 下报约 25 个内部错（Task 1 实测）。裁决：tsc 与 vite 分离——`tsconfig.json` 的 `paths` 把 `"cordis"` 换向手写声明，`vite.config.ts` 的 alias 保持指 `vendor/cordis/src/index.ts`（运行时真实源码，vitest 同样走它）。运行时行为由 Task 1 冒烟测试与 Task 6 装载审计钉死；类型面只覆盖本仓库实际使用的 API。
+
+创建 `vendor/cordis/index.d.ts`（**成员与数值必须对照 `vendor/cordis/src/fiber.ts` 等实际源码抄写，不得凭记忆猜**）：
+
+```ts
+// 手写 cordis v4 类型面：tsc 走这里；vite/vitest alias 仍指 src/index.ts（运行时真实源码）。
+// 升级 fork 时同步本文件（登记在 vendor/VENDORED.md）。符号集 = 本仓库实际使用的 API 面。
+
+/** Fiber 生命周期状态（数值对照 vendor/cordis/src/fiber.ts 逐字抄写）。 */
+export declare enum FiberState {
+  PENDING = 0,
+  LOADING = 1,
+  ACTIVE = 2,
+  FAILED = 3,
+  DISPOSED = 4,
+}
+
+/** 插件 fiber：ctx.plugin() 的返回值。 */
+export interface Fiber {
+  /** 当前生命周期状态。 */
+  state: FiberState;
+}
+
+/** 服务反射面（本仓库使用的子集）。 */
+export interface Reflect {
+  /** 以 name 提供服务，占据 ctx.<name>。 */
+  provide(name: string, instance: unknown): void;
+}
+
+/** 宿主上下文：插件 apply 的第一参数；宿主服务经 src/host/context.d.ts 声明合并挂入。 */
+export declare class Context {
+  /** 服务反射面。 */
+  reflect: Reflect;
+  /** 装载插件并返回其 fiber。 */
+  plugin(plugin: unknown, config?: unknown): Fiber;
+}
+```
+
+`tsconfig.json` 的 `compilerOptions.paths` 改为：
+
+```json
+"paths": {
+  "cordis": ["./vendor/cordis/index.d.ts"],
+  "cosmokit": ["./vendor/cosmokit/lib/index.d.ts"]
+}
+```
+
+验证：`pnpm build`（tsc 走声明、vite 走源码）与 `pnpm test` 双绿。若 `FiberState` 数值与源码不符，以 `vendor/cordis/src/fiber.ts` 为准修正本文件——这是换向方案唯一的漂移点，靠对照抄写消除。
+
+- [ ] **Step 4: 跑测试与构建双绿** — Run: `pnpm test -- host-workspace-slots` → PASS；`pnpm test`（全量）与 `pnpm build` → PASS（换向后 tsc/vite 双通道各自验证）。
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/host/ tests/host-workspace-slots.test.ts
+git add src/host/ vendor/cordis/index.d.ts tsconfig.json tests/host-workspace-slots.test.ts
 git commit -m "宿主服务 workspace/slots：窗口态状态机 + 类型化槽位注册表
 
 workspace 是窗口 scope 的唯一状态家（root/activeFile）；
