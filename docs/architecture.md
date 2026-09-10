@@ -2,11 +2,11 @@
 
 [English](architecture.en.md) | 中文
 
-> 类型：参考 | 层级：架构地图。改 `src/` 或 `src-tauri/` 前必读。决策理由不在这里——见对应 Agent Note。
+> 类型：参考 | 层级：架构地图。改 `src/` 或 `src-tauri/` 前必读。决策理由见 Agent Note。
 
 ## 组成
 
-StudyWiki 是单窗口 Tauri 2 桌面应用，两层：
+多窗口 Tauri 2 桌面应用：Rust 壳全局一份，前端每窗口一份（cordis Context + 装载器 + 内置插件），插件只经宿主服务触达系统能力。理由见[插件化 Agent Note](../.agents/notes/implemented/architecture/2026-09-10-plugin-architecture.md)。
 
 <!-- BEGIN GENERATED code-map (scripts/gen-code-map.mjs) — do not edit between markers -->
 ```text
@@ -38,34 +38,39 @@ src-tauri/                         Rust 壳
   lib.rs                           tauri::Builder + 文件命令 + 窗口事件接线（→ windows.rs）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   windows.rs                       窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO
+vendor/                            vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md
 ```
 <!-- END GENERATED code-map -->
 
-组成树走生成区：文件职责登记在 [code-map.manifest.json](../scripts/code-map.manifest.json)，内部依赖（→）从源码 import 推导；加/删源文件或改 import 后登记并跑 `pnpm gen:code-map`。`types.ts` 与 Rust 侧 `LibraryEntry` 是前后端共享的唯一形状。文档侧贴的声明用 type-equiv 围栏与源码公证（`scripts/verify-type-equiv.mjs`，逐字等价，改源码不同步文档即红）：
+树职责登记在 [code-map.manifest.json](../scripts/code-map.manifest.json)，依赖（→）从 import 推导，改源码后跑 `pnpm gen:code-map`。`FileNode`（TS/Rust 同形）是前后端共享的唯一形状；声明贴 type-equiv 围栏公证（漂移即红）：
 
 ```ts type-equiv
-/** A playable or readable file inside the opened library. */
-export type LibraryEntry = {
-  /** File name including extension. */
+/** One node of the opened library's file tree. */
+export type FileNode = {
+  /** File or directory name including extension. */
   name: string;
-  /** Absolute path, used for reads and asset-protocol URLs. */
+  /** Absolute path — used for reads/writes and asset-protocol URLs. */
   path: string;
-  /** Dispatches the viewer: markdown or video. */
-  kind: "markdown" | "video";
+  /** Dispatches handling: directories expand; markdown/video open; other lists only. */
+  kind: "dir" | "markdown" | "video" | "other";
+  /** Present only for directories. */
+  children?: FileNode[];
 };
 ```
 
-命令面的权威清单（含签名）在 [commands.md](commands.md) 的生成区，源码改后跑 `pnpm gen:commands` 同步。
+命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：用户选文件夹（dialog 插件）→ `list_library` 命令扫描并按扩展名分类 → 前端渲染侧栏 → 点开文件 → Markdown 走 `read_text_file` + markdown-it 前端渲染；视频走 `convertFileSrc`（asset protocol）交给系统 webview 的 `<video>` 解码。
+数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。
 
 ## 关键决策点
 
-- **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS` / `VIDEO_EXTS`）：单一决策点，前端不重复判断。
-- **`assetProtocol.scope: ["**"]`**：用户可打开任意文件夹，无法预先收窄；靠 CSP 的 `media-src`/`img-src` 限制其他资源。收紧 scope 是 [安全边界已知欠账](environment-independence.md#已知欠账)。
-- **markdown-it 在构建期打包进 bundle**，`html: false` 关闭内嵌 HTML：环境无关约束（见下）的直接推论，同时降低 XSS 面。
-- **系统 webview 做渲染与视频解码**（macOS WKWebView / Windows WebView2 / Linux webkit2gtk）：这是体积与依赖的取舍，边界与补救见 [environment-independence.md](environment-independence.md)。
+- **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS` / `VIDEO_EXTS`）：单一决策点。
+- **vendored cordis，取契约弃装载器**：静态模块表 + 清单装载，组合是数据；升级 = 手动 diff + [vendor/VENDORED.md](../vendor/VENDORED.md) 登记。
+- **分层纪律**：`src/plugins/` 禁 import `@tauri-apps/*`（`pnpm verify:layering` 校验）；全局状态住 Rust，窗口状态住 Context。
+- **`assetProtocol.scope: ["**"]`**：用户可开任意文件夹，无法预收窄；CSP 的 `media-src`/`img-src` 限其他资源；收紧是[已知欠账](environment-independence.md#已知欠账)。
+- **markdown-it 构建期打包，`html: false`**：环境无关（见下）推论，兼降 XSS 面。
+- **系统 webview 做渲染与视频解码**（WKWebView / WebView2 / webkit2gtk）：体积与依赖取舍，见 [environment-independence.md](environment-independence.md)。
 
 ## 环境无关性
 
-架构上任何新增能力都要过一道检查：会不会引入运行期环境依赖？规则、门禁与豁免登记的唯一 home 是 [environment-independence.md](environment-independence.md)。
+新增能力过一道检查：会不会引入运行期环境依赖？规则与豁免登记唯一 home 是 [environment-independence.md](environment-independence.md)。

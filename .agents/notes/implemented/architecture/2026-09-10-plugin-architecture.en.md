@@ -1,6 +1,6 @@
 # Agent Note: Plugin architecture: cordis contract + dual-habitat plugins
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-09-10-plugin-architecture.md)
 
@@ -114,3 +114,4 @@ Each layer tests only its own logic; the Tauri/webview boundary is mocked; real 
 - **Behavioral-consistency clause refined**: only same version + same plugin set guarantees consistency; user-side variation from external plugins is by design, backstopped by the apiVersion load-refusal mechanism.
 - **Command surface change**: `list_library` retires (replaced by `read_tree`); the command catalog and type-equivalence fences update accordingly — normal gate flow.
 - **The Phase 2 exemption is pre-registered at the rule level**: networking happens only during the "install external plugin" action; running stays offline; when this Note lands as implemented, the environment-independence.md registration row is synced.
+- **The iron-rule amendments landed in sync with this Note becoming implemented**: the environment-independence.md clause 2/3 amendments, the external-plugin clause, the exemption pre-registration, and the debt updates are all in the sole home.

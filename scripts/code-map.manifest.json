@@ -27,5 +27,6 @@
   "src-tauri": "Rust 壳",
   "src-tauri/src/lib.rs": "tauri::Builder + 文件命令 + 窗口事件接线",
   "src-tauri/src/windows.rs": "窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO",
-  "src-tauri/src/main.rs": "入口壳（Windows 隐藏控制台）"
+  "src-tauri/src/main.rs": "入口壳（Windows 隐藏控制台）",
+  "vendor": "vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md"
 }

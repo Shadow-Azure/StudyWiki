@@ -76,6 +76,7 @@ describe("reconcileManifest", () => {
     "src/styles.css": "样式",
     "src-tauri": "壳",
     "src-tauri/src/lib.rs": "命令",
+    vendor: "vendored",
   };
 
   it("全部登记时通过", () => {
@@ -159,6 +160,7 @@ describe("renderTree 与 splice", () => {
     "src-tauri": "Rust 壳",
     "src-tauri/src/lib.rs": "tauri::Builder + 两条命令",
     "src-tauri/src/main.rs": "入口壳（Windows 隐藏控制台）",
+    vendor: "vendored 上游源码",
   };
   const deps = {
     "src/main.ts": ["src/styles.css", "src/types.ts"],
@@ -176,6 +178,7 @@ describe("renderTree 与 splice", () => {
         "src-tauri/    Rust 壳",
         "  lib.rs      tauri::Builder + 两条命令",
         "  main.rs     入口壳（Windows 隐藏控制台）（→ lib.rs）",
+        "vendor/       vendored 上游源码",
         "```",
       ].join("\n"),
     );

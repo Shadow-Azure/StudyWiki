@@ -6,12 +6,13 @@ English | [中文](environment-independence.md)
 
 ## Constraint definition
 
-The released client (installer / executable artifacts) satisfies all of the following clauses, which together mean "depends on no environment":
+The released artifacts satisfy all of the following clauses, which together mean "depends on no environment":
 
 1. **Zero runtime prerequisites**: the user's machine needs no preinstalled Node, Python, JRE, browser, ffmpeg/codec packages, or any dev dependency of this project.
-2. **Fully offline**: installation and runtime touch no network; frontend resources are bundled into the artifact at build time — no CDN, external scripts/styles, or runtime downloads.
-3. **Consistent behavior**: functionality is unaffected by environment variables or global config files; the same version of the artifact behaves identically on any machine meeting the OS minimum.
+2. **Core and built-in plugins offline**: the core and all built-in plugins are bundled into the artifact at build time; installation and runtime touch no network — no CDN, external scripts/styles, or runtime downloads.
+3. **Consistent behavior**: functionality is unaffected by environment variables or global config files; the same version plus the same plugin set behaves identically on any machine meeting the OS minimum.
 4. **Self-contained install**: the installer carries all its prerequisites (see "system webview boundary" below).
+5. **External plugins** (rule written now, effective in Phase 2): an external plugin is a local resource the user installs deliberately — the install action may go online and only via registry tarball direct fetch; after install everything runs offline; always a pre-bundled zero-dependency single file, and the host refuses any other shape.
 
 ## System webview boundary (the only platform dependency)
 
@@ -19,11 +20,9 @@ Tauri embeds no browser engine; it relies on the OS webview: macOS WKWebView (sy
 
 ## Mechanical gates
 
-- `pnpm verify:env-independence` ([scripts/verify-env-independence.mjs](../scripts/verify-env-independence.mjs)):
-  - `tauri.conf.json`'s Windows `webviewInstallMode` must be `offlineInstaller`;
-  - checks that script/style references in `dist/` build artifacts contain no external URLs;
-  - checks that `src/` and `index.html` reference no `http(s)://` resources (`docs/` links are unrestricted).
-- The release pipeline runs the script above on the artifacts and aborts on red (see [release.yml](../.github/workflows/release.yml)).
+- `pnpm verify:env-independence` ([scripts/verify-env-independence.mjs](../scripts/verify-env-independence.mjs)): `tauri.conf.json`'s Windows `webviewInstallMode` must be `offlineInstaller`; `dist/` artifacts reference no external resource URLs; `src/` and `index.html` reference no `http(s)://` URLs (`docs/` links are unrestricted).
+- `pnpm verify:native-links`: otool/ldd scan of release artifacts for dynamic links (release mode; build first).
+- The release pipeline runs the scripts above on the artifacts and aborts on red (see [release.yml](../.github/workflows/release.yml)).
 
 ## Exemption registry
 
@@ -32,8 +31,12 @@ New exemptions must be registered in this table with an Agent Note link; unregis
 | Exemption | Reason | Basis |
 |---|---|---|
 | System webview boundary (see above) | Volume/maintenance tradeoff | [.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.en.md](../.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.en.md) |
+| External plugin install networking (enabled in Phase 2) | Install = registry tarball direct fetch; runtime stays fully offline | [.agents/notes/implemented/architecture/2026-09-10-plugin-architecture.en.md](../.agents/notes/implemented/architecture/2026-09-10-plugin-architecture.en.md) |
+
+Exemptions for `node:` builtin references (in-package files confirmed never to enter the browser bundle, e.g. CLI bins) are registered in the `nodeRefExempt` table of [scripts/dep-allowlist.json](../scripts/dep-allowlist.json), part of the dependency-allowlist gate — not duplicated here.
 
 ## Known debts
 
-- `assetProtocol.scope: ["**"]` is too broad: the ideal fix dynamically injects the dialog-picked directory into the scope; needs frontend cooperation, deferred.
-- The environment-independence gate does not yet cover Rust-side dynamic-linking checks (`otool`/`ldd` scans); release.yml's manual checklist covers it for now.
+- `assetProtocol.scope: ["**"]` is too broad: tightening the scope is a precondition for opening external plugins in Phase 2 (ideal fix: inject the dialog-picked directory dynamically; needs frontend cooperation).
+- CSP/custom-protocol loading-channel spike (scheduled for Phase 2; blob-URL fallback).
+- Existing plugin manifests have no migration logic: after upgrading with an old manifest, built-in plugins newly added to the static table do not auto-activate (Phase 2 precondition).
