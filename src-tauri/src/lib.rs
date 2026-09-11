@@ -123,7 +123,9 @@ pub fn run() {
             windows::write_manifest,
             plugins::list_plugins,
             plugins::read_plugin_module,
-            plugins::remove_plugin
+            plugins::remove_plugin,
+            plugins::install_plugin,
+            plugins::import_plugin
         ])
         .run(tauri::generate_context!())
         .expect("error while running StudyWiki");
