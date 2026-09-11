@@ -1,6 +1,6 @@
 # Agent Note: Phase 2 外置插件：registry 直拉 + 本地导入 + 装载校验
 
-Status: proposed
+Status: implemented
 
 [English](2026-09-11-phase2-external-plugins.en.md) | 中文
 
@@ -15,6 +15,8 @@ Phase 1 全分支终审另沉淀了四项顺路欠账：layering 扫描的无空
 范围圈定：**本阶段 = 外置插件全链路**（安装/导入/装载/校验/管理面板）+ 三笔前置欠账收口 + 三项顺路欠账；文件监听（notify）、跨窗同文件 stale、dep-audit symlink 跟随与其余 minor 不进本阶段。总纲：宿主把 npm 当仓库用、不当运行时用——安装是 Rust 侧的一次性联网动作，装载是运行期离线的本地资源读取。
 
 1. **装载通道（动工前置，技术验证定案）**：webview 内动态 `import()` 外置单文件 ESM。两个候选：Tauri 自定义协议（Rust 注册 `plugin://` 类协议读插件目录）vs blob URL（Rust 命令读字节 → JS 端 Blob → import）。首任务做一次真实通道验证（dev 与 build 双形态、darwin WKWebView），**自定义协议优先、blob URL 兜底**（Phase 1 Note 预许）。定案后：CSP `script-src` 增对应来源（协议名或 `blob:`）；联网只发生在 Rust 安装动作，webview CSP 不开任何 connect-src。`src/loader/external.ts` 是全前端唯一动态 import 点——`layering-allowlist.json` 开 Phase 1 以来的第一条缝（单文件登记，扩缝必须回本 Note 修订）。
+
+   **落定（2026-09-11）**：通道取 blob URL——单文件零依赖契约使 blob 的弱点（相对导入解析、URL 生命周期）归零，且通道可在 vitest/Node 下注入假 import 全链路测试；自定义协议的 ESM 装载只能真实 webview 验证，作为预许备选保留。CSP `script-src` 增 `blob:`，未开任何 connect-src。技术验证任务被此裁定吸收（两候选均预许形态，裁定只决定取哪个）。
 2. **Rust 包管理命令**（全局住 Rust）：`install_plugin(spec)`（spec = `name` 或 `name@version`：查 registry 元数据 → 下载 dist.tarball → sha512 校验（npm dist.integrity，base64）→ 解压 → 校验格式（见第 3 条）→ 入 `app_config_dir/plugins/<name>/`）、`import_plugin(path)`（本地 tgz，同管线免联网）、`list_plugins()`（目录扫描 + package.json 元数据）、`remove_plugin(name)`（删目录）。HTTP/TLS/gzip/tar/sha512 全部纯 Rust 栈（rustls 系，禁系统 OpenSSL dylib——`verify:native-links` 是机械看门人；具体 crate 归实现计划定）。registry 固定公网 npmjs，不内置镜像配置（用户侧差异交给系统级代理）。
 3. **外置插件格式（封闭契约）**：tgz 内必须恰好是 `package.json` + 单个入口 `.js`（ESM）；`package.json` 声明 `"studywiki": { "apiVersion": <number>, "entry": "<file>" }` 且 `keywords` 含 `"studywiki-plugin"` 且 `dependencies` 为空对象（零依赖）。宿主支持集当前为 `{1}`；apiVersion 不在支持集 → 拒载。任何一条不符 → 安装即拒（fail-loud 点名缺什么），不从坏包里猜。
 4. **装载器第二来源**：boot 时经命令扫描插件目录，外置模块走装载通道动态 import 后与内置静态表合并进同一装载流程（同一 `ctx.plugin`、同一激活审计）。清单行 id 命名空间：内置 id 原样，外置一律 `ext:<name>`。**资源缺失与形状错误分治**：清单行形状残缺仍按既有校验抛错；插件目录缺失/入口损坏 → 该行跳过装载、面板点名标记"待清理"、不阻断其余插件（外置资源是用户侧状态，不配让整个应用起不来）。
@@ -43,3 +45,4 @@ Phase 1 全分支终审另沉淀了四项顺路欠账：layering 扫描的无空
 - 技术验证若以 blob URL 收场（自定义协议在 WKWebView 的 ESM 装载不成立），CSP 增 `blob:` 且本 Note 落 implemented 时记实际通道与理由——两个候选都是预许形态，验证只决定取哪个。
 - 欠账区三条清空；新欠账预期一条：linux 面的 ureq/rustls 链接扫描待首个真实发布验证（native-links 白名单覆盖系统 C 运行时，纯 Rust 栈理论零新增 dylib）。
 - 文件监听、跨窗 stale、symlink 跟随与其余 minor 继续停机坪，随本 Note 的 PR 说明存档分诊。
+- 授权残留局限：`allow_directory` 注入的 asset 授权只增不减（无 un-allow API）——窗口关闭、换 root、建窗回滚后旧目录残留授权，且 scope 为 app 级共享；"唯一授权点"收窄的是注入面而非可撤销性，此为已知局限。

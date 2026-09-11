@@ -24,4 +24,5 @@ test("DOM: 新建窗口传当前 root；打开文件夹走 pickFolder → window
   // Rust 侧先登记注册表并授权 asset，前端再切工作区（顺序：持久化优先）
   expect(winSetRoot).toHaveBeenCalledWith("main", "/picked");
   expect(workspace.setRoot).toHaveBeenCalledWith("/picked");
+  expect(winSetRoot.mock.invocationCallOrder[0]).toBeLessThan(workspace.setRoot.mock.invocationCallOrder[0]);
 });

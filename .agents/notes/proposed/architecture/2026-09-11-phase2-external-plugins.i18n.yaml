@@ -1,5 +1,0 @@
-# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
-# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
-#   pnpm run record:i18n -- .agents/notes/proposed/architecture/2026-09-11-phase2-external-plugins.md
-2026-09-11-phase2-external-plugins.md: db12561a57e054b251669f31fbe6baddb9370b89
-2026-09-11-phase2-external-plugins.en.md: 922656d20bf9b048a6c0d725806c6d1cc379c1be

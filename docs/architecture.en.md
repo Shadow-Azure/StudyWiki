@@ -12,7 +12,7 @@ Multi-window Tauri 2 desktop app: one Rust shell for the whole app, one frontend
 ```text
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
-  bootstrap.ts                     每窗口启动流程：宿主服务入 ctx + 清单装载 + 插件激活（Tauri 绑定可注入）（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
+  bootstrap.ts                     每窗口启动流程：五宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
   host/context.d.ts                cordis Context 声明合并：files/windows/workspace/slots/plugins 五服务类型挂入（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
@@ -20,9 +20,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/确认框/关闭守卫（deps 可注入）
   host/workspace.ts                窗口 scope 工作区状态机：root/activeFile + root-changed/file-opened 事件流（→ emitter.ts、types.ts）
-  loader/boot.ts                   装载器：清单行驱动 ctx.plugin + 全树激活审计（非 ACTIVE 点名）（→ manifest.ts、table.ts、types.ts）
+  loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ manifest.ts、table.ts、types.ts）
   loader/external.ts               外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
-  loader/manifest.ts               插件清单装载：缺失时从模块表生成默认并写回，损坏 fail-loud（→ table.ts）
+  loader/manifest.ts               插件清单装载：缺失时从模块表生成默认并写回 + 存量迁移（表新增内置行合并落盘），损坏 fail-loud（→ table.ts）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
@@ -42,8 +42,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
 src-tauri/                         Rust 壳
   lib.rs                           tauri::Builder + 文件命令 + 窗口事件接线（→ plugins.rs、windows.rs）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
-  plugins.rs                       外置插件命令面：package.json 封闭契约解析 + 扫描/读入口/删目录（app_config_dir/plugins）
-  windows.rs                       窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO
+  plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
+  windows.rs                       窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO
 vendor/                            vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md
 ```
 <!-- END GENERATED code-map -->
@@ -66,16 +66,18 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder (dialog) → `read_tree` assigns kind by extension → view-filetree renders the sidebar; opening — `workspace.openFile` dispatches by kind, markdown goes through `read_text_file` + markdown-it, video through `files.assetUrl` (asset protocol) into the system webview `<video>`; saving — `write_text_file` broadcasts `fs://changed` on landing, every window's tree re-reads; window creation — app-windows → `create_window` registers the table entry and creates the WebviewWindow → the new webview bootstraps (`get_window_state` fetches the root → the loader activates per the manifest).
+Data flows: tree reading — pick a folder (dialog) → `read_tree` assigns kind by extension → view-filetree renders the sidebar; opening — `workspace.openFile` dispatches by kind, markdown goes through `read_text_file` + markdown-it, video through `files.assetUrl` (asset protocol) into the system webview `<video>`; saving — `write_text_file` broadcasts `fs://changed` on landing, every window's tree re-reads; window creation — app-windows → `create_window` registers the table entry and creates the WebviewWindow → the new webview bootstraps (`get_window_state` fetches the root → the loader activates per the manifest). External plugins — install (plugin-manager → ctx.plugins.install → install_plugin: fetch metadata → pull the tarball → sha512 → unpack and validate the closed contract → place into the plugin directory, the product's only networked action); loading (boot sees an `ext:` row → read_plugin_module → dynamic import of a blob URL (the sole loading seam, src/loader/external.ts) → support-set/shape validation → activated through the same flow as the static table; bad rows are skipped in isolation and named as needs-cleanup in the panel); management (panel changes write the manifest and take effect on restart, no hot loading).
 
 ## Key decision points
 
 - **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS` / `VIDEO_EXTS`): a single decision point.
 - **Vendored cordis, take the contract drop the loader**: a static module table + manifest loading, composition is data; upgrades = manual diff + registration in [vendor/VENDORED.md](../vendor/VENDORED.md).
 - **Layering**: `src/plugins/` must not import `@tauri-apps/*` (checked by `pnpm verify:layering`); global state lives in Rust, window state in the Context.
-- **`assetProtocol.scope: ["**"]`**: users may open any folder, so it cannot be pre-narrowed; the CSP's `media-src`/`img-src` restrict other resources; tightening is a [known debt](environment-independence.en.md#known-debts).
+- **assetProtocol's configured scope is empty, runtime dynamic authorization**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory` (recursive) — video and images keep using the asset protocol, but the configured surface no longer pre-opens arbitrary directories.
 - **markdown-it bundled at build time, `html: false`**: a corollary of environment independence (below), and it shrinks the XSS surface.
 - **The system webview does rendering and video decoding** (WKWebView / WebView2 / webkit2gtk): a volume-vs-dependencies tradeoff, see [environment-independence.en.md](environment-independence.en.md).
+- **External plugins load via blob URL**: a Rust command reads the entry source → JS Blob → dynamic import; the single-file zero-dependency contract drives the blob's usual weaknesses (relative imports, URL lifetime) to zero, and the channel is testable end-to-end in vitest with an injected fake import; custom-protocol ESM can only be verified in a real webview and stays as a fallback (landing record in the Phase 2 Note, decision 1).
+- **npm as a repository, not as a runtime**: networking happens only in the Rust install command (ureq+rustls pure-Rust stack); runtime stays fully offline ([environment-independence.en.md](environment-independence.en.md) exemption registry).
 
 ## Environment independence
 
