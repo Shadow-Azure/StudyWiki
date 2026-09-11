@@ -96,6 +96,12 @@ pub fn parse_package_json(raw: &str) -> Result<(String, Option<String>, StudyWik
     if block.entry.trim().is_empty() {
         return Err(format!("studywiki.entry 为空（{}）", pkg.name));
     }
+    if block.entry.contains('/') || block.entry.contains('\\') || block.entry.contains("..") {
+        return Err(format!(
+            "studywiki.entry 必须是顶层单文件，收到 {}（{}）",
+            block.entry, pkg.name
+        ));
+    }
     Ok((pkg.name, pkg.version, block))
 }
 
@@ -270,6 +276,12 @@ mod tests {
         assert!(parse_package_json(&package_json("demo", 1, "  "))
             .unwrap_err()
             .contains("entry"));
+        assert!(parse_package_json(&package_json("demo", 1, "sub/index.js"))
+            .unwrap_err()
+            .contains("顶层"));
+        assert!(parse_package_json(&package_json("demo", 1, "../evil.js"))
+            .unwrap_err()
+            .contains("顶层"));
     }
 
     #[test]
