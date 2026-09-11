@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 use tauri::{Emitter, Manager};
 
+mod plugins;
 mod windows;
 
 /// 递归树节点：`kind` 由扩展名分派（单一决策点），目录递归展开。
@@ -119,7 +120,10 @@ pub fn run() {
             windows::create_window,
             windows::get_window_state,
             windows::read_manifest,
-            windows::write_manifest
+            windows::write_manifest,
+            plugins::list_plugins,
+            plugins::read_plugin_module,
+            plugins::remove_plugin
         ])
         .run(tauri::generate_context!())
         .expect("error while running StudyWiki");

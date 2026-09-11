@@ -35,8 +35,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   styles.css                       样式（无逻辑）
   types.ts                         FileNode —— 前后端共享的唯一形状
 src-tauri/                         Rust 壳
-  lib.rs                           tauri::Builder + 文件命令 + 窗口事件接线（→ windows.rs）
+  lib.rs                           tauri::Builder + 文件命令 + 窗口事件接线（→ plugins.rs、windows.rs）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
+  plugins.rs                       外置插件命令面：package.json 封闭契约解析 + 扫描/读入口/删目录（app_config_dir/plugins）
   windows.rs                       窗口注册表（label→root）+ create/get 窗口命令 + plugins.json 清单 IO
 vendor/                            vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md
 ```
