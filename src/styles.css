@@ -17,3 +17,14 @@ body { margin: 0; font: 14px/1.6 system-ui, sans-serif; }
 .tree-file.kind-video::before { content: "▶ "; opacity: .6; }
 .viewer-toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
 .dirty::before { content: "● "; }
+/* 启动错误面板（boot-error.ts）：白屏的最小可见出口 */
+.boot-error {
+  max-width: 40em;
+  margin: 4em auto;
+  padding: 1em 1.5em;
+  font: inherit;
+}
+.boot-error pre {
+  white-space: pre-wrap;
+  user-select: text;
+}

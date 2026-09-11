@@ -7,6 +7,8 @@ import { FilesService } from "./host/files";
 import { WindowsService, defaultWindowsDeps } from "./host/windows";
 import { WorkspaceService } from "./host/workspace";
 import { SlotsService } from "./host/slots";
+import { PluginsService, defaultPluginsDeps } from "./host/plugins";
+import { loadExternalModule } from "./loader/external";
 import { loadManifest } from "./loader/manifest";
 import { boot } from "./loader/boot";
 import { MODULE_TABLE, type ModuleTable } from "./loader/table";
@@ -22,6 +24,10 @@ export interface BootstrapEnv {
   /** Native confirm dialog (close-guard prompt); defaults to the real one. */
   confirmDialog?: (message: string) => Promise<boolean>;
   table?: ModuleTable;
+  /** 外置装载通道注桩（测试用）；缺省为真实 blob 通道。 */
+  loadExternal?: (code: string) => Promise<Record<string, unknown>>;
+  /** 本地导入 tgz 的选框注桩（测试用）；缺省为真实 dialog。 */
+  openTgz?: () => Promise<string | null>;
 }
 
 /** Real bindings. */
@@ -49,10 +55,16 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
   });
   const workspace = new WorkspaceService();
   const slots = new SlotsService();
+  const plugins = new PluginsService({
+    invoke: env.invoke,
+    loadExternal: env.loadExternal ?? loadExternalModule,
+    pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
+  });
   ctx.reflect.provide("files", files);
   ctx.reflect.provide("windows", windows);
   ctx.reflect.provide("workspace", workspace);
   ctx.reflect.provide("slots", slots);
+  ctx.reflect.provide("plugins", plugins);
   await files.start();
   workspace.setRoot(await windows.fetchRoot(windows.currentLabel()));
   // 注入行叠加在静态表上（同 id 覆盖）：测试补探针行时，默认清单仍含全部内置插件。
@@ -62,9 +74,7 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     (json) => env.invoke("write_manifest", { json }).then(() => undefined),
     table,
   );
-  const report = await boot(ctx, manifest, table, async () => {
-    throw new Error("外置装载通道未接线（Task 6）");
-  });
-  void report;
+  const report = await boot(ctx, manifest, table, (name) => plugins.loadModule(name));
+  plugins.bootBroken = report.broken;
   return ctx;
 }
