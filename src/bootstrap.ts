@@ -62,6 +62,9 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     (json) => env.invoke("write_manifest", { json }).then(() => undefined),
     table,
   );
-  await boot(ctx, manifest, table);
+  const report = await boot(ctx, manifest, table, async () => {
+    throw new Error("外置装载通道未接线（Task 6）");
+  });
+  void report;
   return ctx;
 }

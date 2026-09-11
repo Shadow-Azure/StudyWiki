@@ -43,6 +43,18 @@ export async function loadManifest(
         throw new Error(`插件清单损坏：条目 "${row?.id ?? i}" 的 config 不是对象`);
       }
     });
+    // 存量迁移：静态表新增而清单缺失的内置行合并进去（enabled 默认 true，与首启
+    // 一致——版本升级带新内置属行为一致条款的设计内变化）；外置行（ext:）不迁移
+    // 不猜，以插件目录为准源。合并发生即写回落盘。
+    const known = new Set(plugins.map((row) => row.id));
+    const missing = Object.keys(table)
+      .filter((id) => !known.has(id))
+      .map((id) => ({ id, enabled: true, config: { ...table[id].defaults } }));
+    if (missing.length) {
+      const merged: Manifest = { plugins: [...plugins, ...missing] };
+      await write(JSON.stringify(merged, null, 2));
+      return merged;
+    }
     return parsed as Manifest;
   }
   const manifest: Manifest = {
