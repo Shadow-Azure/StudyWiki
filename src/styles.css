@@ -28,3 +28,46 @@ body { margin: 0; font: 14px/1.6 system-ui, sans-serif; }
   white-space: pre-wrap;
   user-select: text;
 }
+
+/* plugin-manager 面板 */
+.plugin-panel {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 6em;
+}
+.plugin-panel-box {
+  background: #fff;
+  color: #1a1a1a;
+  border-radius: 8px;
+  padding: 1em 1.5em;
+  min-width: 28em;
+  max-height: 60vh;
+  overflow: auto;
+}
+.plugin-panel-head {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 0.8em;
+}
+.plugin-panel-head input {
+  flex: 1;
+}
+.plugin-row {
+  display: flex;
+  gap: 0.8em;
+  align-items: baseline;
+  padding: 0.15em 0;
+}
+.plugin-row .plugin-problem {
+  color: #b00020;
+}
+.plugin-restart-hint {
+  color: #8a6d3b;
+}
+.plugin-error {
+  color: #b00020;
+}

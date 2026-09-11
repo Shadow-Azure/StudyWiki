@@ -33,6 +33,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts  doc-markdown 纯函数：markdown-it 渲染（html:false，内嵌 HTML 转义）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放；file-opened 挂渲染，kind 不符清空）
+  plugins/plugin-manager/index.ts  plugin-manager 插件：顶栏入口 + 插件管理面板（列已装/按名安装/本地导入/启用开关/外置移除；改动写清单后提示重启生效）（→ manifest.ts、model.ts）
+  plugins/plugin-manager/model.ts  plugin-manager 纯函数：面板行三源合一投影（boot 坏行 > 扫描 problem > 目录缺失）+ 清单开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/手动刷新/fs 变更重读）（→ tree.ts、types.ts）
   plugins/view-filetree/tree.ts    view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
   styles.css                       样式（无逻辑）
