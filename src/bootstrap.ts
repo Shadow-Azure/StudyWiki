@@ -66,7 +66,11 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
   ctx.reflect.provide("slots", slots);
   ctx.reflect.provide("plugins", plugins);
   await files.start();
-  workspace.setRoot(await windows.fetchRoot(windows.currentLabel()));
+  // 持久 root 启动即重授权（配置 scope 已收空，运行期动态注入是唯一通道）。
+  const label = windows.currentLabel();
+  const root = await windows.fetchRoot(label);
+  if (root !== null) await windows.setRoot(label, root);
+  workspace.setRoot(root);
   // 注入行叠加在静态表上（同 id 覆盖）：测试补探针行时，默认清单仍含全部内置插件。
   const table: ModuleTable = { ...MODULE_TABLE, ...env.table };
   const manifest = await loadManifest(

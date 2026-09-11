@@ -44,3 +44,10 @@ test("windows: fetchRoot 对 null 状态安全；confirmDialog 透传", async ()
   await expect(win.confirmDialog("放弃修改？")).resolves.toBe(true);
   expect(confirmDialog).toHaveBeenCalledWith("放弃修改？");
 });
+
+test("windows: setRoot 透传 label+root（注册表更新 + asset 授权的命令面）", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  await win.setRoot("main", "/picked");
+  expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
+});

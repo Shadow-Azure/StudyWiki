@@ -23,6 +23,10 @@ impl WindowRegistry {
     pub fn remove(&mut self, label: &str) {
         self.roots.remove(label);
     }
+    /// 更新（或 upsert，主窗口首开文件夹场景）某窗口的工作区根。
+    pub fn set_root(&mut self, label: &str, root: Option<String>) {
+        self.roots.insert(label.to_string(), root);
+    }
 }
 
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
@@ -33,6 +37,12 @@ pub fn create_window(
     root: Option<String>,
 ) -> Result<String, String> {
     let label = state.lock().unwrap().register(root.clone());
+    if let Some(root) = &root {
+        if let Err(e) = app.asset_protocol_scope().allow_directory(root, true) {
+            state.lock().unwrap().remove(&label);
+            return Err(format!("授权 asset 访问 {root} 失败：{e}"));
+        }
+    }
     if let Err(e) = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
         .title("StudyWiki")
         .inner_size(1180.0, 760.0)
@@ -52,6 +62,24 @@ pub fn get_window_state(
     label: String,
 ) -> Option<String> {
     state.lock().unwrap().get(&label).flatten()
+}
+
+/// 更新窗口工作区根并把该目录加入 asset protocol 运行期白名单（recursive）。
+/// 配置 scope 已收空，这是唯一授权点；启动时重设同值即重新授权（幂等）。
+#[tauri::command]
+pub fn set_window_root(
+    app: AppHandle,
+    state: tauri::State<'_, Mutex<WindowRegistry>>,
+    label: String,
+    root: Option<String>,
+) -> Result<(), String> {
+    if let Some(root) = &root {
+        app.asset_protocol_scope()
+            .allow_directory(root, true)
+            .map_err(|e| format!("授权 asset 访问 {root} 失败：{e}"))?;
+    }
+    state.lock().unwrap().set_root(&label, root);
+    Ok(())
 }
 
 /// 读插件清单（app 配置目录 plugins.json）；不存在返回 None，由前端生成默认。
@@ -109,5 +137,16 @@ mod tests {
         assert_eq!(reg.get("ghost").flatten(), None);
         let rooted = reg.register(Some("/tmp/y".into()));
         assert_eq!(reg.get(&rooted).flatten(), Some("/tmp/y".into()));
+    }
+
+    #[test]
+    fn registry_set_root_upserts_known_and_unknown_labels() {
+        let mut reg = WindowRegistry::default();
+        let a = reg.register(None);
+        reg.set_root(&a, Some("/new".into()));
+        assert_eq!(reg.get(&a), Some(Some("/new".into())));
+        // 主窗口（windows[] 配置窗）从未登记过：upsert 让"打开文件夹"也持久化
+        reg.set_root("main", Some("/first".into()));
+        assert_eq!(reg.get("main"), Some(Some("/first".into())));
     }
 }

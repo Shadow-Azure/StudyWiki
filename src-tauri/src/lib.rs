@@ -119,6 +119,7 @@ pub fn run() {
             write_text_file,
             windows::create_window,
             windows::get_window_state,
+            windows::set_window_root,
             windows::read_manifest,
             windows::write_manifest,
             plugins::list_plugins,
