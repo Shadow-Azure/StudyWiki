@@ -38,6 +38,24 @@ export const ROUTES = [
     commands: ["test", "verify:docs"],
     reason: "接线与依赖：CI/命令清单/钩子安装的 spec 对账；lockfile 变更先 pnpm install --frozen-lockfile",
   },
+  {
+    match: (p) => p === "package.json" || p === "pnpm-lock.yaml",
+    commands: ["verify:dep-audit"],
+    reason: "依赖面变化必过白名单审计",
+  },
+  {
+    match: (p) => ["src/plugins/", "src/host/", "src/loader/"].some((d) => p.startsWith(d)),
+    commands: ["verify:layering"],
+    reason: "分层纪律相关面",
+  },
+  {
+    match: (p) =>
+      p === "src-tauri/tauri.conf.json" ||
+      p === "src-tauri/Cargo.toml" ||
+      p === "src-tauri/Cargo.lock",
+    commands: ["verify:native-links"],
+    reason: "产物链接面变化（需先 build）",
+  },
 ];
 
 /** 无命中时的默认建议（轻档）。 */
@@ -51,8 +69,16 @@ export function classify(paths) {
   return ROUTES.filter((route) => paths.some((p) => route.match(p)));
 }
 
-/** 建议命令的固定先后（构建 → 测试 → 全量文档档）。 */
-const COMMAND_ORDER = ["build", "test", "verify:docs", "lint:docs"];
+/** 建议命令的固定先后（构建 → 测试 → 专项审计 → 全量文档档）。 */
+const COMMAND_ORDER = [
+  "build",
+  "test",
+  "verify:dep-audit",
+  "verify:layering",
+  "verify:native-links",
+  "verify:docs",
+  "lint:docs",
+];
 
 /** 命中组的命令并集（按固定顺序去重），无命中回退 FALLBACK。 */
 export function recommend(paths) {

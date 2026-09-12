@@ -12,11 +12,17 @@ describe("run-gates 模式组合", () => {
       for (const leaf of leaves) expect(LEAVES[leaf], `${mode} 的叶子 ${leaf} 未定义`).toBeDefined();
   });
 
-  it("doc-quick ⊆ doc-sync，release = doc-sync + verify-release（快速档是过滤，不是另一套）", () => {
+  it("doc-quick ⊆ doc-sync，release = doc-sync + native-links + verify-release（快速档是过滤，不是另一套）", () => {
     const sync = new Set(MODES["doc-sync"]);
     for (const leaf of MODES["doc-quick"])
       expect(sync.has(leaf), `${leaf} 在 doc-quick 却不在 doc-sync`).toBe(true);
-    expect(MODES.release).toEqual([...MODES["doc-sync"], "verify-release"]);
+    expect(MODES.release).toEqual([...MODES["doc-sync"], "native-links", "verify-release"]);
+  });
+
+  it("native-links 只进 release 档（产物链接扫描需先 pnpm tauri build，快速/全量文档档无产物）", () => {
+    expect(MODES.release).toContain("native-links");
+    expect(MODES["doc-sync"]).not.toContain("native-links");
+    expect(MODES["doc-quick"]).not.toContain("native-links");
   });
 
   it("doc-sync 关键叶子在列（防误删——删一个 CI 就静默失明一角）", () => {
@@ -37,6 +43,8 @@ describe("run-gates 模式组合", () => {
       "verify-commands-catalog",
       "verify-md-links",
       "verify-env-independence",
+      "dep-audit",
+      "layering",
       "gate-self-tests",
     ])
       expect(MODES["doc-sync"], `doc-sync 缺 ${leaf}`).toContain(leaf);

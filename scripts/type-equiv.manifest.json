@@ -3,7 +3,7 @@
   "entries": [
     {
       "doc": "docs/architecture.md",
-      "symbol": "LibraryEntry",
+      "symbol": "FileNode",
       "source": "src/types.ts"
     }
   ]

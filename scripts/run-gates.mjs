@@ -31,6 +31,33 @@ export const LEAVES = {
   "verify-terminology": verifyTerminology,
   "verify-md-links": verifyMdLinks,
   "verify-env-independence": verifyEnvIndependence,
+  "dep-audit": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["scripts/verify-dep-audit.mjs"], { stdio: "inherit" });
+      return { ok: true, errors: [] };
+    } catch {
+      return { ok: false, errors: ["scripts/verify-dep-audit.mjs 退出非零（依赖面审计失败，明细见上方输出）"] };
+    }
+  },
+  "layering": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["scripts/verify-layering.mjs"], { stdio: "inherit" });
+      return { ok: true, errors: [] };
+    } catch {
+      return { ok: false, errors: ["scripts/verify-layering.mjs 退出非零（分层/装载缝扫描失败，明细见上方输出）"] };
+    }
+  },
+  "native-links": async () => {
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync(process.execPath, ["scripts/verify-native-links.mjs"], { stdio: "inherit" });
+      return { ok: true, errors: [] };
+    } catch {
+      return { ok: false, errors: ["scripts/verify-native-links.mjs 退出非零（产物动态链接扫描失败，明细见上方输出）"] };
+    }
+  },
   "verify-translation-pairing": () => verifyTranslationPairing([]),
   "verify-type-equiv": verifyTypeEquiv,
   "verify-export-docs": verifyExportDocs,
@@ -117,9 +144,12 @@ export const MODES = {
     "verify-commands-catalog",
     "verify-md-links",
     "verify-env-independence",
+    "dep-audit",
+    "layering",
     "gate-self-tests",
   ],
-  // 发布档：doc-sync + 版本一致性（在 build 之后跑会连同 dist 一起扫描）。
+  // 发布档：doc-sync + 产物链接扫描（需先 pnpm tauri build 产出 bundle）+ 版本一致性
+  // （在 build 之后跑会连同 dist 一起扫描）。
   release: [
     "verify-agent-notes",
     "verify-archived-agent-notes",
@@ -137,7 +167,10 @@ export const MODES = {
     "verify-commands-catalog",
     "verify-md-links",
     "verify-env-independence",
+    "dep-audit",
+    "layering",
     "gate-self-tests",
+    "native-links",
     "verify-release",
   ],
 };

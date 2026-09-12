@@ -3,11 +3,12 @@
 // 纯函数走静态导入；CLI 走子进程在临时 fixture 里跑（cwd 即仓库根）。
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterAll, describe, expect, it } from "vitest";
-import { parseCommands, renderRegion, spliceRegion } from "./gen-commands-catalog.mjs";
+import { fileModuleNames, parseCommands, renderRegion, spliceRegion } from "./gen-commands-catalog.mjs";
 
 const SCRIPT = path.resolve("scripts/gen-commands-catalog.mjs");
 const BEGIN = "<!-- BEGIN GENERATED commands-catalog (scripts/gen-commands-catalog.mjs) — do not edit between markers -->";
@@ -49,6 +50,63 @@ describe("parseCommands", () => {
   it("注册无对应命令即抛", () => {
     const undeclared = LIB.replace(", open_folder]", ", open_folder, ghost_cmd]");
     expect(() => parseCommands(undeclared)).toThrow("未声明：ghost_cmd");
+  });
+});
+
+describe("parseCommands：模块命令（mod:: 前缀）", () => {
+  const LIB_MOD = `use std::fs;
+
+/// Reads a file.
+#[tauri::command]
+fn read_file(path: String) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+mod windows;
+
+fn run() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![read_file, windows::create_view])
+        .run(tauri::generate_context!())
+        .expect("err");
+}
+`;
+  const WINDOWS_MOD = `use tauri::AppHandle;
+
+/// Creates a view window.
+#[tauri::command]
+pub fn create_view(
+    app: AppHandle,
+    root: String,
+) -> String {
+    root
+}
+`;
+
+  it("模块命令按注册项逐字收编（mod:: 名），签名与文档取自模块文件", () => {
+    const commands = parseCommands(LIB_MOD, { windows: WINDOWS_MOD });
+    expect(commands.map((c) => c.name)).toEqual(["read_file", "windows::create_view"]);
+    expect(commands[1].docs).toEqual(["Creates a view window."]);
+    // rustfmt 换行的参数表收敛成单行签名
+    expect(commands[1].signature).toBe("pub fn create_view(app: AppHandle, root: String) -> String");
+  });
+
+  it("模块命令未注册即抛", () => {
+    const noHandler = LIB_MOD.replace(", windows::create_view]", "]");
+    expect(() => parseCommands(noHandler, { windows: WINDOWS_MOD })).toThrow(
+      "未注册：windows::create_view",
+    );
+  });
+
+  it("注册了不存在的模块命令即抛", () => {
+    const ghost = LIB_MOD.replace("windows::create_view", "windows::ghost_cmd");
+    expect(() => parseCommands(ghost, { windows: WINDOWS_MOD })).toThrow(
+      "未声明：windows::ghost_cmd",
+    );
+  });
+
+  it("fileModuleNames 只认文件模块（分号），不认内联模块", () => {
+    expect(fileModuleNames("mod a;\npub mod b;\nmod c { }\nmod d{")).toEqual(["a", "b"]);
   });
 });
 
@@ -109,5 +167,18 @@ describe("CLI --check 新鲜度（子进程）", () => {
     const tampered = generated.replace("/// Reads a file.", "/// 被手改了。");
     writeFileSync(path.join(dir, "docs/commands.md"), tampered);
     expect(() => run(dir, ["--check"])).toThrow();
+  });
+});
+
+describe("真仓库不变量", () => {
+  it("lib.rs 命令（含 mod:: 模块命令）重生成与 docs/commands.md 生成区逐字一致", async () => {
+    const lib = await readFile("src-tauri/src/lib.rs", "utf8");
+    const moduleSources = {};
+    for (const name of fileModuleNames(lib))
+      moduleSources[name] = await readFile(`src-tauri/src/${name}.rs`, "utf8");
+    const commands = parseCommands(lib, moduleSources);
+    expect(commands.map((c) => c.name)).toContain("windows::create_window");
+    const doc = await readFile("docs/commands.md", "utf8");
+    expect(spliceRegion(doc, renderRegion(commands))).toBe(doc);
   });
 });

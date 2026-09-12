@@ -1,0 +1,18 @@
+{
+  "//": "dependencies 白名单（精确集合：多登少登都红）。vendor/ 的 cordis、cosmokit 不在此——它们不走 package.json。",
+  "deps": [
+    "@tauri-apps/api",
+    "@tauri-apps/plugin-dialog",
+    "markdown-it",
+    "@codemirror/state",
+    "@codemirror/view",
+    "@codemirror/commands",
+    "@codemirror/language",
+    "@codemirror/lang-markdown",
+    "codemirror"
+  ],
+  "nodeRefExempt": {
+    "//": "node: 内建引用豁免（按包名 → 包内相对路径精确匹配）。只准登记确认不进浏览器 bundle 的文件——如包自带的 Node CLI bin；其余命中一律红。",
+    "markdown-it": ["bin/markdown-it.mjs"]
+  }
+}

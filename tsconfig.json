@@ -11,7 +11,11 @@
     "noEmit": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    "paths": {
+      "cordis": ["./vendor/cordis/index.d.ts"],
+      "cosmokit": ["./vendor/cosmokit/lib/index.d.ts"]
+    }
   },
   "include": ["src"]
 }

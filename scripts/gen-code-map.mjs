@@ -17,10 +17,12 @@ const BEGIN = `<!-- BEGIN GENERATED ${SLUG} (scripts/gen-code-map.mjs) — do no
 const END = `<!-- END GENERATED ${SLUG} -->`;
 export const REGION_MARKERS = { BEGIN, END };
 
-/** 扫描根：display 是 manifest 键与树上的目录行，dir 是实际目录。 */
+/** 扫描根：display 是 manifest 键与树上的目录行，dir 是实际目录。exts 为空的根不收
+ *  文件、只渲染一行聚合（vendor/：vendored 上游源码，不逐文件入树，登记见 VENDORED.md）。 */
 export const SCAN_ROOTS = [
   { display: "src", dir: "src", exts: [".ts", ".css"] },
   { display: "src-tauri", dir: "src-tauri/src", exts: [".rs"] },
+  { display: "vendor", dir: "vendor", exts: [] },
 ];
 
 /** 递归收集扫描根下的源文件（repo 相对 posix 路径，按路径排序）。 */

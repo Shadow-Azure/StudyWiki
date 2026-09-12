@@ -13,7 +13,24 @@ describe("分类与并集", () => {
     expect(recommend(["scripts/verify-x.mjs"]).commands).toEqual(["test", "verify:docs"]);
     expect(recommend(["docs/AGENTS.md"]).commands).toEqual(["verify:docs"]);
     expect(recommend(["AGENTS.md", "README.md", ".agents/notes/x.md"]).commands).toEqual(["verify:docs"]);
-    expect(recommend(["package.json", ".github/workflows/ci.yml"]).commands).toEqual(["test", "verify:docs"]);
+    expect(recommend(["package.json", ".github/workflows/ci.yml"]).commands).toEqual([
+      "test",
+      "verify:dep-audit",
+      "verify:docs",
+    ]);
+  });
+
+  it("插件化三专项门禁的代表改动面各命中对应组", () => {
+    expect(recommend(["package.json", "pnpm-lock.yaml"]).commands).toEqual([
+      "test",
+      "verify:dep-audit",
+      "verify:docs",
+    ]);
+    expect(recommend(["src/plugins/foo.ts"]).commands).toEqual(["build", "verify:layering", "verify:docs"]);
+    expect(recommend(["src-tauri/tauri.conf.json", "src-tauri/Cargo.toml"]).commands).toEqual([
+      "verify:native-links",
+      "verify:docs",
+    ]);
   });
 
   it("未命中回退快速档", () => {

@@ -1,5 +1,7 @@
 # Node / frontend
 node_modules/
+# fixtures 里的 node_modules 是门禁自测的固定样本目录，不是真实安装目录（精确豁免，勿放宽）
+!scripts/__fixtures__/**/node_modules/
 dist/
 
 # Rust / Tauri
@@ -13,3 +15,11 @@ src-tauri/gen/
 # Local env — the shipped client must not vary by environment
 .env
 .env.*
+
+# SDD per-plan scratch (ledger, briefs, review packages)
+.superpowers/
+
+# Claude Code local config (per-machine commands; not part of the shipped repo)
+.claude/
+
+.obsidian
