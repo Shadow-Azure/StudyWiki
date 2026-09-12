@@ -102,7 +102,10 @@ export class PluginsService {
     if (typeof mod.apply !== "function") {
       throw new Error(`外置插件 ${name}（${mod.name}）缺少 apply 函数导出`);
     }
-    if (Array.isArray(mod.inject) && mod.inject.some((k) => typeof k !== "string")) {
+    if (
+      mod.inject !== undefined &&
+      (!Array.isArray(mod.inject) || mod.inject.some((k) => typeof k !== "string"))
+    ) {
       throw new Error(`外置插件 ${name}（${mod.name}）的 inject 必须是字符串数组`);
     }
     return mod as PluginModule;

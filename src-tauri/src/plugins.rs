@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 /// 目录扫描出的插件条目：健康行带元数据，坏行带点名问题（面板据此标"待清理"）。
@@ -102,6 +104,12 @@ pub fn parse_package_json(raw: &str) -> Result<(String, Option<String>, StudyWik
             block.entry, pkg.name
         ));
     }
+    if block.entry == "package.json" {
+        return Err(format!(
+            "studywiki.entry 不得是 package.json（{}）",
+            pkg.name
+        ));
+    }
     Ok((pkg.name, pkg.version, block))
 }
 
@@ -190,6 +198,29 @@ pub fn remove_plugin_dir(dir: &Path, name: &str) -> Result<(), String> {
 /// npm registry 固定公网 npmjs（不内置镜像；用户侧差异交给系统级代理）。
 const REGISTRY: &str = "https://registry.npmjs.org";
 
+/// tarball 大小上限（下载与本地导入共用）：封闭契约下单文件插件远低于此；
+/// 超限 fail-loud（DoS 加固面，非安全边界）。
+const MAX_TARBALL_BYTES: u64 = 20 * 1024 * 1024;
+
+/// 联网共用 Agent：整体超时，registry/网络挂起时安装命令不再无限等待。
+fn http_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .build()
+}
+
+/// 读入至多 `cap` 字节；超出即 Err（点名上限）。
+fn read_capped<R: std::io::Read>(mut r: R, cap: u64) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    r.take(cap + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("读 tarball 失败：{e}"))?;
+    if buf.len() as u64 > cap {
+        return Err(format!("插件包超过 {cap} 字节上限"));
+    }
+    Ok(buf)
+}
+
 /// 解包校验后的成品：package.json 原文 + 入口字节（落盘时原样写回，不重建）。
 #[derive(Debug)]
 pub struct ExtractedPlugin {
@@ -239,7 +270,6 @@ pub fn split_spec(spec: &str) -> (String, Option<String>) {
 /// 无穿越面），恰好 `package.json` + 声明的入口两个文件；package.json 过严格解析
 /// （顶层单文件规则也由它单一决策，本函数不重复判）。
 pub fn extract_and_validate(tgz: &[u8]) -> Result<ExtractedPlugin, String> {
-    use std::io::Read;
     let gz = flate2::read::GzDecoder::new(tgz);
     let mut archive = tar::Archive::new(gz);
     let mut package_json: Option<Vec<u8>> = None;
@@ -337,7 +367,8 @@ fn resolve_registry(spec: &str) -> Result<Resolved, String> {
         return Err(format!("非法安装名：{spec}"));
     }
     let url = format!("{REGISTRY}/{}", name.replace('/', "%2F"));
-    let body: String = ureq::get(&url)
+    let body: String = http_agent()
+        .get(&url)
         .call()
         .map_err(|e| format!("查 registry {name} 失败：{e}"))?
         .into_string()
@@ -385,22 +416,21 @@ fn install_bytes(app: &AppHandle, bytes: &[u8], integrity: Option<&str>) -> Resu
 /// 解包校验封闭契约 → 入插件目录。成功返回插件名。
 #[tauri::command]
 pub fn install_plugin(app: AppHandle, spec: String) -> Result<String, String> {
-    use std::io::Read;
     let resolved = resolve_registry(&spec)?;
-    let mut bytes = Vec::new();
-    ureq::get(&resolved.tarball)
+    let bytes = http_agent()
+        .get(&resolved.tarball)
         .call()
         .map_err(|e| format!("下载 tarball 失败：{e}"))?
-        .into_reader()
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("读 tarball 失败：{e}"))?;
+        .into_reader();
+    let bytes = read_capped(bytes, MAX_TARBALL_BYTES)?;
     install_bytes(&app, &bytes, Some(&resolved.integrity))
 }
 
 /// 本地导入 tgz（同校验管线，免联网）；成功返回插件名。
 #[tauri::command]
 pub fn import_plugin(app: AppHandle, path: String) -> Result<String, String> {
-    let bytes = fs::read(&path).map_err(|e| format!("读 {path} 失败：{e}"))?;
+    let file = fs::File::open(&path).map_err(|e| format!("读 {path} 失败：{e}"))?;
+    let bytes = read_capped(file, MAX_TARBALL_BYTES)?;
     install_bytes(&app, &bytes, None)
 }
 
@@ -557,6 +587,22 @@ mod tests {
         remove_plugin_dir(&dir, "demo").unwrap(); // 再删（目录已不在）也成功
         assert!(read_entry_source(&dir, "demo").is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_rejects_entry_equal_package_json() {
+        let raw = package_json("demo", 1, "package.json");
+        let err = parse_package_json(&raw).unwrap_err();
+        assert!(err.contains("不得是 package.json"), "{err}");
+    }
+
+    #[test]
+    fn read_capped_rejects_over_cap() {
+        use std::io::Cursor;
+        let big = vec![0u8; 101];
+        assert!(read_capped(Cursor::new(big), 100).is_err());
+        let ok = vec![0u8; 100];
+        assert_eq!(read_capped(Cursor::new(ok), 100).unwrap().len(), 100);
     }
 
     mod install {

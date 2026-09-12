@@ -19,6 +19,7 @@
     "record:i18n": "node scripts/verify-translation-pairing.mjs --write",
     "gen:commands": "node scripts/gen-commands-catalog.mjs",
     "gen:code-map": "node scripts/gen-code-map.mjs",
+    "gen:plugin": "node scripts/gen-plugin-template.mjs",
     "verify:commands": "node scripts/gen-commands-catalog.mjs --check",
     "install:hooks": "node scripts/install-git-hooks.mjs",
     "route:gates": "node scripts/route-gates.mjs",

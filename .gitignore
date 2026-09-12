@@ -16,5 +16,8 @@ src-tauri/gen/
 .env
 .env.*
 
+# 插件脚手架生成物（作者工作区，不进仓库）
+plugins-dev/
+
 # SDD per-plan scratch (ledger, briefs, review packages)
 .superpowers/
