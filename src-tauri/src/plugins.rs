@@ -194,7 +194,6 @@ const REGISTRY: &str = "https://registry.npmjs.org";
 #[derive(Debug)]
 pub struct ExtractedPlugin {
     pub name: String,
-    pub version: Option<String>,
     pub block: StudyWikiBlock,
     pub code: Vec<u8>,
     pub raw_package_json: String,
@@ -223,8 +222,8 @@ pub fn verify_integrity(integrity: &str, bytes: &[u8]) -> Result<(), String> {
 
 /// 安装名拆分：`name` / `name@version`；scoped 包（`@scope/name`）的首个 @ 不算分隔。
 pub fn split_spec(spec: &str) -> (String, Option<String>) {
-    let at = if spec.starts_with('@') {
-        spec[1..].find('@').map(|i| i + 1)
+    let at = if let Some(stripped) = spec.strip_prefix('@') {
+        stripped.find('@').map(|i| i + 1)
     } else {
         spec.find('@')
     };
@@ -276,7 +275,7 @@ pub fn extract_and_validate(tgz: &[u8]) -> Result<ExtractedPlugin, String> {
     let raw = package_json.ok_or("tgz 缺 package.json")?;
     let raw_package_json =
         String::from_utf8(raw).map_err(|e| format!("package.json 非 UTF-8：{e}"))?;
-    let (name, version, block) = parse_package_json(&raw_package_json)?;
+    let (name, _, block) = parse_package_json(&raw_package_json)?;
     let entry_name = block.entry.clone();
     if !files.iter().any(|(n, _)| n == &entry_name) {
         return Err(format!("tgz 缺入口文件 {entry_name}（{name}）"));
@@ -298,7 +297,6 @@ pub fn extract_and_validate(tgz: &[u8]) -> Result<ExtractedPlugin, String> {
         .unwrap();
     Ok(ExtractedPlugin {
         name,
-        version,
         block,
         code,
         raw_package_json,
@@ -321,10 +319,8 @@ pub fn place_plugin(dir: &Path, extracted: &ExtractedPlugin) -> Result<(), Strin
     fs::rename(&staging, &target).map_err(|e| format!("rename: {e}"))
 }
 
-/// registry 元数据解析结果。
+/// registry 元数据解析结果（tarball 地址与 integrity）。
 struct Resolved {
-    name: String,
-    version: String,
     tarball: String,
     integrity: String,
 }
@@ -360,12 +356,7 @@ fn resolve_registry(spec: &str) -> Result<Resolved, String> {
         .as_str()
         .ok_or(format!("registry 元数据缺 {version} 的 dist.integrity"))?
         .to_string();
-    Ok(Resolved {
-        name,
-        version,
-        tarball,
-        integrity,
-    })
+    Ok(Resolved { tarball, integrity })
 }
 
 /// 下载后公共管线：校验（本地导入无 integrity 则跳）→ 解包校验 → 落盘 → 返回插件名。
@@ -473,7 +464,7 @@ mod tests {
         )
         .unwrap_err()
         .contains("studywiki-plugin"));
-        assert!(parse_package_json(&r#"{"name":"demo","keywords":["studywiki-plugin"],"studywiki":{"apiVersion":1,"entry":"i.js"}}"#.to_string()).unwrap_err().contains("dependencies"));
+        assert!(parse_package_json(r#"{"name":"demo","keywords":["studywiki-plugin"],"studywiki":{"apiVersion":1,"entry":"i.js"}}"#).unwrap_err().contains("dependencies"));
         assert!(parse_package_json(
             &package_json("demo", 1, "i.js")
                 .replace("\"dependencies\":{}", "\"dependencies\":{\"x\":\"1\"}")
@@ -509,7 +500,7 @@ mod tests {
         std::fs::create_dir_all(&broken).unwrap();
         std::fs::write(broken.join("package.json"), "{oops").unwrap();
         std::fs::create_dir_all(dir.join(".staging-x")).unwrap(); // staging 残留不入列
-        std::fs::write(dir.join("loose.tgz"), b"x"); // 非目录不入列
+        let _ = std::fs::write(dir.join("loose.tgz"), b"x"); // 非目录不入列
         let entries = scan_plugins(&dir);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "broken"); // 排序：broken < zeta
@@ -627,7 +618,7 @@ mod tests {
                 .append_data(&mut pj_header, "package/package.json", pkg_evil.as_bytes())
                 .unwrap();
             evil_builder
-                .append(&mut evil_header, "x".as_bytes())
+                .append(&evil_header, "x".as_bytes())
                 .unwrap();
             let evil_tar = evil_builder.into_inner().unwrap();
             let mut gz_evil =
@@ -700,7 +691,7 @@ mod tests {
             );
             // 重复安装（旧目录已存在）直接替换，且无 staging 残留
             place_plugin(&dir, &extracted).unwrap();
-            assert!(dir.join(".staging-demo").exists() == false);
+            assert!(!dir.join(".staging-demo").exists());
             let entries = scan_plugins(&dir);
             assert_eq!(entries.len(), 1);
             assert!(entries[0].problem.is_none());
