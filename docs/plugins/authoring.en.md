@@ -4,9 +4,9 @@ English | [中文](authoring.md)
 
 > Type: tutorial | Tier: external plugin authors. The host install pipeline (`src-tauri/src/plugins.rs`) and the generated `scripts/check.mjs` enforce the same contract; this page is the author-facing authoritative wording — when the host contract changes, this page changes with it.
 
-An external plugin is a zero-dependency single-file ESM module that enters the host as an npm tarball; every requirement below is mechanically enforced by the host.
+An external plugin is a zero-dependency single-file ESM module that enters the host as an npm tarball; every requirement below has a mechanical safety net — the host/generator/publish-check division of labor is marked in the table.
 
-## Closed contract (host-enforced, rejected at install)
+## Closed contract (mechanical safety net; refusal points and timing in the table)
 
 | Item | Requirement |
 |---|---|

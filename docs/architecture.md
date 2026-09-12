@@ -40,7 +40,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   styles.css                       样式（无逻辑）
   types.ts                         FileNode —— 前后端共享的唯一形状
 src-tauri/                         Rust 壳
-  lib.rs                           tauri::Builder + 文件命令 + 窗口事件接线（→ plugins.rs、windows.rs）
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ 窗口/插件命令注册 + 窗口事件接线（→ plugins.rs、windows.rs）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
   windows.rs                       窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO

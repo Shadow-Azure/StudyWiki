@@ -1,6 +1,6 @@
 # Agent Note: Phase 3 plugin authoring toolchain + host hardening closeout
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-09-12-phase3-plugin-authoring.md)
 

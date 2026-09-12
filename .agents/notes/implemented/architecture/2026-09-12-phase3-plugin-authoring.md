@@ -1,6 +1,6 @@
 # Agent Note: Phase 3 作者侧插件工具链 + 宿主加固收口
 
-Status: proposed
+Status: implemented
 
 [English](2026-09-12-phase3-plugin-authoring.en.md) | 中文
 
