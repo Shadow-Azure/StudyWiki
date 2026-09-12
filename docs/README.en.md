@@ -12,6 +12,7 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 | [architecture.md](architecture.en.md) | Architecture map (with type-equiv fence) |
 | [environment-independence.md](environment-independence.en.md) | Environment-independence constraints + exemption registry |
 | [development.md](development.en.md) | Contributor onboarding |
+| [plugins/authoring.md](plugins/authoring.en.md) | External plugin authoring guide (closed contract / quick start / trial install / publish / trust model) |
 | [commands.md](commands.en.md) | Tauri command catalog (generated region) |
 | [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract |
 | [i18n/terminology.md](i18n/terminology.en.md) | Terminology alignment (banned alternates gate-backed) |

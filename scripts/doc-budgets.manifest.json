@@ -12,6 +12,7 @@
   "docs/i18n/README.md": 790,
   "docs/i18n/terminology.md": 300,
   "docs/i18n/translation-prompt.md": 320,
+  "docs/plugins/authoring.md": 700,
   "docs/postmortem/README.md": 170,
   "docs/release-checklist.md": 350
 }
