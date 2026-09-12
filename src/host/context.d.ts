@@ -3,6 +3,7 @@ import type { FilesService } from "./files";
 import type { WindowsService } from "./windows";
 import type { WorkspaceService } from "./workspace";
 import type { SlotsService } from "./slots";
+import type { PluginsService } from "./plugins";
 
 declare module "cordis" {
   interface Context {
@@ -14,5 +15,7 @@ declare module "cordis" {
     workspace: WorkspaceService;
     /** 类型化 UI 槽位注册表。 */
     slots: SlotsService;
+    /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */
+    plugins: PluginsService;
   }
 }

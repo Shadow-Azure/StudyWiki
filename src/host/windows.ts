@@ -42,6 +42,12 @@ export class WindowsService {
     return (state as string | null) ?? null;
   }
 
+  /** Persist this window's workspace root Rust-side (registry upsert + asset
+   * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+  async setRoot(label: string, root: string | null): Promise<void> {
+    await this.#deps.invoke("set_window_root", { label, root });
+  }
+
   /** Native confirm dialog (close-guard prompt); true = proceed. */
   confirmDialog(message: string): Promise<boolean> {
     return this.#deps.confirmDialog(message);
