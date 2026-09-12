@@ -617,9 +617,7 @@ mod tests {
             evil_builder
                 .append_data(&mut pj_header, "package/package.json", pkg_evil.as_bytes())
                 .unwrap();
-            evil_builder
-                .append(&evil_header, "x".as_bytes())
-                .unwrap();
+            evil_builder.append(&evil_header, "x".as_bytes()).unwrap();
             let evil_tar = evil_builder.into_inner().unwrap();
             let mut gz_evil =
                 flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
