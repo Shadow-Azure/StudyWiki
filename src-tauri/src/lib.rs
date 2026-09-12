@@ -76,16 +76,51 @@ fn std_write(path: &Path, contents: &str) -> Result<(), String> {
     fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// 命令面根域校验（单一决策点）：路径须落在某个已授权 root 之内。
+/// 词法 starts_with（路径组件级），与 assetProtocol 的 allow_directory 授权
+/// 同源；symlink 跟随不在本层防线（停机坪）。
+fn path_authorized(reg: &windows::WindowRegistry, path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    for root in reg.roots() {
+        if p.starts_with(&root) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "路径不在任何已授权文件夹内：{path}（先打开文件夹）"
+    ))
+}
+
+fn ensure_authorized(
+    state: &tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: &str,
+) -> Result<(), String> {
+    path_authorized(&state.lock().unwrap(), path)
+}
+
 /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
+/// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
+/// 命令面与 assetProtocol 运行期授权同源收口）。
 #[tauri::command]
-fn read_tree(root: String) -> Result<Vec<FileNode>, String> {
+fn read_tree(
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    root: String,
+) -> Result<Vec<FileNode>, String> {
+    ensure_authorized(&state, &root)?;
     walk_dir(Path::new(&root))
 }
 
 /// 整文件写入（markdown 编辑器的保存通道）。落盘成功后广播 `fs://changed`
 /// （payload 为路径），各窗口据此重读受影响目录。
+/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
 #[tauri::command]
-fn write_text_file(app: tauri::AppHandle, path: String, contents: String) -> Result<(), String> {
+fn write_text_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+    contents: String,
+) -> Result<(), String> {
+    ensure_authorized(&state, &path)?;
     std_write(Path::new(&path), &contents)?;
     app.emit("fs://changed", &path)
         .map_err(|e| format!("emit: {e}"))
@@ -93,8 +128,13 @@ fn write_text_file(app: tauri::AppHandle, path: String, contents: String) -> Res
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
+/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
 #[tauri::command]
-fn read_text_file(path: String) -> Result<String, String> {
+fn read_text_file(
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+) -> Result<String, String> {
+    ensure_authorized(&state, &path)?;
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
@@ -135,6 +175,27 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::windows::WindowRegistry;
+
+    #[test]
+    fn path_authorized_accepts_root_and_nested() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/lib/root".into()));
+        assert!(path_authorized(&reg, "/lib/root").is_ok());
+        assert!(path_authorized(&reg, "/lib/root/sub/a.md").is_ok());
+        // 词法按路径组件比对：前缀字符串相同但组件不同不算在内。
+        assert!(path_authorized(&reg, "/lib/rootx/a.md").is_err());
+    }
+
+    #[test]
+    fn path_authorized_rejects_outside_and_empty_registry() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/lib/root".into()));
+        let err = path_authorized(&reg, "/etc/passwd").unwrap_err();
+        assert!(err.contains("先打开文件夹"), "{err}");
+        reg.set_root("main", None);
+        assert!(path_authorized(&reg, "/lib/root/a.md").is_err());
+    }
 
     #[test]
     fn classifies_known_extensions() {

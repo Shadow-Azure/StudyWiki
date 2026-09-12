@@ -27,6 +27,14 @@ impl WindowRegistry {
     pub fn set_root(&mut self, label: &str, root: Option<String>) {
         self.roots.insert(label.to_string(), root);
     }
+    /// 已设 root 的窗口根集合：文件命令根域校验的准源（None 不算授权）。
+    pub fn roots(&self) -> Vec<std::path::PathBuf> {
+        self.roots
+            .values()
+            .filter_map(|r| r.clone())
+            .map(std::path::PathBuf::from)
+            .collect()
+    }
 }
 
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
@@ -137,6 +145,23 @@ mod tests {
         assert_eq!(reg.get("ghost").flatten(), None);
         let rooted = reg.register(Some("/tmp/y".into()));
         assert_eq!(reg.get(&rooted).flatten(), Some("/tmp/y".into()));
+    }
+
+    #[test]
+    fn registry_roots_collects_set_roots_only() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/a".into()));
+        reg.set_root("win-1", None);
+        reg.set_root("win-2", Some("/b".into()));
+        let mut roots = reg.roots();
+        roots.sort();
+        assert_eq!(
+            roots,
+            vec![
+                std::path::PathBuf::from("/a"),
+                std::path::PathBuf::from("/b")
+            ]
+        );
     }
 
     #[test]
