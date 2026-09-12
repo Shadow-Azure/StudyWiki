@@ -78,9 +78,15 @@ fn std_write(path: &Path, contents: &str) -> Result<(), String> {
 
 /// 命令面根域校验（单一决策点）：路径须落在某个已授权 root 之内。
 /// 词法 starts_with（路径组件级），与 assetProtocol 的 allow_directory 授权
-/// 同源；symlink 跟随不在本层防线（停机坪）。
+/// 同源；含 `..` 组件直接拒（前缀组件可恰匹配 root 而 OS 解析后落在 root 外，
+/// 必须在词法层收口）；symlink 跟随不在本层防线（停机坪）。
 fn path_authorized(reg: &windows::WindowRegistry, path: &str) -> Result<(), String> {
     let p = Path::new(path);
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("路径不得含 .. 组件：{path}"));
+    }
     for root in reg.roots() {
         if p.starts_with(&root) {
             return Ok(());
@@ -195,6 +201,21 @@ mod tests {
         assert!(err.contains("先打开文件夹"), "{err}");
         reg.set_root("main", None);
         assert!(path_authorized(&reg, "/lib/root/a.md").is_err());
+    }
+
+    #[test]
+    fn path_authorized_rejects_parent_dir_under_root() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/lib/root".into()));
+        // 前缀组件恰匹配 root，但 OS 解析 .. 后落在 root 外——词法层必须先拒。
+        assert!(path_authorized(&reg, "/lib/root/../evil").is_err());
+    }
+
+    #[test]
+    fn path_authorized_rejects_parent_dir_escaping_nested() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/lib/root".into()));
+        assert!(path_authorized(&reg, "/lib/root/sub/../../etc/x").is_err());
     }
 
     #[test]
