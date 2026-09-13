@@ -115,3 +115,4 @@ Rust 命令面变化：新增 `read_tree`（递归，取代 `list_library`，不
 - **命令面变更**：`list_library` 退役（被 `read_tree` 取代），命令目录与 type-equivalence 围栏随之更新，属正常门禁流程。
 - **Phase 2 的豁免在规则层已预登**：联网仅发生在"安装外置插件"动作，运行全程离线不变；本 Note 落地 implemented 时同步 environment-independence.md 的登记行。
 - **铁律修订已随转 implemented 同步落地**：environment-independence.md 的条款 2/3 修订、外置插件条款、豁免预登与欠账更新均已进唯一 home。
+- **native-links darwin 裸二进制回退**（2026-09-13 PR #15 检视 §6.13 修复）：实测 tauri 的 dmg 打包会 "Cleaning" 掉 `bundle/macos/` 下的 `.app`，导致 macOS 上按序跑 `pnpm tauri build` → `verify:release` 时 native-links 收不到产物必红；而 `.app` 内主二进制与 `target/release` 裸产物同字节，收集器在 `.app` 缺席时回退扫裸二进制——链接审计等价，release 档顺序对 dmg 清理免疫（linux 分支本就扫裸二进制，两平台统一）；报错文案同步改双平台通用。
