@@ -1,4 +1,5 @@
 import type { Context } from "cordis";
+import { labelButton } from "../../ui/dom";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-shell";
@@ -7,15 +8,16 @@ export const inject = ["files", "windows", "workspace", "slots"];
 
 /** Config accepted by the app-shell plugin (manifest `config` merged over defaults). */
 export interface ShellConfig {
-  /** Application title shown in the topbar. */
+  /** Application title shown in the topbar and the welcome state. */
   title: string;
 }
 
-/** Shell layout: topbar + sidebar + main grid and the three slot containers;
- * with no root open the main area renders the welcome state.
+/** Shell layout: topbar (seal brand + actions + active filename) + sidebar + main
+ * grid and the three slot containers; with no root open the main area renders the
+ * welcome state.
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
- * @returns Teardown removing the root-changed subscription. */
+ * @returns Teardown removing the root-changed / file-opened subscriptions. */
 export function apply(ctx: Context, config: ShellConfig): () => void {
   let app = document.getElementById("app");
   if (!app) {
@@ -28,11 +30,19 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   app.replaceChildren();
   const topbar = document.createElement("header");
   topbar.className = "topbar";
-  const brand = document.createElement("h1");
-  brand.textContent = config.title;
+  const brand = document.createElement("div");
+  brand.className = "brand";
+  const seal = document.createElement("span");
+  seal.className = "brand-seal";
+  seal.textContent = "学";
+  const brandName = document.createElement("h1");
+  brandName.textContent = config.title;
+  brand.append(seal, brandName);
   const topbarLeft = document.createElement("div");
   topbarLeft.className = "slot-host topbar-left";
-  topbar.append(topbarLeft, brand);
+  const fileTitle = document.createElement("div");
+  fileTitle.className = "topbar-file";
+  topbar.append(brand, topbarLeft, fileTitle);
   const body = document.createElement("div");
   body.className = "body";
   const sidebar = document.createElement("aside");
@@ -54,19 +64,35 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
 
   const welcome = document.createElement("div");
   welcome.className = "welcome";
+  const welcomeSeal = document.createElement("div");
+  welcomeSeal.className = "welcome-seal";
+  welcomeSeal.textContent = "学";
+  const welcomeTitle = document.createElement("h2");
+  welcomeTitle.textContent = config.title;
   const hint = document.createElement("p");
   hint.textContent = "打开一个文件夹，开始阅读与笔记。";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = "打开文件夹…";
+  const btn = labelButton("folder-open", "打开文件夹…", { className: "btn btn-primary" });
   btn.addEventListener("click", async () => {
     const root = await ctx.files.pickFolder();
     // 换根单路：授权+登记成功才切前端工作区（scope 收空后漏授权即视频 403）。
     if (root) await ctx.windows.changeRoot(ctx.workspace, root);
   });
-  welcome.append(hint, btn);
+  welcome.append(welcomeSeal, welcomeTitle, hint, btn);
 
+  // 次级空态：已开库未选文档——主区留一句安静的方向提示，不留白屏。
+  const mainEmpty = document.createElement("div");
+  mainEmpty.className = "main-empty";
+  const emptyHint = document.createElement("p");
+  emptyHint.textContent = "从左侧选择一篇文档，开始阅读。";
+  mainEmpty.append(emptyHint);
+
+  const syncEmpty = (): void => {
+    if (ctx.workspace.root && !ctx.workspace.activeFile) viewerHost.before(mainEmpty);
+    else mainEmpty.remove();
+  };
   const syncWelcome = (): void => {
+    fileTitle.textContent = "";
+    syncEmpty();
     if (ctx.workspace.root) {
       welcome.remove();
     } else {
@@ -74,6 +100,10 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     }
   };
   const off = ctx.workspace.events.on("root-changed", syncWelcome);
+  const offFile = ctx.workspace.events.on("file-opened", () => {
+    fileTitle.textContent = ctx.workspace.activeFile?.name ?? "";
+    syncEmpty();
+  });
   syncWelcome();
-  return () => off();
+  return () => { off(); offFile(); };
 }

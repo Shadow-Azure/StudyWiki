@@ -1,4 +1,5 @@
 import type { Context } from "cordis";
+import { labelButton } from "../../ui/dom";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-windows";
@@ -12,13 +13,9 @@ export const inject = ["files", "windows", "workspace", "slots"];
  * @returns Teardown removing both topbar buttons. */
 export function apply(ctx: Context): () => void {
   return ctx.slots.register("topbar.left", (el) => {
-    const newBtn = document.createElement("button");
-    newBtn.type = "button";
-    newBtn.textContent = "新建窗口";
+    const newBtn = labelButton("window", "新建窗口", { className: "btn btn-ghost" });
     newBtn.addEventListener("click", () => void ctx.windows.create(ctx.workspace.root ?? undefined));
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.textContent = "打开文件夹…";
+    const openBtn = labelButton("folder-open", "打开文件夹…", { className: "btn btn-ghost" });
     openBtn.addEventListener("click", async () => {
       const root = await ctx.files.pickFolder();
       // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。

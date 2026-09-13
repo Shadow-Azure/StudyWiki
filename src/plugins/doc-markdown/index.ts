@@ -1,5 +1,7 @@
 import type { Context } from "cordis";
 import type { FileNode } from "../../types";
+import { icon } from "../../ui/icons";
+import { labelButton } from "../../ui/dom";
 import { renderMarkdown } from "./preview";
 import { editText, isDirty, markSaved, openDoc, toggleMode, type DocState } from "./mode";
 import { createCodeMirror, type EditorFactory, type EditorHandle } from "./editor";
@@ -26,17 +28,17 @@ export function apply(
   let offGuard: (() => void) | null = null;
   let error: string | null = null;
 
-  // 读/写失败的用户可见信号（Rust 命令错误原样显示）；× 按钮清除。
+  // 读/写失败的用户可见信号（Rust 命令错误原样显示）；× 按钮清除；
+  // 纯 save 失败路径不走 render()，prepend 前先清旧条防堆叠。
   const errorBanner = (parent: HTMLElement): HTMLElement => {
+    parent.querySelector(".doc-error")?.remove();
     const bar = document.createElement("div");
     bar.className = "doc-error";
     const msg = document.createElement("span");
     msg.textContent = error ?? "";
-    const dismiss = document.createElement("button");
-    dismiss.type = "button";
-    dismiss.textContent = "×";
+    const dismiss = labelButton("close", "", { className: "", ariaLabel: "关闭错误提示" });
     dismiss.addEventListener("click", () => { error = null; bar.remove(); });
-    bar.append(msg, dismiss);
+    bar.append(icon("alert", 15), msg, dismiss);
     parent.prepend(bar);
     return bar;
   };
@@ -73,17 +75,13 @@ export function apply(
     }
     const bar = document.createElement("div");
     bar.className = "viewer-toolbar";
-    const modeBtn = document.createElement("button");
-    modeBtn.type = "button";
-    modeBtn.textContent = state.mode === "preview" ? "编辑" : "预览";
+    // 图标跟随语义：处于预览 → 按钮写「编辑」（铅笔）；处于编辑 → 写「预览」（眼睛）。
+    const modeBtn = labelButton(state.mode === "preview" ? "pencil" : "eye", state.mode === "preview" ? "编辑" : "预览", { className: "btn btn-ghost" });
     modeBtn.addEventListener("click", () => {
       state = { ...state, mode: toggleMode(state.mode) };
       render();
     });
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "save-btn";
-    saveBtn.textContent = "保存 (Ctrl+S)";
+    const saveBtn = labelButton("save", "保存 (Ctrl+S)", { className: "btn btn-ghost save-btn" });
     saveBtn.addEventListener("click", () => void save());
     bar.append(modeBtn, saveBtn);
     const body = document.createElement("div");
