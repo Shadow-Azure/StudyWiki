@@ -13,6 +13,8 @@ function fakeEnv(table: ModuleTable) {
     if (cmd === "read_manifest") return null;
     if (cmd === "write_manifest") { written.push(String(args?.json)); return null; }
     if (cmd === "get_window_state") return null;
+    // 换根单路 changeRoot 允许 set_window_root（欢迎态按钮也要授权）。
+    if (cmd === "set_window_root") return null;
     // view-filetree（内置插件）在 root 变更后重读树；桩回空树，本文件用例不断言树内容。
     if (cmd === "read_tree") return [];
     throw new Error(`unexpected ${cmd}`);
@@ -40,7 +42,7 @@ test("bootstrap: 首启生成默认清单、宿主服务齐全、插件激活", 
   expect((ctx as any).files).toBeDefined();
 });
 
-test("bootstrap: 欢迎态按钮 → pickFolder → setRoot", async () => {
+test("bootstrap: 欢迎态按钮 → pickFolder → changeRoot（授权+登记+切工作区）", async () => {
   const f = fakeEnv({});
   const ctx = await bootstrap(f.env);
   const btn = document.querySelector<HTMLButtonElement>(".welcome button");
@@ -49,9 +51,11 @@ test("bootstrap: 欢迎态按钮 → pickFolder → setRoot", async () => {
   btn!.click();
   await new Promise((r) => setTimeout(r, 10));
   expect(f.openDialog).toHaveBeenCalledWith();
-  // pickFolder 返回后走 setRoot：欢迎态消失（时序抖动则改为直接断言 ctx.workspace.root）
+  // pickFolder 返回后走 changeRoot：欢迎态消失（时序抖动则改为直接断言 ctx.workspace.root）
   expect(ctx.workspace.root).toBe("/picked");
   expect(document.querySelector(".welcome")).toBeNull();
+  // 授权+登记与切工作区同一单路：欢迎态入口不再漏 set_window_root（检视 §6.10 回归钉）。
+  expect(f.env.invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
 });
 
 test("bootstrap: ext: 行经宿主服务装载，坏行回填 plugins.bootBroken", async () => {
