@@ -1,11 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { z } from "zod";
 import type { Manifest } from "../loader/manifest";
 import { loadExternalModule } from "../loader/external";
 import type { PluginModule } from "../loader/types";
 
 /** 宿主支持的外置插件 apiVersion 支持集；扩集必须回 Phase 2 Note 修订。 */
 export const SUPPORTED_API_VERSIONS: readonly number[] = [1];
+
+/** 外置模块命名空间的形状契约（zod）：name 非空串、apply 函数、inject 可选
+ * 字符串数组。字段即装载面契约，扩字段先扩此 schema——后续 config/草稿
+ * 校验复用同一 schema 词汇（cordis 的 Config 字段讲 Standard Schema，
+ * zod 原生实现同接口，作者侧 schema 未来直接兼容）。 */
+const moduleShape = z.object({
+  name: z.string().min(1),
+  apply: z.function(),
+  inject: z.array(z.string()).optional(),
+});
+
+/** 形状不符的逐字段中文文案（按 zod issue 首字段点名；前缀与「的」
+ * 与旧手写版逐字一致，测试正则钉住 fail-loud 语义）。 */
+const SHAPE_HINT: Record<string, string> = {
+  name: " 缺少非空 name 导出",
+  apply: " 缺少 apply 函数导出",
+  inject: " 的 inject 必须是字符串数组",
+};
 
 /** list_plugins() 的行：健康行带元数据，坏行带 problem（面板标待清理）。 */
 export interface PluginEntry {
@@ -95,16 +114,13 @@ export class PluginsService {
     if (!SUPPORTED_API_VERSIONS.includes(src.apiVersion)) {
       throw new Error(`外置插件 ${name} 的 apiVersion ${src.apiVersion} 不在支持集 {${SUPPORTED_API_VERSIONS.join(", ")}} 内`);
     }
-    const mod = (await this.#deps.loadExternal(src.code)) as Partial<PluginModule>;
-    if (typeof mod.name !== "string" || mod.name.length === 0) {
-      throw new Error(`外置插件 ${name} 缺少非空 name 导出`);
+    const mod = (await this.#deps.loadExternal(src.code)) as Record<string, unknown>;
+    const parsed = moduleShape.safeParse(mod);
+    if (!parsed.success) {
+      const field = String(parsed.error.issues[0]?.path[0] ?? "");
+      const label = typeof mod.name === "string" && mod.name.length > 0 ? `（${mod.name}）` : "";
+      throw new Error(`外置插件 ${name}${label}${SHAPE_HINT[field] ?? " 形状不符"}`);
     }
-    if (typeof mod.apply !== "function") {
-      throw new Error(`外置插件 ${name}（${mod.name}）缺少 apply 函数导出`);
-    }
-    if (Array.isArray(mod.inject) && mod.inject.some((k) => typeof k !== "string")) {
-      throw new Error(`外置插件 ${name}（${mod.name}）的 inject 必须是字符串数组`);
-    }
-    return mod as PluginModule;
+    return parsed.data as PluginModule;
   }
 }
