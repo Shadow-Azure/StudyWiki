@@ -210,7 +210,7 @@ fn http_agent() -> ureq::Agent {
 }
 
 /// 读入至多 `cap` 字节；超出即 Err（点名上限）。
-fn read_capped<R: std::io::Read>(mut r: R, cap: u64) -> Result<Vec<u8>, String> {
+fn read_capped<R: std::io::Read>(r: R, cap: u64) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     r.take(cap + 1)
         .read_to_end(&mut buf)
