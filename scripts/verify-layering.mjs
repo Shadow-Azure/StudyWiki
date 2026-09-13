@@ -4,9 +4,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-const IMPORT_FROM = /import\s+(type\s+)?[^"';]*?from\s*["']([^"']+)["']/g;
+const IMPORT_FROM = /(?<![\w.$])import\s*(type\s+)?[^"';]*?from\s*["']([^"']+)["']/g;
 const SIDE_EFFECT_IMPORT = /(?<![\w.$])import\s*["']([^"']+)["']/g;
-const EXPORT_FROM = /export\s+(type\s+)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s*from\s*["']([^"']+)["']/g;
+const EXPORT_FROM = /(?<![\w.$])export\s*(type\s+)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s*from\s*["']([^"']+)["']/g;
 const REQUIRE = /require\(\s*["']([^"']+)["']\s*\)/g;
 const HOST_RE = /(\.\.\/)+host(\/|$)/;
 const FORBIDDEN = (spec) => spec.startsWith("@tauri-apps/") || HOST_RE.test(spec);

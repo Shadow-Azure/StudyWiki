@@ -1,4 +1,4 @@
 {
-  "//": "动态装载缝白名单（相对仓库根路径）。Phase 1 为空：零动态加载；Phase 2 外置插件装载时才开单条缝。",
-  "files": []
+  "//": "动态装载缝白名单（相对仓库根路径）。Phase 2 起 src/loader/external.ts 是全前端唯一动态 import 点（blob 通道装外置插件 ESM）；任何第二条缝必须回 .agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.md 修订并说明理由。",
+  "files": ["src/loader/external.ts"]
 }

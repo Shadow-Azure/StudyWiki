@@ -3,7 +3,7 @@ import type { Context } from "cordis";
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-shell";
 /** Service keys awaited before apply runs. */
-export const inject = ["files", "workspace", "slots"];
+export const inject = ["files", "windows", "workspace", "slots"];
 
 /** Config accepted by the app-shell plugin (manifest `config` merged over defaults). */
 export interface ShellConfig {
@@ -13,7 +13,7 @@ export interface ShellConfig {
 
 /** Shell layout: topbar + sidebar + main grid and the three slot containers;
  * with no root open the main area renders the welcome state.
- * @param ctx Host context (files/workspace/slots injected).
+ * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
  * @returns Teardown removing the root-changed subscription. */
 export function apply(ctx: Context, config: ShellConfig): () => void {
@@ -61,7 +61,8 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   btn.textContent = "打开文件夹…";
   btn.addEventListener("click", async () => {
     const root = await ctx.files.pickFolder();
-    if (root) ctx.workspace.setRoot(root);
+    // 换根单路：授权+登记成功才切前端工作区（scope 收空后漏授权即视频 403）。
+    if (root) await ctx.windows.changeRoot(ctx.workspace, root);
   });
   welcome.append(hint, btn);
 

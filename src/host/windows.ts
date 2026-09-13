@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { WorkspaceService } from "./workspace";
 
 /** Tauri bindings this service wraps; injectable for tests. */
 export interface WindowsDeps {
@@ -40,6 +41,22 @@ export class WindowsService {
   async fetchRoot(label: string): Promise<string | null> {
     const state = await this.#deps.invoke("get_window_state", { label });
     return (state as string | null) ?? null;
+  }
+
+  /** Persist this window's workspace root Rust-side (registry upsert + asset
+   * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+  async setRoot(label: string, root: string | null): Promise<void> {
+    await this.#deps.invoke("set_window_root", { label, root });
+  }
+
+  /** Full root change in one call: Rust-side grant + registry upsert first
+   * (fail-closed), then the workspace switch. Every root change goes through
+   * here — topbar button, welcome-state button, boot re-grant — so the
+   * grant-before-switch ordering is structural, not conventional. Passing
+   * null clears the frontend only (no Rust call). */
+  async changeRoot(workspace: Pick<WorkspaceService, "setRoot">, root: string | null): Promise<void> {
+    if (root !== null) await this.setRoot(this.currentLabel(), root);
+    workspace.setRoot(root);
   }
 
   /** Native confirm dialog (close-guard prompt); true = proceed. */

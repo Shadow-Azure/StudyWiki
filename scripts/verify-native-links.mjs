@@ -77,7 +77,10 @@ export function shouldFailLoud(binaries, bundleExists) {
 
 /** Collect scannable binaries: darwin = every .app/Contents/MacOS file;
  * linux = the raw release binary named by Cargo.toml [package].name
- * (same link set as the deb/AppImage payload; no [[bin]] override assumed). */
+ * (same link set as the deb/AppImage payload; no [[bin]] override assumed).
+ * darwin 回退：dmg 打包会清掉 bundle/macos 下的 .app（2026-09-13 实测），
+ * 而 .app 内主二进制与 target/release 裸产物同字节——.app 缺席时扫裸
+ * 二进制，链接审计等价，release 档顺序对 dmg 清理免疫。 */
 function collectBinaries(root, bundleDir) {
   const out = [];
   const macosDir = path.join(bundleDir, "macos");
@@ -90,12 +93,12 @@ function collectBinaries(root, bundleDir) {
       }
     }
   }
-  if (process.platform === "linux") {
+  if (out.length === 0) {
     const cargoToml = readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
     const binName = resolveLinuxBinName(cargoToml);
     if (binName) {
-      const linuxBin = path.join(root, "src-tauri/target/release", binName);
-      if (existsSync(linuxBin)) out.push(linuxBin);
+      const rawBin = path.join(root, "src-tauri/target/release", binName);
+      if (existsSync(rawBin)) out.push(rawBin);
     }
   }
   return out;
@@ -113,8 +116,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const binaries = collectBinaries(root, bundleDir);
   if (shouldFailLoud(binaries, existsSync(bundleDir))) {
     console.error(
-      `[native-links] bundle 目录存在（${bundleDir}）但未收集到可扫产物——linux 裸二进制定位失败` +
-        `（对照 src-tauri/Cargo.toml 的 [package].name 与 target/release 实际产物名）`,
+      `[native-links] bundle 目录存在（${bundleDir}）但未收集到可扫产物——` +
+        `需 bundle/macos/*.app 或 target/release 裸二进制（名字对照 src-tauri/Cargo.toml 的 [package].name）`,
     );
     process.exit(1);
   }

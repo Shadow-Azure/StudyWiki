@@ -4,6 +4,7 @@ import * as viewFiletree from "../plugins/view-filetree";
 import * as docMarkdown from "../plugins/doc-markdown";
 import * as docVideo from "../plugins/doc-video";
 import * as appWindows from "../plugins/app-windows";
+import * as pluginManager from "../plugins/plugin-manager";
 
 /** One static module table row. */
 export interface TableEntry {
@@ -24,4 +25,5 @@ Object.assign(MODULE_TABLE, {
   "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
   "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
   "app-windows": { plugin: appWindows as PluginModule, defaults: {} },
+  "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
 });

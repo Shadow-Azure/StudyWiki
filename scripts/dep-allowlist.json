@@ -9,7 +9,8 @@
     "@codemirror/commands",
     "@codemirror/language",
     "@codemirror/lang-markdown",
-    "codemirror"
+    "codemirror",
+    "zod"
   ],
   "nodeRefExempt": {
     "//": "node: 内建引用豁免（按包名 → 包内相对路径精确匹配）。只准登记确认不进浏览器 bundle 的文件——如包自带的 Node CLI bin；其余命中一律红。",
