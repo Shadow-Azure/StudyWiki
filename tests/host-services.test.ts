@@ -51,3 +51,17 @@ test("windows: setRoot 透传 label+root（注册表更新 + asset 授权的命�
   await win.setRoot("main", "/picked");
   expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
 });
+
+test("windows: changeRoot 非 null 先授权登记再切工作区；null 只清前端", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const workspace = { setRoot: vi.fn() };
+  await win.changeRoot(workspace, "/picked");
+  expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
+  expect(workspace.setRoot).toHaveBeenCalledWith("/picked");
+  // 顺序不变式：授权+登记成功才切前端（fail-closed，防欢迎态漏授权复发）。
+  expect(invoke.mock.invocationCallOrder[0]).toBeLessThan(workspace.setRoot.mock.invocationCallOrder[0]);
+  await win.changeRoot(workspace, null);
+  expect(workspace.setRoot).toHaveBeenLastCalledWith(null);
+  expect(invoke).toHaveBeenCalledTimes(1);
+});

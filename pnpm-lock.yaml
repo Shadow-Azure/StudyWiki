@@ -35,6 +35,9 @@ importers:
       markdown-it:
         specifier: ^14.1.0
         version: 14.3.1
+      zod:
+        specifier: ^4.6.4
+        version: 4.6.4
     devDependencies:
       '@standard-schema/spec':
         specifier: ^1.1.0
@@ -924,6 +927,9 @@ packages:
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
 
+  zod@4.6.4:
+    resolution: {integrity: sha512-AXSD6hvGdvRjajG/l1cC+d6IrhH+sjmPKtYeQdJIK8MFJl3LyClzS+o/YsVC+zQZPupAaeH5skwwm8YqYH7BqA==}
+
 snapshots:
 
   '@asamuzakjp/css-color@6.0.7':
@@ -1649,3 +1655,5 @@ snapshots:
   xml-name-validator@5.0.0: {}
 
   xmlchars@2.2.0: {}
+
+  zod@4.6.4: {}

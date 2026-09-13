@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "All windows: core defaults plus folder picking. File access goes through the two custom commands and the asset protocol.",
+  "description": "All windows: core defaults plus folder picking and window destroy (the close guard intercepts native close, so closing must go through destroy). File access goes through the two custom commands and the asset protocol.",
   "windows": ["main", "win-*"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": ["core:default", "dialog:default", "core:window:allow-destroy"]
 }

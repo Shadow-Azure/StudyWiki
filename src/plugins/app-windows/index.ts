@@ -21,11 +21,8 @@ export function apply(ctx: Context): () => void {
     openBtn.textContent = "打开文件夹…";
     openBtn.addEventListener("click", async () => {
       const root = await ctx.files.pickFolder();
-      if (root) {
-        // 先 Rust 侧登记注册表 + 授权 asset（刷新后 root 不丢），再切前端工作区。
-        await ctx.windows.setRoot(ctx.windows.currentLabel(), root);
-        ctx.workspace.setRoot(root);
-      }
+      // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。
+      if (root) await ctx.windows.changeRoot(ctx.workspace, root);
     });
     el.append(newBtn, openBtn);
   });

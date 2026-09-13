@@ -46,3 +46,5 @@ Phase 1 全分支终审另沉淀了四项顺路欠账：layering 扫描的无空
 - 欠账区三条清空；新欠账预期一条：linux 面的 ureq/rustls 链接扫描待首个真实发布验证（native-links 白名单覆盖系统 C 运行时，纯 Rust 栈理论零新增 dylib）。
 - 文件监听、跨窗 stale、symlink 跟随与其余 minor 继续停机坪，随本 Note 的 PR 说明存档分诊。
 - 授权残留局限：`allow_directory` 注入的 asset 授权只增不减（无 un-allow API）——窗口关闭、换 root、建窗回滚后旧目录残留授权，且 scope 为 app 级共享；"唯一授权点"收窄的是注入面而非可撤销性，此为已知局限。
+- 换根收编单路（2026-09-13 检视 §6.10 修复）：三个换根入口（顶栏按钮、欢迎态按钮、启动重授权）统一经 `WindowsService.changeRoot(workspace, root)`——授权+注册表登记成功才切前端工作区，顺序不变式由结构保证、测试钉死；欢迎态按钮此前漏 `windows.setRoot`，首启从欢迎态打开含视频/图片的文件夹会 asset 403 且 F5 丢 root。
+- 形状校验收编 zod（2026-09-13 检视 §6.12 用户拍板）：loadModule 的模块命名空间形状改由 zod schema 判定（name 非空 / apply 函数 / inject 可选字符串数组），错误文案仍逐字段中文点名（SHAPE_HINT 映射表维护，文案与测试钉子不变）；动机是趁本 PR 落 schema 基建，后续 config/草稿校验复用同一词汇——cordis 的 Config 字段讲 Standard Schema（registry.ts），zod 原生实现同接口。zod 4.6.4 零传递依赖、tarball 实测零 `node:` 引用，dep-allowlist 精确集合登记；插件"零依赖单文件"分发契约不受影响（zod 是宿主侧依赖）。
