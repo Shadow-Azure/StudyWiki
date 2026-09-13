@@ -12,6 +12,7 @@
 | [architecture.md](architecture.md) | 架构地图（含 type-equiv 围栏） |
 | [environment-independence.md](environment-independence.md) | 环境无关约束 + 豁免登记 |
 | [development.md](development.md) | 贡献者上手 |
+| [plugins/authoring.md](plugins/authoring.md) | 外置插件作者指南（封闭契约/快速开始/试装/发布/信任模型） |
 | [commands.md](commands.md) | Tauri 命令目录（生成区） |
 | [i18n/README.md](i18n/README.md) | 双语配对契约 |
 | [i18n/terminology.md](i18n/terminology.md) | 术语对齐表（禁用替写受门禁背书） |

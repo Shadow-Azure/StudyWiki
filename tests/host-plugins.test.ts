@@ -60,3 +60,16 @@ test("loadModule：支持集内 + 形状合法即返回模块（blob 原料逐�
   expect(mod.name).toBe("demo-hello");
   expect(SUPPORTED_API_VERSIONS).toEqual([1]);
 });
+
+test("loadModule: inject 非 undefined 且非字符串数组即拒（undefined 合法）", async () => {
+  const bad = {
+    invoke: async () => ({ code: "export const name=1", apiVersion: 1 }),
+    loadExternal: async () => ({ name: "demo", apply: () => {}, inject: "slots" }),
+    pickTgz: async () => null,
+  };
+  const svc = new PluginsService(bad);
+  await expect(svc.loadModule("demo")).rejects.toThrow("inject 必须是字符串数组");
+
+  const noInject = { ...bad, loadExternal: async () => ({ name: "demo", apply: () => {} }) };
+  await expect(new PluginsService(noInject).loadModule("demo")).resolves.toMatchObject({ name: "demo" });
+});

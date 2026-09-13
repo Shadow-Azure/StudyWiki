@@ -10,18 +10,22 @@
 // Registered: read_tree, write_text_file, read_text_file, windows::create_window, windows::get_window_state, windows::set_window_root, windows::read_manifest, windows::write_manifest, plugins::list_plugins, plugins::read_plugin_module, plugins::remove_plugin, plugins::install_plugin, plugins::import_plugin
 
 /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
+/// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
+/// 命令面与 assetProtocol 运行期授权同源收口）。
 #[tauri::command]
-fn read_tree(root: String) -> Result<Vec<FileNode>, String>;
+fn read_tree(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, root: String) -> Result<Vec<FileNode>, String>;
 
 /// 整文件写入（markdown 编辑器的保存通道）。落盘成功后广播 `fs://changed`
 /// （payload 为路径），各窗口据此重读受影响目录。
+/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
 #[tauri::command]
-fn write_text_file(app: tauri::AppHandle, path: String, contents: String) -> Result<(), String>;
+fn write_text_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String, contents: String) -> Result<(), String>;
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
+/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
 #[tauri::command]
-fn read_text_file(path: String) -> Result<String, String>;
+fn read_text_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String) -> Result<String, String>;
 
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]

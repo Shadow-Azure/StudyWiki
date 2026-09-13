@@ -53,48 +53,55 @@ async function openPanel(ctx: Context): Promise<void> {
     errLine.hidden = true;
   };
   const render = async () => {
-    const raw = await ctx.plugins.readManifest();
-    let manifest: Manifest;
     try {
-      manifest = JSON.parse(raw ?? '{"plugins":[]}') as Manifest;
+      const raw = await ctx.plugins.readManifest();
+      let manifest: Manifest;
+      try {
+        manifest = JSON.parse(raw ?? '{"plugins":[]}') as Manifest;
+      } catch (e) {
+        box.replaceChildren(errorLine(`清单读取失败：${(e as Error).message}`));
+        return;
+      }
+      const entries = await ctx.plugins.list();
+      const rows = computePanelRows(manifest, entries, ctx.plugins.bootBroken);
+      const list = document.createElement("div");
+      list.className = "plugin-list";
+      for (const row of rows) list.append(rowEl(ctx, row, manifest, render, showError, noteSaved));
+      const head = document.createElement("div");
+      head.className = "plugin-panel-head";
+      const installInput = document.createElement("input");
+      installInput.placeholder = "包名或 包名@版本";
+      head.append(
+        installInput,
+        button("安装", async () => {
+          const spec = installInput.value.trim();
+          if (!spec) return;
+          try {
+            await ctx.plugins.install(spec);
+            noteSaved();
+          } catch (e) {
+            showError(e);
+          }
+          await render();
+        }),
+        button("本地导入…", async () => {
+          try {
+            await ctx.plugins.importFromTgz();
+            noteSaved();
+          } catch (e) {
+            showError(e);
+          }
+          await render();
+        }),
+        button("关闭", close),
+      );
+      box.replaceChildren(head, list, errLine, hint);
     } catch (e) {
-      box.replaceChildren(errorLine(`清单读取失败：${(e as Error).message}`));
-      return;
+      // readManifest/list 的 reject 走内联错误，不外溢成 unhandled rejection；
+      // head/list 是读不出来时的陈旧状态，不保留。
+      showError(e);
+      box.replaceChildren(errLine, hint);
     }
-    const entries = await ctx.plugins.list();
-    const rows = computePanelRows(manifest, entries, ctx.plugins.bootBroken);
-    const list = document.createElement("div");
-    list.className = "plugin-list";
-    for (const row of rows) list.append(rowEl(ctx, row, manifest, render, showError, noteSaved));
-    const head = document.createElement("div");
-    head.className = "plugin-panel-head";
-    const installInput = document.createElement("input");
-    installInput.placeholder = "包名或 包名@版本";
-    head.append(
-      installInput,
-      button("安装", async () => {
-        const spec = installInput.value.trim();
-        if (!spec) return;
-        try {
-          await ctx.plugins.install(spec);
-          noteSaved();
-        } catch (e) {
-          showError(e);
-        }
-        await render();
-      }),
-      button("本地导入…", async () => {
-        try {
-          await ctx.plugins.importFromTgz();
-          noteSaved();
-        } catch (e) {
-          showError(e);
-        }
-        await render();
-      }),
-      button("关闭", close),
-    );
-    box.replaceChildren(head, list, errLine, hint);
   };
   await render();
 }

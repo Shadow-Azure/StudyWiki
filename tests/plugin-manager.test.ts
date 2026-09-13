@@ -104,3 +104,19 @@ test("面板: 安装失败内联显示错误（fail-loud 不静默）", async ()
   expect(err).not.toBeNull();
   expect(err!.textContent).toContain("demo-x");
 });
+
+test("面板: readManifest 失败内联显示，不 unhandled rejection", async () => {
+  const f = fakePlugins();
+  f.plugins.readManifest = vi.fn().mockRejectedValue(new Error("清单不见了"));
+  const slots = {
+    register: (_s: string, render: (el: HTMLElement) => void) => {
+      render(document.body);
+      return () => {};
+    },
+  };
+  apply({ plugins: f.plugins, slots } as never, {});
+  document.querySelector<HTMLButtonElement>("button")!.click();
+  await new Promise((r) => setTimeout(r, 0));
+  const err = document.querySelector<HTMLElement>(".plugin-error");
+  expect(err?.textContent).toContain("操作失败：清单不见了");
+});
