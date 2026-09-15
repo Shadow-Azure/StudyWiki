@@ -21,6 +21,7 @@ Status: implemented
 - **内联 SVG 图标库**（src/ui/icons.ts）：16px 网格 currentColor 描线，声明式 (标签, 属性) 片段 + `createElementNS` 显式构造。**WebKit（WKWebView）对 `div.innerHTML` 解析出的 SVG 不绘制**（Chrome 正常；静态标记与 createElementNS 均正常，探针四变体定位）——显式构造是唯一三引擎一致路线。代价是命名空间 URI 字面量命中环境无关性 URL 扫描，已按契约登记豁免（docs/environment-independence.md 豁免登记表 + 门禁 ALLOWED 列表）：该 URI 是 DOM 规范标识符，永不联网。
 - **浏览器视觉预览**（src/preview.ts + preview.html）：用内存宿主装配真实 app-shell、文件树、Markdown、视频、窗口与插件管理插件；槽位行为与生产 `SlotsService` 一致（每个 renderer 独立子元素）。该入口只服务本地 Vite 检视，不进入 `index.html` 发布入口。
 - **DOM 契约测试同步**：树行文件名独立 span；分段模式暴露 `aria-pressed`；顶栏图标命令暴露 `aria-label`/`title`；不匹配的 viewer 插件隐藏自己的槽位，避免空槽把视频推到视口外。
+- **保存错误条生命周期**：写失败可手动关闭；未关闭时后续保存成功会自动清除，避免已保存状态仍显示失败。
 - **语义补强**：树行 aria-expanded/aria-current、面板 role=dialog + Esc 关闭 + 自动聚焦安装输入框、图标按钮 aria-label、`:focus-visible` 全局焦点环、reduced-motion 全灭动效。
 
 ## Alternatives considered

@@ -52,6 +52,7 @@ export function apply(
       if (host) errorBanner(host);
       return;
     }
+    host?.querySelector(".doc-error")?.remove();
     error = null;
     state = markSaved(state);
     paintChrome();

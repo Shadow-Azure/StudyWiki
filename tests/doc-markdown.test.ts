@@ -78,11 +78,17 @@ test("DOM: 写失败置可清除错误条（编辑器不卸载），成功后清
   expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败：EDISK");
   expect(document.querySelector(".fake-editor")).not.toBeNull(); // 编辑器不被错误条顶掉
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(true);
-  (document.querySelector(".doc-error button") as HTMLButtonElement).click(); // × 可清除
-  expect(document.querySelector(".doc-error")).toBeNull();
+
   failWrite = false;
   (document.querySelector(".fake-editor") as HTMLElement & { __save: () => void }).__save();
   await new Promise((r) => setTimeout(r, 0));
   expect(document.querySelector(".doc-error")).toBeNull();
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(false);
+
+  failWrite = true;
+  (document.querySelector(".fake-editor") as HTMLElement & { __fire: (t: string) => void }).__fire("body3");
+  (document.querySelector(".fake-editor") as HTMLElement & { __save: () => void }).__save();
+  await new Promise((r) => setTimeout(r, 0));
+  (document.querySelector(".doc-error button") as HTMLButtonElement).click(); // × 可清除
+  expect(document.querySelector(".doc-error")).toBeNull();
 });
