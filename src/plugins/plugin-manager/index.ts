@@ -1,5 +1,6 @@
 import type { Context } from "cordis";
 import type { Manifest } from "../../loader/manifest";
+import { labelButton } from "../../ui/dom";
 import { computePanelRows, withEnabled, withoutRow, type PanelRow } from "./model";
 
 /** Plugin id in the manifest and the static module table. */
@@ -14,24 +15,35 @@ export const inject = ["plugins", "slots"];
  * @returns Teardown removing the topbar button. */
 export function apply(ctx: Context): () => void {
   return ctx.slots.register("topbar.left", (el) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "插件";
+    const btn = labelButton("module", "", { className: "btn btn-ghost icon-btn", ariaLabel: "插件" });
+    btn.title = "插件";
     btn.addEventListener("click", () => void openPanel(ctx));
     el.append(btn);
   });
 }
 
-/** 面板本体：固定覆盖层；每次操作后整体重渲染（状态简单，不值得细粒度更新）。 */
+/** 面板本体：模态覆盖层（Esc 可关）；每次操作后整体重渲染（状态简单，不值得细粒度更新）。 */
 async function openPanel(ctx: Context): Promise<void> {
   document.querySelector(".plugin-panel")?.remove();
   const overlay = document.createElement("div");
   overlay.className = "plugin-panel";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "插件管理");
   const box = document.createElement("div");
   box.className = "plugin-panel-box";
   overlay.append(box);
   document.body.append(overlay);
-  const close = () => overlay.remove();
+  // Esc 挂 document 而非 overlay：整体重渲染会销毁焦点元素、焦点回落 body，
+  // 事件不再路过 overlay 子树；外点关闭之外键盘出口不能断。
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") close();
+  };
+  const close = (): void => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  document.addEventListener("keydown", onKey);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
   });
@@ -67,13 +79,18 @@ async function openPanel(ctx: Context): Promise<void> {
       const list = document.createElement("div");
       list.className = "plugin-list";
       for (const row of rows) list.append(rowEl(ctx, row, manifest, render, showError, noteSaved));
+      const title = document.createElement("h2");
+      title.className = "plugin-panel-title";
+      title.textContent = "插件";
       const head = document.createElement("div");
       head.className = "plugin-panel-head";
       const installInput = document.createElement("input");
+      installInput.type = "text";
       installInput.placeholder = "包名或 包名@版本";
+      installInput.setAttribute("aria-label", "安装包名");
       head.append(
         installInput,
-        button("安装", async () => {
+        button("安装", "btn", async () => {
           const spec = installInput.value.trim();
           if (!spec) return;
           try {
@@ -84,7 +101,7 @@ async function openPanel(ctx: Context): Promise<void> {
           }
           await render();
         }),
-        button("本地导入…", async () => {
+        button("本地导入…", "btn", async () => {
           try {
             await ctx.plugins.importFromTgz();
             noteSaved();
@@ -93,9 +110,9 @@ async function openPanel(ctx: Context): Promise<void> {
           }
           await render();
         }),
-        button("关闭", close),
+        button("关闭", "btn btn-ghost", close),
       );
-      box.replaceChildren(head, list, errLine, hint);
+      box.replaceChildren(title, head, list, errLine, hint);
     } catch (e) {
       // readManifest/list 的 reject 走内联错误，不外溢成 unhandled rejection；
       // head/list 是读不出来时的陈旧状态，不保留。
@@ -104,6 +121,7 @@ async function openPanel(ctx: Context): Promise<void> {
     }
   };
   await render();
+  box.querySelector<HTMLInputElement>(".plugin-panel-head input")?.focus({ preventScroll: true });
 }
 
 /** 单行：名称/版本/问题 + 开关 + 外置移除；改动走纯变换后写回。 */
@@ -117,11 +135,16 @@ function rowEl(
 ): HTMLElement {
   const line = document.createElement("div");
   line.className = `plugin-row${row.problem ? " plugin-row-broken" : ""}`;
-  const label = document.createElement("span");
-  label.textContent = row.id + (row.version ? `（${row.version}）` : "");
+  const name = document.createElement("span");
+  name.className = "plugin-name";
+  name.textContent = row.id;
+  const version = document.createElement("span");
+  version.className = "plugin-version";
+  version.textContent = row.version ?? "";
   const toggle = document.createElement("input");
   toggle.type = "checkbox";
   toggle.checked = row.enabled;
+  toggle.setAttribute("aria-label", `启用 ${row.id}`);
   toggle.addEventListener("change", async () => {
     try {
       await ctx.plugins.writeManifest(withEnabled(manifest, row.id, toggle.checked));
@@ -131,7 +154,7 @@ function rowEl(
     }
     await rerender();
   });
-  line.append(label, toggle);
+  line.append(name, version, toggle);
   if (row.problem) {
     const problem = document.createElement("span");
     problem.className = "plugin-problem";
@@ -140,7 +163,7 @@ function rowEl(
   }
   if (row.removable && row.externalName) {
     line.append(
-      button("移除", async () => {
+      button("移除", "btn btn-danger", async () => {
         try {
           await ctx.plugins.remove(row.externalName!);
           await ctx.plugins.writeManifest(withoutRow(manifest, row.id));
@@ -156,9 +179,10 @@ function rowEl(
 }
 
 /** 最小按钮工厂。 */
-function button(text: string, onClick: () => void | Promise<void>): HTMLButtonElement {
+function button(text: string, className: string, onClick: () => void | Promise<void>): HTMLButtonElement {
   const b = document.createElement("button");
   b.type = "button";
+  b.className = className;
   b.textContent = text;
   b.addEventListener("click", () => void onClick());
   return b;

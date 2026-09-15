@@ -1,5 +1,7 @@
 import type { Context } from "cordis";
 import type { FileNode } from "../../types";
+import { icon } from "../../ui/icons";
+import { labelButton } from "../../ui/dom";
 import { renderMarkdown } from "./preview";
 import { editText, isDirty, markSaved, openDoc, toggleMode, type DocState } from "./mode";
 import { createCodeMirror, type EditorFactory, type EditorHandle } from "./editor";
@@ -26,17 +28,17 @@ export function apply(
   let offGuard: (() => void) | null = null;
   let error: string | null = null;
 
-  // 读/写失败的用户可见信号（Rust 命令错误原样显示）；× 按钮清除。
+  // 读/写失败的用户可见信号（Rust 命令错误原样显示）；× 按钮清除；
+  // 纯 save 失败路径不走 render()，prepend 前先清旧条防堆叠。
   const errorBanner = (parent: HTMLElement): HTMLElement => {
+    parent.querySelector(".doc-error")?.remove();
     const bar = document.createElement("div");
     bar.className = "doc-error";
     const msg = document.createElement("span");
     msg.textContent = error ?? "";
-    const dismiss = document.createElement("button");
-    dismiss.type = "button";
-    dismiss.textContent = "×";
+    const dismiss = labelButton("close", "", { className: "", ariaLabel: "关闭错误提示" });
     dismiss.addEventListener("click", () => { error = null; bar.remove(); });
-    bar.append(msg, dismiss);
+    bar.append(icon("alert", 15), msg, dismiss);
     parent.prepend(bar);
     return bar;
   };
@@ -68,24 +70,36 @@ export function apply(
     editor = null;
     if (error) errorBanner(host);
     if (!current || current.kind !== "markdown") {
+      host.hidden = true;
       paintChrome();
       return;
     }
+    host.hidden = false;
     const bar = document.createElement("div");
     bar.className = "viewer-toolbar";
-    const modeBtn = document.createElement("button");
-    modeBtn.type = "button";
-    modeBtn.textContent = state.mode === "preview" ? "编辑" : "预览";
-    modeBtn.addEventListener("click", () => {
+    const modeGroup = document.createElement("div");
+    modeGroup.className = "mode-group";
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "文档模式");
+    const previewBtn = labelButton("eye", "预览", { className: "btn btn-ghost mode-btn" });
+    previewBtn.setAttribute("aria-pressed", String(state.mode === "preview"));
+    previewBtn.addEventListener("click", () => {
+      if (state.mode === "preview") return;
+      state = { ...state, mode: "preview" };
+      render();
+    });
+    const editBtn = labelButton("pencil", "编辑", { className: "btn btn-ghost mode-btn" });
+    editBtn.setAttribute("aria-pressed", String(state.mode === "edit"));
+    editBtn.addEventListener("click", () => {
+      if (state.mode === "edit") return;
       state = { ...state, mode: toggleMode(state.mode) };
       render();
     });
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "save-btn";
-    saveBtn.textContent = "保存 (Ctrl+S)";
+    modeGroup.append(previewBtn, editBtn);
+    const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
+    saveBtn.setAttribute("aria-keyshortcuts", "Control+S");
     saveBtn.addEventListener("click", () => void save());
-    bar.append(modeBtn, saveBtn);
+    bar.append(modeGroup, saveBtn);
     const body = document.createElement("div");
     body.className = "doc-body";
     if (state.mode === "preview") {

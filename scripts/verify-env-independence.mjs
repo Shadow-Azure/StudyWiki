@@ -8,7 +8,9 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 // 白名单：asset/ipc 协议的本地回显地址是 Tauri 机制的一部分，不是外网引用。
-const ALLOWED_URL = ["http://asset.localhost", "http://ipc.localhost", "https://schema.tauri.app"];
+// w3.org：SVG 命名空间标识符（createElementNS 参数，永不联网），豁免已登记
+// docs/environment-independence.md 豁免登记表。
+const ALLOWED_URL = ["http://asset.localhost", "http://ipc.localhost", "https://schema.tauri.app", "http://www.w3.org"];
 const EXTERNAL_URL_RE = /https?:\/\/[a-z0-9.-]+/gi;
 
 async function scanDir(dir, out = []) {

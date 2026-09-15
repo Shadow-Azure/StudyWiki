@@ -62,7 +62,11 @@ test("面板: 列行 + 开关写清单 + 移除走 ctx.plugins + 重启提示", 
     },
   };
   apply({ plugins: f.plugins, slots } as never, {});
-  document.querySelector<HTMLButtonElement>("button")!.click();
+  const openPanel = document.querySelector<HTMLButtonElement>("button")!;
+  expect(openPanel.textContent).toBe("");
+  expect(openPanel.getAttribute("aria-label")).toBe("插件");
+  expect(openPanel.title).toBe("插件");
+  openPanel.click();
   await new Promise((r) => setTimeout(r, 0));
   expect(document.querySelector(".plugin-panel")).not.toBeNull();
   expect(document.querySelectorAll(".plugin-row").length).toBe(2);
