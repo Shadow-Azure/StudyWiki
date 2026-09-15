@@ -15,7 +15,8 @@ export const inject = ["plugins", "slots"];
  * @returns Teardown removing the topbar button. */
 export function apply(ctx: Context): () => void {
   return ctx.slots.register("topbar.left", (el) => {
-    const btn = labelButton("module", "插件", { className: "btn btn-ghost" });
+    const btn = labelButton("module", "", { className: "btn btn-ghost icon-btn", ariaLabel: "插件" });
+    btn.title = "插件";
     btn.addEventListener("click", () => void openPanel(ctx));
     el.append(btn);
   });

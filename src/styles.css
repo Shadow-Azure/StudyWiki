@@ -1,39 +1,37 @@
 /* ============================================================
-   StudyWiki 「书斋」视觉系统
-   工具面（顶栏/侧栏/工具条）：冷静现代，发丝线 + 13px 密度。
-   书页面（阅读区）：衬线排版，纸白，书卷行距。
-   朱砂只作语义标记（未保存朱批/警示），交互色统一青黛。
-   主题：纸（浅）/ 墨（深），随系统切换。
+   StudyWiki workspace visual system
+   Compact neutral chrome, quiet reading surface, and semantic blue/red accents.
+   Light and dark themes follow the system without runtime dependencies.
    ============================================================ */
 
 :root {
   color-scheme: light dark;
 
   /* —— 面 —— */
-  --chrome: #f1efe8;          /* 顶栏/侧栏底 */
-  --paper: #fbfaf7;           /* 阅读面底 */
+  --chrome: #f4f5f7;          /* 顶栏/侧栏底 */
+  --paper: #ffffff;           /* 阅读面底 */
   --raise: #ffffff;           /* 浮层/输入底 */
-  --code-bg: #f0ede3;         /* 代码块底 */
-  --stage: #161411;           /* 视频暗室底（双主题共用近黑） */
+  --code-bg: #f4f6f9;         /* 代码块底 */
+  --stage: #111316;           /* 视频暗室底（双主题共用近黑） */
 
   /* —— 线 —— */
-  --hairline: #ded9cb;
-  --hairline-soft: #e9e5da;
+  --hairline: #d9dee5;
+  --hairline-soft: #e7ebef;
 
   /* —— 墨（文字三阶）—— */
-  --ink: #2b2721;
-  --ink-2: #6b6455;
-  --ink-3: #a29a86;
+  --ink: #20242a;
+  --ink-2: #5d6673;
+  --ink-3: #8d96a2;
 
   /* —— 色 —— */
-  --azurite: #33597f;         /* 青黛：链接/活动/焦点 */
-  --azurite-deep: #28466a;
-  --azurite-wash: rgb(51 89 127 / 0.09);
-  --cinnabar: #b23a26;        /* 朱砂：未保存/警示 */
-  --cinnabar-deep: #8f2e1e;
-  --cinnabar-wash: rgb(178 58 38 / 0.08);
-  --wash: rgb(43 39 33 / 0.055);   /* 通用悬停晕 */
-  --shadow: 0 16px 44px rgb(38 31 18 / 0.16);
+  --azurite: #2563eb;         /* 链接/活动/焦点 */
+  --azurite-deep: #1d4ed8;
+  --azurite-wash: rgb(37 99 235 / 0.1);
+  --cinnabar: #dc2626;        /* 未保存/警示 */
+  --cinnabar-deep: #b91c1c;
+  --cinnabar-wash: rgb(220 38 38 / 0.09);
+  --wash: rgb(32 36 42 / 0.055);   /* 通用悬停晕 */
+  --shadow: 0 18px 44px rgb(23 27 33 / 0.16);
 
   /* —— 语法高亮（CodeMirror）—— */
   --syn-keyword: #7659a6;
@@ -48,31 +46,31 @@
   /* —— 圆角阶 —— */
   --r-s: 5px;
   --r-m: 8px;
-  --r-l: 11px;
+  --r-l: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --chrome: #191712;
-    --paper: #211f1a;
-    --raise: #2a2721;
-    --code-bg: #1a1815;
-    --stage: #100f0d;
+    --chrome: #17181b;
+    --paper: #202124;
+    --raise: #27282c;
+    --code-bg: #1b1d21;
+    --stage: #0e0f10;
 
-    --hairline: #3b3830;
-    --hairline-soft: #2f2c26;
+    --hairline: #36383d;
+    --hairline-soft: #2c2e33;
 
-    --ink: #ddd7c8;
-    --ink-2: #a59d8a;
-    --ink-3: #6f6959;
+    --ink: #e8eaed;
+    --ink-2: #a8b0ba;
+    --ink-3: #78818d;
 
-    --azurite: #8fb2d8;
-    --azurite-deep: #aac7e5;
-    --azurite-wash: rgb(143 178 216 / 0.1);
-    --cinnabar: #d86a4f;
-    --cinnabar-deep: #e8866d;
-    --cinnabar-wash: rgb(216 106 79 / 0.12);
-    --wash: rgb(221 215 200 / 0.06);
+    --azurite: #82aafa;
+    --azurite-deep: #a5c5ff;
+    --azurite-wash: rgb(130 170 250 / 0.12);
+    --cinnabar: #f87171;
+    --cinnabar-deep: #fca5a5;
+    --cinnabar-wash: rgb(248 113 113 / 0.13);
+    --wash: rgb(232 234 237 / 0.07);
     --shadow: 0 16px 44px rgb(0 0 0 / 0.5);
 
     --syn-keyword: #b39ddb;
@@ -128,32 +126,57 @@ body {
 
 /* ============ 壳栅格 ============ */
 
-.shell { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+.shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  background: var(--chrome);
+}
 .slot-host { display: contents; }
+.slot { min-width: 0; min-height: 100%; }
 
-.body { display: grid; grid-template-columns: 248px 1fr; min-height: 0; }
+.body {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--sidebar-size, 252px) minmax(0, 1fr);
+  min-height: 0;
+}
+.body.is-resizing { cursor: col-resize; user-select: none; }
+.body.is-resizing .sidebar,
+.body.is-resizing .main { pointer-events: none; }
 
 /* ============ 顶栏 ============ */
 
 .topbar {
-  display: flex;
+  display: grid;
   align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 12px 0 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  height: 48px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--hairline);
   background: var(--chrome);
 }
 
-.brand { display: flex; align-items: center; gap: 8px; margin-right: 6px; user-select: none; }
-.brand h1 { margin: 0; font-size: 13.5px; font-weight: 600; letter-spacing: 0.02em; }
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; user-select: none; }
+.brand-name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 .brand-seal {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  background: var(--cinnabar);
-  color: #fff;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 6px;
+  background: linear-gradient(160deg, #17466c, #0b1220);
+  color: #e9f5ff;
   display: grid;
   place-items: center;
   font-family: var(--font-read);
@@ -163,25 +186,66 @@ body {
 }
 
 .topbar-file {
-  flex: 1;
-  min-width: 0;
-  padding: 0 2px;
-  text-align: right;
-  color: var(--ink-2);
+  padding: 0 4px;
+  text-align: center;
+  color: var(--ink);
   font-size: 12.5px;
+  font-weight: 550;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.topbar-left {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
 /* ============ 侧栏 ============ */
 
 .sidebar {
-  border-right: 1px solid var(--hairline);
   background: var(--chrome);
   overflow: auto;
-  padding: 4px 8px 14px;
+  padding: 6px 8px 14px;
 }
+
+.workspace-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-size, 252px);
+  z-index: 5;
+  width: 7px;
+  margin-left: -3.5px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.workspace-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: var(--hairline);
+  transform: translateX(-50%);
+  transition: background-color 0.12s ease;
+}
+
+.workspace-resizer:hover::after,
+.workspace-resizer:focus-visible::after,
+.body.is-resizing .workspace-resizer::after {
+  background: var(--azurite);
+}
+
+.workspace-resizer:focus-visible { outline: none; }
 
 .tree-empty { margin: 12px 8px; color: var(--ink-2); font-size: 12.5px; }
 
@@ -189,14 +253,19 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 8px 7px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 7px 8px;
+  background: var(--chrome);
 }
 
 .tree-title {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0;
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
@@ -210,8 +279,8 @@ body {
   align-items: center;
   gap: 5px;
   width: 100%;
-  min-height: 27px;
-  padding: 0 6px;
+  min-height: 28px;
+  padding: 0 7px;
   border: 0;
   border-radius: var(--r-s);
   background: none;
@@ -248,9 +317,10 @@ body {
 
 .tree-row-active {
   background: var(--azurite-wash);
+  color: var(--azurite-deep);
   box-shadow: inset 2px 0 0 var(--azurite);
 }
-.tree-row-active:hover { background: var(--azurite-wash); }
+.tree-row-active:hover { background: color-mix(in srgb, var(--azurite) 14%, transparent); }
 
 /* ============ 按钮 ============ */
 
@@ -259,7 +329,7 @@ body {
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 1px solid var(--hairline);
   border-radius: 6px;
   background: var(--raise);
@@ -268,7 +338,7 @@ body {
   cursor: pointer;
   transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
-.btn:hover { background: color-mix(in srgb, var(--ink) 4%, var(--raise)); }
+.btn:hover { background: color-mix(in srgb, var(--ink) 5%, var(--raise)); }
 .btn svg { flex: none; }
 
 .btn-ghost {
@@ -285,7 +355,7 @@ body {
   border-color: var(--azurite);
   background: var(--azurite);
   color: #fff;
-  font-weight: 500;
+  font-weight: 550;
 }
 .btn-primary:hover { background: var(--azurite-deep); border-color: var(--azurite-deep); color: #fff; }
 
@@ -309,23 +379,62 @@ input[type="text"]:focus-visible {
   outline: 2px solid var(--azurite-wash);
   border-color: var(--azurite);
 }
-input::placeholder { color: var(--ink-3); }
+input::placeholder { color: var(--ink-2); }
 
 input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px; margin: 0; }
 
 /* ============ 阅读区 ============ */
 
-.main { overflow: auto; position: relative; background: var(--paper); padding: 0; }
+.main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: auto;
+  position: relative;
+  background: var(--paper);
+  padding: 0;
+}
 
 .viewer-toolbar {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 14px 32px 0;
-  padding-inline: max(32px, calc((100% - 760px) / 2));
+  min-height: 44px;
+  padding: 7px max(28px, calc((100% - 760px) / 2));
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border-bottom: 1px solid var(--hairline-soft);
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  backdrop-filter: blur(10px);
 }
 
-.doc-body { padding: 18px 32px 120px; }
+.doc-body { padding: 30px 32px 120px; }
+
+.mode-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--chrome) 72%, var(--paper));
+}
+
+.mode-btn {
+  height: 22px;
+  padding: 0 9px;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.mode-btn:hover { background: var(--wash); color: var(--ink); }
+.mode-btn[aria-pressed="true"] {
+  background: var(--raise);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(15 20 28 / 0.12);
+}
 
 /* 未保存朱批点：不占用按钮文本 */
 .save-btn.dirty::after {
@@ -334,7 +443,7 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   height: 7px;
   border-radius: 50%;
   background: var(--cinnabar);
-  margin-left: 2px;
+  margin-left: 3px;
 }
 
 /* ============ Markdown 书页排版（主视觉）============ */
@@ -344,7 +453,7 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   margin: 0 auto;
   font-family: var(--font-read);
   font-size: 17px;
-  line-height: 2;
+  line-height: 1.9;
   color: var(--ink);
   overflow-wrap: break-word;
 }
@@ -441,17 +550,27 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 
 /* ============ CodeMirror 编辑面 ============ */
 
-.cm-editor { max-width: 860px; margin: 0 auto; background: transparent; }
+.cm-editor {
+  max-width: 760px;
+  margin: 0 auto;
+  background: transparent;
+  color: var(--ink);
+}
 .cm-editor.cm-focused { outline: none; }
-.cm-scroller { font-family: var(--font-mono); font-size: 14px; line-height: 1.75; }
-.cm-gutters { background: transparent; border-right: 1px solid var(--hairline-soft); color: var(--ink-3); }
-.cm-content { caret-color: var(--azurite); }
+.cm-scroller {
+  overflow-x: hidden;
+  font-family: var(--font-read);
+  font-size: 17px;
+  line-height: 1.9;
+}
+.cm-content { padding: 0 0 120px; caret-color: var(--azurite); }
+.cm-line { padding: 0; }
 .cm-cursor { border-left-color: var(--azurite) !important; border-left-width: 2px !important; }
-.cm-activeLine { background: var(--wash); }
+.cm-activeLine { background: transparent; }
 .cm-selectionBackground,
 .cm-editor .cm-selectionBackground,
 .cm-editor.cm-focused .cm-selectionBackground {
-  background: color-mix(in srgb, var(--azurite) 20%, transparent) !important;
+  background: color-mix(in srgb, var(--azurite) 15%, transparent) !important;
 }
 .cm-editor .tok-keyword { color: var(--syn-keyword); }
 .cm-editor .tok-string, .cm-editor .tok-string2 { color: var(--syn-string); }
@@ -464,6 +583,24 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 .cm-editor .tok-heading { font-weight: 700; }
 .cm-editor .tok-strong { font-weight: 700; }
 .cm-editor .tok-emphasis { font-style: italic; }
+.cm-editor .cm-formatting { color: var(--ink-3); }
+.cm-editor .cm-header { color: var(--ink); font-weight: 650; }
+.cm-editor .cm-header1 { font-size: 1.28em; line-height: 1.55; }
+.cm-editor .cm-header2 { font-size: 1.16em; line-height: 1.62; }
+.cm-editor .cm-header3, .cm-editor .cm-header4,
+.cm-editor .cm-header5, .cm-editor .cm-header6 { font-size: 1.06em; }
+.cm-editor .cm-strong { font-weight: 650; }
+.cm-editor .cm-emphasis { font-style: italic; }
+.cm-editor .cm-link { color: var(--azurite); }
+.cm-editor .cm-url { color: var(--ink-3); }
+.cm-editor .cm-monospace,
+.cm-editor .cm-code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  background: var(--code-bg);
+  border-radius: 5px;
+  padding: 0.12em 0.34em;
+}
 
 /* ============ 视频暗室 ============ */
 
@@ -494,13 +631,14 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 }
 
 .welcome-seal {
-  width: 64px;
-  height: 64px;
-  border-radius: 10px;
-  background: var(--cinnabar);
-  color: #fff;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 8px;
+  background: linear-gradient(160deg, #17466c, #0b1220);
+  color: #e9f5ff;
   font-family: var(--font-read);
-  font-size: 36px;
+  font-size: 31px;
   font-weight: 600;
   line-height: 1;
   display: grid;
@@ -554,7 +692,7 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgb(12 10 7 / 0.42);
+  background: rgb(17 20 24 / 0.38);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -588,15 +726,24 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 .plugin-list { display: flex; flex-direction: column; }
 
 .plugin-row {
-  display: flex;
+  display: grid;
   align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 10px;
   padding: 9px 2px;
   border-top: 1px solid var(--hairline-soft);
   font-size: 13px;
 }
 
-.plugin-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-row-broken .plugin-problem {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.plugin-name { min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-version { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .plugin-version:empty { display: none; }
 .plugin-problem { color: var(--cinnabar); font-size: 12px; }

@@ -70,20 +70,36 @@ export function apply(
     editor = null;
     if (error) errorBanner(host);
     if (!current || current.kind !== "markdown") {
+      host.hidden = true;
       paintChrome();
       return;
     }
+    host.hidden = false;
     const bar = document.createElement("div");
     bar.className = "viewer-toolbar";
-    // 图标跟随语义：处于预览 → 按钮写「编辑」（铅笔）；处于编辑 → 写「预览」（眼睛）。
-    const modeBtn = labelButton(state.mode === "preview" ? "pencil" : "eye", state.mode === "preview" ? "编辑" : "预览", { className: "btn btn-ghost" });
-    modeBtn.addEventListener("click", () => {
+    const modeGroup = document.createElement("div");
+    modeGroup.className = "mode-group";
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "文档模式");
+    const previewBtn = labelButton("eye", "预览", { className: "btn btn-ghost mode-btn" });
+    previewBtn.setAttribute("aria-pressed", String(state.mode === "preview"));
+    previewBtn.addEventListener("click", () => {
+      if (state.mode === "preview") return;
+      state = { ...state, mode: "preview" };
+      render();
+    });
+    const editBtn = labelButton("pencil", "编辑", { className: "btn btn-ghost mode-btn" });
+    editBtn.setAttribute("aria-pressed", String(state.mode === "edit"));
+    editBtn.addEventListener("click", () => {
+      if (state.mode === "edit") return;
       state = { ...state, mode: toggleMode(state.mode) };
       render();
     });
-    const saveBtn = labelButton("save", "保存 (Ctrl+S)", { className: "btn btn-ghost save-btn" });
+    modeGroup.append(previewBtn, editBtn);
+    const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
+    saveBtn.setAttribute("aria-keyshortcuts", "Control+S");
     saveBtn.addEventListener("click", () => void save());
-    bar.append(modeBtn, saveBtn);
+    bar.append(modeGroup, saveBtn);
     const body = document.createElement("div");
     body.className = "doc-body";
     if (state.mode === "preview") {

@@ -13,9 +13,11 @@ export const inject = ["files", "windows", "workspace", "slots"];
  * @returns Teardown removing both topbar buttons. */
 export function apply(ctx: Context): () => void {
   return ctx.slots.register("topbar.left", (el) => {
-    const newBtn = labelButton("window", "新建窗口", { className: "btn btn-ghost" });
+    const newBtn = labelButton("window", "", { className: "btn btn-ghost icon-btn", ariaLabel: "新建窗口" });
+    newBtn.title = "新建窗口";
     newBtn.addEventListener("click", () => void ctx.windows.create(ctx.workspace.root ?? undefined));
-    const openBtn = labelButton("folder-open", "打开文件夹…", { className: "btn btn-ghost" });
+    const openBtn = labelButton("folder-open", "", { className: "btn btn-ghost icon-btn", ariaLabel: "打开文件夹…" });
+    openBtn.title = "打开文件夹…";
     openBtn.addEventListener("click", async () => {
       const root = await ctx.files.pickFolder();
       // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。

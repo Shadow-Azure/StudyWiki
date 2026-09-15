@@ -1,5 +1,6 @@
 import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
+import { icon } from "../../ui/icons";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-shell";
@@ -11,6 +12,11 @@ export interface ShellConfig {
   /** Application title shown in the topbar and the welcome state. */
   title: string;
 }
+
+const SIDEBAR_MIN = 210;
+const SIDEBAR_MAX = 380;
+const SIDEBAR_DEFAULT = 252;
+const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** Shell layout: topbar (seal brand + actions + active filename) + sidebar + main
  * grid and the three slot containers; with no root open the main area renders the
@@ -34,15 +40,16 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   brand.className = "brand";
   const seal = document.createElement("span");
   seal.className = "brand-seal";
-  seal.textContent = "学";
-  const brandName = document.createElement("h1");
+  seal.append(icon("iceberg", 14));
+  const brandName = document.createElement("span");
+  brandName.className = "brand-name";
   brandName.textContent = config.title;
   brand.append(seal, brandName);
   const topbarLeft = document.createElement("div");
   topbarLeft.className = "slot-host topbar-left";
   const fileTitle = document.createElement("div");
   fileTitle.className = "topbar-file";
-  topbar.append(brand, topbarLeft, fileTitle);
+  topbar.append(brand, fileTitle, topbarLeft);
   const body = document.createElement("div");
   body.className = "body";
   const sidebar = document.createElement("aside");
@@ -55,7 +62,45 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   const viewerHost = document.createElement("div");
   viewerHost.className = "slot-host main-viewer";
   main.append(viewerHost);
-  body.append(sidebar, main);
+  let sidebarSize = SIDEBAR_DEFAULT;
+  const resizer = document.createElement("div");
+  resizer.className = "workspace-resizer line-resizer";
+  resizer.tabIndex = 0;
+  resizer.setAttribute("role", "separator");
+  resizer.setAttribute("aria-orientation", "vertical");
+  resizer.setAttribute("aria-label", "调整文件树宽度");
+  resizer.setAttribute("aria-valuemin", String(SIDEBAR_MIN));
+  resizer.setAttribute("aria-valuemax", String(SIDEBAR_MAX));
+  resizer.setAttribute("aria-valuenow", String(sidebarSize));
+  const resize = (next: number): void => {
+    sidebarSize = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(next)));
+    body.style.setProperty("--sidebar-size", `${sidebarSize}px`);
+    resizer.setAttribute("aria-valuenow", String(sidebarSize));
+  };
+  const stopDrag = (): void => {
+    body.classList.remove("is-resizing");
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", stopDrag);
+    document.removeEventListener("pointercancel", stopDrag);
+  };
+  const onPointerMove = (event: PointerEvent): void => resize(event.clientX);
+  resizer.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    body.classList.add("is-resizing");
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", stopDrag);
+    document.addEventListener("pointercancel", stopDrag);
+  });
+  resizer.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      resize(sidebarSize + (event.key === "ArrowRight" ? SIDEBAR_KEYBOARD_STEP : -SIDEBAR_KEYBOARD_STEP));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      resize(event.key === "Home" ? SIDEBAR_MIN : SIDEBAR_MAX);
+    }
+  });
+  body.append(sidebar, resizer, main);
   app.append(topbar, body);
 
   ctx.slots.mount("topbar.left", topbarLeft);
@@ -66,7 +111,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   welcome.className = "welcome";
   const welcomeSeal = document.createElement("div");
   welcomeSeal.className = "welcome-seal";
-  welcomeSeal.textContent = "学";
+  welcomeSeal.append(icon("iceberg", 30));
   const welcomeTitle = document.createElement("h2");
   welcomeTitle.textContent = config.title;
   const hint = document.createElement("p");
@@ -105,5 +150,9 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     syncEmpty();
   });
   syncWelcome();
-  return () => { off(); offFile(); };
+  return () => {
+    stopDrag();
+    off();
+    offFile();
+  };
 }

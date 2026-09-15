@@ -16,6 +16,7 @@ export function apply(ctx: Context): () => void {
     if (!host) return;
     host.replaceChildren();
     const file = ctx.workspace.activeFile;
+    host.hidden = file?.kind !== "video";
     if (file?.kind !== "video") return;
     const stage = document.createElement("div");
     stage.className = "video-stage";
