@@ -15,6 +15,10 @@ export declare enum FiberState {
 export interface Fiber {
   /** 当前生命周期状态。 */
   state: FiberState;
+  /** 卸载该插件并运行其清理函数（幂等）。 */
+  dispose(): Promise<void>;
+  /** 等 fiber 结算；插件 apply 抛错时重新抛出该原始错误。 */
+  await(): Promise<Fiber>;
 }
 
 /** 服务反射面（本仓库使用的子集）。 */

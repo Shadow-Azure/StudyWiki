@@ -13,6 +13,8 @@ function fakeEnv(table: ModuleTable) {
     if (cmd === "read_manifest") return null;
     if (cmd === "write_manifest") { written.push(String(args?.json)); return null; }
     if (cmd === "get_window_state") return null;
+    // 外置激活成功后的版本快照（Task 3 新通道）；本文件不断言快照内容。
+    if (cmd === "snapshot_plugin_version") return null;
     // 换根单路 changeRoot 允许 set_window_root（欢迎态按钮也要授权）。
     if (cmd === "set_window_root") return null;
     // view-filetree（内置插件）在 root 变更后重读树；桩回空树，本文件用例不断言树内容。
@@ -77,6 +79,8 @@ test("bootstrap: ext: 行经宿主服务装载，坏行回填 plugins.bootBroken
     }
     if (cmd === "write_manifest") return null;
     if (cmd === "get_window_state") return null;
+    // 外置激活成功后的版本快照（Task 3 新通道）；本文件不断言快照内容。
+    if (cmd === "snapshot_plugin_version") return null;
     if (cmd === "read_tree") return [];
     if (cmd === "read_plugin_module") {
       return args?.name === "demo"

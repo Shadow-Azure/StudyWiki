@@ -76,7 +76,9 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     (json) => env.invoke("write_manifest", { json }).then(() => undefined),
     table,
   );
-  const report = await boot(ctx, manifest, table, (name) => plugins.loadModule(name));
+  const report = await boot(ctx, manifest, table, (name) => plugins.loadModule(name), {
+    snapshot: (name) => plugins.snapshot(name),
+  });
   plugins.bootBroken = report.broken;
   return ctx;
 }

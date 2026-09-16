@@ -1,4 +1,5 @@
 import { Context, FiberState } from "cordis";
+import { activateExternal, type ActivateDeps } from "./activate";
 import type { Manifest } from "./manifest";
 import type { ModuleTable } from "./table";
 import type { PluginModule } from "./types";
@@ -18,12 +19,14 @@ export interface BootReport {
  * @param table Static module table resolving built-in ids to plugins.
  * @param loadExternal Resolves an external plugin name to its module
  *   (Rust 读入口 + blob 装载 + 支持集/形状校验，见 host/plugins.ts).
+ * @param deps 外置激活参数（版本快照通道 + 审计等待配置）；缺省不写快照、用真实等待预算。
  * @returns The boot report (activated ids + quarantined external rows). */
 export async function boot(
   ctx: Context,
   manifest: Manifest,
   table: ModuleTable,
   loadExternal: (name: string) => Promise<PluginModule>,
+  deps?: ActivateDeps,
 ): Promise<BootReport> {
   const loaded: string[] = [];
   const broken: Array<{ id: string; reason: string }> = [];
@@ -34,11 +37,10 @@ export async function boot(
       const name = row.id.slice(4);
       try {
         const plugin = await loadExternal(name);
-        const fiber = ctx.plugin(plugin, row.config);
-        states.push({ id: row.id, state: () => fiber.state });
+        await activateExternal(ctx, name, plugin, row.config, deps ?? { snapshot: async () => {} });
         loaded.push(row.id);
       } catch (e) {
-        // 资源缺失/入口损坏/形状不符：跳过并点名，不阻断其余插件。
+        // 资源缺失/入口损坏/形状不符/审计超时：跳过并点名，不阻断其余插件。
         broken.push({ id: row.id, reason: (e as Error).message });
       }
       continue;
@@ -49,19 +51,12 @@ export async function boot(
     states.push({ id: row.id, state: () => fiber.state });
     loaded.push(row.id);
   }
-  await new Promise((r) => setTimeout(r, 50)); // 全树静默（注入等待 + 激活）
-  const stuck = states.filter((s) => s.state() !== FiberState.ACTIVE);
-  const stuckBuiltin = stuck
-    .filter((s) => !s.id.startsWith("ext:"))
+  await new Promise((r) => setTimeout(r, 50)); // 内置行静默窗口（注入等待 + 激活）；外置行已由 waitActive 覆盖
+  const stuckBuiltin = states
+    .filter((s) => s.state() !== FiberState.ACTIVE)
     .map((s) => `${s.id}（state=${s.state()}）`);
   if (stuckBuiltin.length) {
     throw new Error(`装载审计失败：${stuckBuiltin.join("、")} 未激活——声明的服务未提供？`);
-  }
-  for (const s of stuck) {
-    // 外置行审计卡死（声明的服务未提供等）同样分治为坏行。
-    broken.push({ id: s.id, reason: `审计未激活（state=${s.state()}）：声明的服务未提供？` });
-    const i = loaded.indexOf(s.id);
-    if (i >= 0) loaded.splice(i, 1);
   }
   return { loaded, broken };
 }

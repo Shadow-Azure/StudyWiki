@@ -20,7 +20,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/换根单路 changeRoot/确认框/关闭守卫（deps 可注入）（→ workspace.ts）
   host/workspace.ts                窗口 scope 工作区状态机：root/activeFile + root-changed/file-opened 事件流（→ emitter.ts、types.ts）
-  loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ manifest.ts、table.ts、types.ts）
+  loader/activate.ts               外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
+  loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ activate.ts、manifest.ts、table.ts、types.ts）
   loader/external.ts               外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
   loader/guard.ts                  外置插件 guard 门面：inject 白名单 Proxy（只包外置；收窄服务面非语言能力，非沙箱）（→ types.ts）
   loader/manifest.ts               插件清单装载：缺失时从模块表生成默认并写回 + 存量迁移（表新增内置行合并落盘），损坏 fail-loud（→ table.ts）
