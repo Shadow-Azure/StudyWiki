@@ -22,7 +22,7 @@ Establish a workspace visual system (single styles.css, no logic):
 - **Browser visual preview** (src/preview.ts + preview.html): assembles the real app-shell, file tree, Markdown, video, windows, and plugin-manager plugins with an in-memory host; slot behavior matches production `SlotsService` (one child element per renderer). The entry serves local Vite inspection only and is not part of the published `index.html` entry.
 - **DOM contract tests move with the UI**: tree names remain isolated spans; segmented modes expose `aria-pressed`; topbar icon commands expose `aria-label`/`title`; non-matching viewer plugins hide their own slot so an empty slot cannot push video below the viewport.
 - **Save-error lifecycle**: a failed write can be dismissed manually; if it remains open, a later successful save clears it so saved state never continues to report failure.
-- **Semantics strengthened**: tree rows get aria-expanded/aria-current, the panel gets role=dialog + Escape-to-close + autofocus on the install input, icon buttons get aria-label, a global `:focus-visible` ring, and reduced-motion kills all animation.
+- **Semantics strengthened**: tree rows get aria-expanded/aria-current, the panel gets role=dialog + Escape-to-close + autofocus on the install input + Tab/Shift+Tab focus trapping + focus restoration to its opener, icon buttons get aria-label, a global `:focus-visible` ring, and reduced-motion kills all animation.
 
 ## Alternatives considered
 

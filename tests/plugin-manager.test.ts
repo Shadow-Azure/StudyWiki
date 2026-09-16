@@ -85,6 +85,37 @@ test("面板: 列行 + 开关写清单 + 移除走 ctx.plugins + 重启提示", 
   expect(JSON.parse(f.written.at(-1)!).plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell"]);
 });
 
+test("面板: Tab/Shift+Tab 圈禁焦点，Esc 关闭后归还打开按钮", async () => {
+  const f = fakePlugins();
+  const slots = {
+    register: (_s: string, render: (el: HTMLElement) => void) => {
+      render(document.body);
+      return () => {};
+    },
+  };
+  apply({ plugins: f.plugins, slots } as never, {});
+  const openPanel = document.querySelector<HTMLButtonElement>("button")!;
+  openPanel.focus();
+  openPanel.click();
+  await new Promise((r) => setTimeout(r, 0));
+
+  const box = document.querySelector<HTMLElement>(".plugin-panel-box")!;
+  const focusable = [...box.querySelectorAll<HTMLElement>("input:not([disabled]), button:not([disabled])")];
+  const first = focusable[0]!;
+  const last = focusable.at(-1)!;
+  expect(document.activeElement).toBe(first);
+
+  first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+  expect(document.activeElement).toBe(last);
+
+  last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+  expect(document.activeElement).toBe(first);
+
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(document.querySelector(".plugin-panel")).toBeNull();
+  expect(document.activeElement).toBe(openPanel);
+});
+
 test("面板: 安装失败内联显示错误（fail-loud 不静默）", async () => {
   const f = fakePlugins();
   f.plugins.install = vi.fn(async () => {

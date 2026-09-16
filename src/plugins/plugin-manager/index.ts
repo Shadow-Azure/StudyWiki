@@ -17,13 +17,13 @@ export function apply(ctx: Context): () => void {
   return ctx.slots.register("topbar.left", (el) => {
     const btn = labelButton("module", "", { className: "btn btn-ghost icon-btn", ariaLabel: "插件" });
     btn.title = "插件";
-    btn.addEventListener("click", () => void openPanel(ctx));
+    btn.addEventListener("click", () => void openPanel(ctx, btn));
     el.append(btn);
   });
 }
 
 /** 面板本体：模态覆盖层（Esc 可关）；每次操作后整体重渲染（状态简单，不值得细粒度更新）。 */
-async function openPanel(ctx: Context): Promise<void> {
+async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void> {
   document.querySelector(".plugin-panel")?.remove();
   const overlay = document.createElement("div");
   overlay.className = "plugin-panel";
@@ -34,14 +34,32 @@ async function openPanel(ctx: Context): Promise<void> {
   box.className = "plugin-panel-box";
   overlay.append(box);
   document.body.append(overlay);
-  // Esc 挂 document 而非 overlay：整体重渲染会销毁焦点元素、焦点回落 body，
-  // 事件不再路过 overlay 子树；外点关闭之外键盘出口不能断。
+  // Esc/Tab 挂 document 而非 overlay：整体重渲染会销毁焦点元素、焦点回落 body，
+  // 事件不再路过 overlay 子树；模态焦点边界和键盘出口都不能断。
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") close();
+    else if (e.key === "Tab") trapFocus(e);
+  };
+  const trapFocus = (e: KeyboardEvent): void => {
+    const focusable = [...box.querySelectorAll<HTMLElement>(
+      "input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])",
+    )];
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !box.contains(active))) {
+      e.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!e.shiftKey && (active === last || !box.contains(active))) {
+      e.preventDefault();
+      first.focus({ preventScroll: true });
+    }
   };
   const close = (): void => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    opener.focus({ preventScroll: true });
   };
   document.addEventListener("keydown", onKey);
   overlay.addEventListener("click", (e) => {
