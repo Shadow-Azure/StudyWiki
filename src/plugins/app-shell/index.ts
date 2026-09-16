@@ -14,7 +14,8 @@ export interface ShellConfig {
 }
 
 const SIDEBAR_MIN = 210;
-const SIDEBAR_MAX = 380;
+const SIDEBAR_MAX = 520;
+const MAIN_MIN = 340;
 const SIDEBAR_DEFAULT = 252;
 const SIDEBAR_KEYBOARD_STEP = 16;
 
@@ -70,13 +71,18 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   resizer.setAttribute("aria-orientation", "vertical");
   resizer.setAttribute("aria-label", "调整文件树宽度");
   resizer.setAttribute("aria-valuemin", String(SIDEBAR_MIN));
-  resizer.setAttribute("aria-valuemax", String(SIDEBAR_MAX));
+  const sidebarMax = (): number =>
+    Math.max(SIDEBAR_MIN, Math.floor(Math.min(SIDEBAR_MAX, window.innerWidth - MAIN_MIN)));
+  resizer.setAttribute("aria-valuemax", String(sidebarMax()));
   resizer.setAttribute("aria-valuenow", String(sidebarSize));
   const resize = (next: number): void => {
-    sidebarSize = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(next)));
+    const max = sidebarMax();
+    sidebarSize = Math.min(max, Math.max(SIDEBAR_MIN, Math.round(next)));
     body.style.setProperty("--sidebar-size", `${sidebarSize}px`);
+    resizer.setAttribute("aria-valuemax", String(max));
     resizer.setAttribute("aria-valuenow", String(sidebarSize));
   };
+  const onWindowResize = (): void => resize(sidebarSize);
   const stopDrag = (): void => {
     body.classList.remove("is-resizing");
     document.removeEventListener("pointermove", onPointerMove);
@@ -149,9 +155,11 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     fileTitle.textContent = ctx.workspace.activeFile?.name ?? "";
     syncEmpty();
   });
+  window.addEventListener("resize", onWindowResize);
   syncWelcome();
   return () => {
     stopDrag();
+    window.removeEventListener("resize", onWindowResize);
     off();
     offFile();
   };
