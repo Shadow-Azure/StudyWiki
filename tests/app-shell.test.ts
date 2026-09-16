@@ -3,6 +3,9 @@ import { expect, test } from "vitest";
 import { apply } from "../src/plugins/app-shell";
 
 test("shell: separator drags sidebar width within stable bounds", () => {
+  const originalWidth = window.innerWidth;
+  let viewportWidth = 1180;
+  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => viewportWidth });
   const root = document.createElement("div");
   root.id = "app";
   document.body.append(root);
@@ -26,7 +29,7 @@ test("shell: separator drags sidebar width within stable bounds", () => {
   expect(separator.getAttribute("role")).toBe("separator");
   expect(separator.getAttribute("aria-orientation")).toBe("vertical");
   expect(separator.getAttribute("aria-valuemin")).toBe("210");
-  expect(separator.getAttribute("aria-valuemax")).toBe("520");
+  expect(separator.getAttribute("aria-valuemax")).toBe("531");
   expect(separator.getAttribute("aria-valuenow")).toBe("252");
 
   const pointer = (target: EventTarget, type: string, clientX: number): void => {
@@ -39,9 +42,9 @@ test("shell: separator drags sidebar width within stable bounds", () => {
   expect(separator.getAttribute("aria-valuenow")).toBe("320");
 
   pointer(separator, "pointerdown", 320);
-  pointer(document, "pointermove", 600);
-  pointer(document, "pointerup", 600);
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("520px");
+  pointer(document, "pointermove", 700);
+  pointer(document, "pointerup", 700);
+  expect(body.style.getPropertyValue("--sidebar-size")).toBe("531px");
 
   pointer(separator, "pointerdown", 380);
   pointer(document, "pointermove", 20);
@@ -54,6 +57,7 @@ test("shell: separator drags sidebar width within stable bounds", () => {
   expect(body.style.getPropertyValue("--sidebar-size")).toBe("210px");
 
   teardown();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
   root.remove();
 });
 
@@ -75,14 +79,14 @@ test("shell: narrowing the viewport keeps the main surface at its minimum width"
   const body = root.querySelector<HTMLElement>(".body")!;
   const separator = root.querySelector<HTMLElement>(".workspace-resizer")!;
   separator.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 600, buttons: 1 }));
-  document.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 600, buttons: 1 }));
-  document.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 600, buttons: 1 }));
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("520px");
+  document.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 700, buttons: 1 }));
+  document.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 700, buttons: 1 }));
+  expect(body.style.getPropertyValue("--sidebar-size")).toBe("531px");
 
   viewportWidth = 720;
   window.dispatchEvent(new Event("resize"));
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("380px");
-  expect(separator.getAttribute("aria-valuemax")).toBe("380");
+  expect(body.style.getPropertyValue("--sidebar-size")).toBe("324px");
+  expect(separator.getAttribute("aria-valuemax")).toBe("324");
 
   teardown();
   Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });

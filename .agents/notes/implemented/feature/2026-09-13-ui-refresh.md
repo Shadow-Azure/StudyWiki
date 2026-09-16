@@ -14,7 +14,7 @@ Status: implemented
 
 - **双主题令牌**：浅/深主题均为中性灰面与墨色文字，语义分层为面（chrome/paper/raise/code-bg/stage）、线（hairline 两阶）、墨（ink 三阶）、色（蓝色交互 / 红色仅未保存与警示）、字（UI 系统无衬线 13px / 阅读面宋体栈 17px / 等宽栈）、圆角阶（5/8px）。参考 VS Code 工作台令牌模式（`--vscode-*` 同构），随 `prefers-color-scheme` 切换。
 - **文档工作台层级**：顶栏固定为品牌、居中活动文件名、右侧图标操作；侧栏标题粘顶；阅读与编辑同用 760px 度量；文档工具条粘顶，预览/编辑为显式分段控件，保存按钮用红色点表示脏态并把快捷键放进 `aria-keyshortcuts`。
-- **侧栏可调**：sidebar 与 main 之间是全高 1px 发丝线；线本体不占栅格轨道，背后仅有不可见 7px pointer 命中区，拖拽写入 `--sidebar-size`。侧栏绝对边界为 210–520px，同时 main 保持至少 340px；窗口收缩时按视口动态下调侧栏上限并同步 `aria-valuemax`，720px 最小窗口下侧栏仍收在约 380px，键盘左右/Home/End 同步 `aria-valuenow`。
+- **侧栏可调**：sidebar 与 main 之间是全高 1px 发丝线；线本体不占栅格轨道，背后仅有不可见 7px pointer 命中区，拖拽写入 `--sidebar-size`。侧栏下限 210px，上限取“视口 45%”与“main 保底 340px”二者更小者；窗口收缩时动态下调并同步 `aria-valuemax`，键盘左右/Home/End 同步 `aria-valuenow`。
 - **Markdown 编辑面是文档面**：CodeMirror 使用 `minimalSetup`（去掉行号与折叠栏）、强制换行、透明背景、17px 阅读衬线栈与令牌化 Markdown 高亮；编辑与预览共享 760px 度量，不再呈现整页代码块。`@lezer/highlight` 从传递依赖提升为直接依赖，只为这份构建期打包的主题契约服务。
 - **红色只作语义**：未保存点与错误条；欢迎页/品牌印章用墨色，避免装饰性大色块抢占内容。
 - **品牌识别是冰山**：UI 内用 16px 网格内联 SVG（上为冰面、下为水下体与水线），原生 PNG/ICO/ICNS 从同一 1024px 深海渐变冰山主图派生；`src-tauri/icons/iceberg.svg` 是可再编辑源。

@@ -14,7 +14,7 @@ export interface ShellConfig {
 }
 
 const SIDEBAR_MIN = 210;
-const SIDEBAR_MAX = 520;
+const SIDEBAR_MAX_RATIO = 0.45;
 const MAIN_MIN = 340;
 const SIDEBAR_DEFAULT = 252;
 const SIDEBAR_KEYBOARD_STEP = 16;
@@ -72,7 +72,10 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   resizer.setAttribute("aria-label", "调整文件树宽度");
   resizer.setAttribute("aria-valuemin", String(SIDEBAR_MIN));
   const sidebarMax = (): number =>
-    Math.max(SIDEBAR_MIN, Math.floor(Math.min(SIDEBAR_MAX, window.innerWidth - MAIN_MIN)));
+    Math.max(
+      SIDEBAR_MIN,
+      Math.floor(Math.min(window.innerWidth * SIDEBAR_MAX_RATIO, window.innerWidth - MAIN_MIN)),
+    );
   resizer.setAttribute("aria-valuemax", String(sidebarMax()));
   resizer.setAttribute("aria-valuenow", String(sidebarSize));
   const resize = (next: number): void => {
@@ -103,7 +106,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
       resize(sidebarSize + (event.key === "ArrowRight" ? SIDEBAR_KEYBOARD_STEP : -SIDEBAR_KEYBOARD_STEP));
     } else if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      resize(event.key === "Home" ? SIDEBAR_MIN : SIDEBAR_MAX);
+      resize(event.key === "Home" ? SIDEBAR_MIN : sidebarMax());
     }
   });
   body.append(sidebar, resizer, main);
