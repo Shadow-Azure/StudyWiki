@@ -24,5 +24,6 @@ plugins-dev/
 
 # Claude Code local config (per-machine commands; not part of the shipped repo)
 .claude/
+.codex/
 
 .obsidian
