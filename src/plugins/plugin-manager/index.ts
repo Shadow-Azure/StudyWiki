@@ -86,7 +86,8 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
     if (e.target === overlay) close();
   });
   // 错误行与常驻说明是同一元素跨 render 复用（render 的 replaceChildren 会重建
-  // 其余节点）：失败内联显示才能在整体重渲染后仍可见，成功时清除旧错误。
+  // 其余节点）：失败内联显示才能在整体重渲染后仍可见，清除由成功路径显式调
+  // clearError() 完成（render 在失败路径紧接 showError 之后跑，不能无条件清）。
   const errLine = document.createElement("p");
   errLine.className = "plugin-error";
   errLine.hidden = true;
@@ -96,6 +97,12 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
   const showError = (e: unknown) => {
     errLine.textContent = `操作失败：${e instanceof Error ? e.message : String(e)}`;
     errLine.hidden = false;
+  };
+  /** 成功路径清除内联错误（与 showError 对称）：不清则陈旧失败常驻到面板关闭。
+   * 取消类结果（导入取消、移除未确认）不算成功，不清。 */
+  const clearError = (): void => {
+    errLine.textContent = "";
+    errLine.hidden = true;
   };
   const render = async () => {
     try {
@@ -111,7 +118,7 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
       const rows = computePanelRows(manifest, entries, ctx.plugins.bootBroken, runningExternals(), activationFailures());
       const list = document.createElement("div");
       list.className = "plugin-list";
-      for (const row of rows) list.append(rowEl(ctx, row, manifest, render, showError));
+      for (const row of rows) list.append(rowEl(ctx, row, manifest, render, showError, clearError));
       const title = document.createElement("h2");
       title.className = "plugin-panel-title";
       title.textContent = "插件";
@@ -133,6 +140,7 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
             await ctx.plugins.writeManifest(withRow(manifest, `ext:${installed}`));
             const mod = await ctx.plugins.loadModule(installed);
             await serialized(installed, () => activateExternal(ctx, installed, mod, {}, activateDeps(ctx)));
+            clearError();
           } catch (e) {
             showError(e);
           }
@@ -145,6 +153,7 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
               await ctx.plugins.writeManifest(withRow(manifest, `ext:${imported}`));
               const mod = await ctx.plugins.loadModule(imported);
               await serialized(imported, () => activateExternal(ctx, imported, mod, {}, activateDeps(ctx)));
+              clearError();
             }
           } catch (e) {
             showError(e);
@@ -174,6 +183,7 @@ function rowEl(
   manifest: Manifest,
   rerender: () => Promise<void>,
   showError: (e: unknown) => void,
+  clearError: () => void,
 ): HTMLElement {
   const line = document.createElement("div");
   line.className = `plugin-row${row.problem ? " plugin-row-broken" : ""}`;
@@ -200,6 +210,7 @@ function rowEl(
         }
       }
       await ctx.plugins.writeManifest(withEnabled(manifest, row.id, toggle.checked));
+      clearError();
     } catch (e) {
       showError(e);
     }
@@ -233,6 +244,7 @@ function rowEl(
           try {
             const mod = await ctx.plugins.loadModule(name);
             await reloadExternal(ctx, name, mod, rowOf(manifest, row.id).config, activateDeps(ctx));
+            clearError();
           } catch (e) {
             showError(e);
           }
@@ -263,6 +275,7 @@ function rowEl(
                       await ctx.plugins.restoreVersion(name, v.id);
                       const mod = await ctx.plugins.loadModule(name);
                       await reloadExternal(ctx, name, mod, rowOf(manifest, row.id).config, activateDeps(ctx));
+                      clearError();
                     } catch (e) {
                       showError(e);
                     }
@@ -286,6 +299,7 @@ function rowEl(
             await deactivateExternal(name);
             await ctx.plugins.remove(name);
             await ctx.plugins.writeManifest(withoutRow(manifest, row.id));
+            clearError();
           }
         } catch (e) {
           showError(e);

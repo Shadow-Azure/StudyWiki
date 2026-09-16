@@ -357,6 +357,29 @@ test("面板: 安装失败内联显示错误（fail-loud 不静默）", async ()
   expect(err!.textContent).toContain("demo-x");
 });
 
+test("面板: 失败后一次成功操作清掉内联错误行（不残留旧失败）", async () => {
+  const f = fakePlugins();
+  f.plugins.install = vi.fn(async () => {
+    throw new Error("查 registry demo-x 失败：404");
+  });
+  await openPanel(f);
+  const input = document.querySelector<HTMLInputElement>(".plugin-panel-head input")!;
+  input.value = "demo-x";
+  clickButton("安装");
+  await tick();
+  const err = document.querySelector<HTMLElement>(".plugin-error")!;
+  expect(err.hidden).toBe(false);
+  expect(err.textContent).toContain("404");
+
+  // 同一面板上的成功操作（外置行停用）：错误行是跨 render 复用的同一元素，
+  // 不清则陈旧失败常驻，用户无法判断当前状态。
+  toggles()[1].click();
+  await tick();
+  expect(deactivateExternal).toHaveBeenCalledWith("demo");
+  expect(err.hidden).toBe(true);
+  expect(err.textContent).toBe("");
+});
+
 test("面板: Tab/Shift+Tab 圈禁焦点，Esc 关闭后归还打开按钮", async () => {
   const f = fakePlugins();
   const slots = {
