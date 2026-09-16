@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { PluginsService, SUPPORTED_API_VERSIONS } from "../src/host/plugins";
+import type { PluginsDeps } from "../src/host/plugins";
 
 const deps = (invoke: ReturnType<typeof vi.fn>, loadExternal?: (code: string) => Promise<Record<string, unknown>>) => ({
   invoke,
@@ -72,4 +73,40 @@ test("loadModule: inject 非 undefined 且非字符串数组即拒（undefined �
 
   const noInject = { ...bad, loadExternal: async () => ({ name: "demo", apply: () => {} }) };
   await expect(new PluginsService(noInject).loadModule("demo")).resolves.toMatchObject({ name: "demo" });
+});
+
+test("版本仓三方法走 invoke 且参数/返回形状正确", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const stub: PluginsDeps = {
+    invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+      calls.push([cmd, args]);
+      if (cmd === "snapshot_plugin_version") return "1690000000-abcd1234ef56";
+      if (cmd === "list_plugin_versions") {
+        return [
+          {
+            id: "1690000000-abcd1234ef56",
+            createdAt: 1690000000,
+            version: "1.0.0",
+            apiVersion: 1,
+            hash: "abcd",
+            current: true,
+          },
+        ];
+      }
+      return undefined;
+    }),
+    loadExternal: vi.fn(),
+    pickTgz: vi.fn(),
+  };
+  const svc = new PluginsService(stub);
+  await expect(svc.snapshot("demo")).resolves.toBe("1690000000-abcd1234ef56");
+  const versions = await svc.listVersions("demo");
+  expect(versions[0].current).toBe(true);
+  await svc.restoreVersion("demo", "1690000000-abcd1234ef56");
+  expect(calls.map(([c]) => c)).toEqual([
+    "snapshot_plugin_version",
+    "list_plugin_versions",
+    "restore_plugin_version",
+  ]);
+  expect(calls[2][1]).toEqual({ name: "demo", id: "1690000000-abcd1234ef56" });
 });

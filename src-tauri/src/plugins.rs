@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -184,10 +185,12 @@ pub fn read_entry_source(dir: &Path, name: &str) -> Result<PluginModuleSource, S
     })
 }
 
-/// 纯删目录（可测）：幂等，目录已不在视为成功。
+/// 纯删目录与版本历史（可测）：幂等，目录已不在视为成功。
 pub fn remove_plugin_dir(dir: &Path, name: &str) -> Result<(), String> {
     safe_plugin_name(name)?;
     let target = dir.join(name);
+    // 版本历史连删：同名重装不应复活旧历史。
+    let _ = fs::remove_dir_all(history_root(dir, name));
     match fs::remove_dir_all(&target) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -349,6 +352,217 @@ pub fn place_plugin(dir: &Path, extracted: &ExtractedPlugin) -> Result<(), Strin
     fs::rename(&staging, &target).map_err(|e| format!("rename: {e}"))
 }
 
+/// 版本仓单代上限：超出裁最旧（单文件插件体积极小，10 代覆盖调试内环足够）。
+const MAX_GENERATIONS: usize = 10;
+
+/// 版本仓一代的 meta.json（创建时间/来源版本/apiVersion/入口名/内容指纹）。
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionMeta {
+    pub hash: String,
+    pub created_at: i64,
+    pub version: Option<String>,
+    pub api_version: i64,
+    pub entry: String,
+}
+
+/// list_plugin_versions 的行：一代历史 + 是否当前活目录内容。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInfo {
+    pub id: String,
+    pub created_at: i64,
+    pub version: Option<String>,
+    pub api_version: i64,
+    pub hash: String,
+    pub current: bool,
+}
+
+/// 活目录当前形态：内容指纹 + 落盘原料 + 解析出的契约块 + 来源版本。
+struct LivePlugin {
+    hash: String,
+    raw_package_json: String,
+    code: Vec<u8>,
+    block: StudyWikiBlock,
+    version: Option<String>,
+}
+
+/// 版本仓根（plugins/.history/<name>）；scan_plugins 跳过 `.` 前缀目录，天然不入扫描。
+fn history_root(dir: &Path, name: &str) -> PathBuf {
+    dir.join(".history").join(name)
+}
+
+/// 活目录内容指纹与原件：package.json 原文 + 入口源码拼接的 sha256 十六进制。
+fn hash_plugin(dir: &Path, name: &str) -> Result<LivePlugin, String> {
+    safe_plugin_name(name)?;
+    let plugin = dir.join(name);
+    let raw = fs::read_to_string(plugin.join("package.json"))
+        .map_err(|e| format!("读 {name}/package.json 失败：{e}"))?;
+    let (_, version, block) = parse_package_json(&raw)?;
+    let code = fs::read(plugin.join(&block.entry))
+        .map_err(|e| format!("读 {name}/{} 失败：{e}", block.entry))?;
+    let mut h = Sha256::new();
+    h.update(raw.as_bytes());
+    h.update(&code);
+    let hash = h
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    Ok(LivePlugin {
+        hash,
+        raw_package_json: raw,
+        code,
+        block,
+        version,
+    })
+}
+
+/// 读一代的 meta.json（缺失/损坏返回 None：历史是数据，不是活代码）。
+fn read_meta(gen: &Path) -> Option<VersionMeta> {
+    let raw = fs::read_to_string(gen.join("meta.json")).ok()?;
+    serde_json::from_str::<VersionMeta>(&raw).ok()
+}
+
+/// 按 hash 查已存在的代 id（去重判据）。
+fn find_generation_by_hash(hist: &Path, hash: &str) -> Option<String> {
+    let items = fs::read_dir(hist).ok()?;
+    for item in items.flatten() {
+        let p = item.path();
+        if !p.is_dir() {
+            continue;
+        }
+        if read_meta(&p).is_some_and(|meta| meta.hash == hash) {
+            return Some(item.file_name().to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// 历史里最新的创建时间（meta 损坏的代跳过：它已按最旧排在裁剪队首）。
+fn newest_created_at(hist: &Path) -> Option<i64> {
+    let items = fs::read_dir(hist).ok()?;
+    let mut newest: Option<i64> = None;
+    for item in items.flatten() {
+        let p = item.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let Some(meta) = read_meta(&p) else { continue };
+        newest = Some(newest.map_or(meta.created_at, |n| n.max(meta.created_at)));
+    }
+    newest
+}
+
+/// 裁剪到 MAX_GENERATIONS：按创建时间删最旧；meta 损坏的代视为最旧，最先裁。
+fn prune_generations(hist: &Path) -> Result<(), String> {
+    let mut gens: Vec<(i64, String)> = fs::read_dir(hist)
+        .map_err(|e| format!("读版本仓失败：{e}"))?
+        .flatten()
+        .filter(|i| i.path().is_dir())
+        .map(|i| {
+            let created_at = read_meta(&i.path()).map_or(i64::MIN, |m| m.created_at);
+            (created_at, i.file_name().to_string_lossy().into_owned())
+        })
+        .collect();
+    gens.sort();
+    while gens.len() > MAX_GENERATIONS {
+        let (_, oldest) = gens.remove(0);
+        fs::remove_dir_all(hist.join(&oldest))
+            .map_err(|e| format!("裁剪版本 {oldest} 失败：{e}"))?;
+    }
+    Ok(())
+}
+
+/// 成功激活后的版本快照（boot/热重载/安装即激活三路共用）：内容 hash 去重，
+/// 超上限裁最旧。返回新代 id；内容未变（已在仓）返回 None。
+pub fn snapshot_plugin(dir: &Path, name: &str) -> Result<Option<String>, String> {
+    let live = hash_plugin(dir, name)?;
+    let hist = history_root(dir, name);
+    if find_generation_by_hash(&hist, &live.hash).is_some() {
+        return Ok(None);
+    }
+    // 同秒快照按创建序依次递增：目录名排序即创建序，"裁最旧"才有确定判据。
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs() as i64;
+    let ts = match newest_created_at(&hist) {
+        Some(prev) if prev >= now => prev + 1,
+        _ => now,
+    };
+    let id = format!("{ts}-{}", &live.hash[..12]);
+    let gen = hist.join(&id);
+    fs::create_dir_all(&gen).map_err(|e| format!("mkdir {}: {e}", gen.display()))?;
+    fs::write(gen.join("package.json"), &live.raw_package_json)
+        .map_err(|e| format!("write package.json: {e}"))?;
+    fs::write(gen.join(&live.block.entry), &live.code)
+        .map_err(|e| format!("write {}: {e}", live.block.entry))?;
+    let meta = VersionMeta {
+        hash: live.hash,
+        created_at: ts,
+        version: live.version,
+        api_version: live.block.api_version,
+        entry: live.block.entry,
+    };
+    let meta_json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
+    fs::write(gen.join("meta.json"), meta_json).map_err(|e| format!("write meta.json: {e}"))?;
+    prune_generations(&hist)?;
+    Ok(Some(id))
+}
+
+/// 列版本仓历史（新到旧；current 标记活目录内容所在代）。活目录已删时全部 current=false。
+/// meta 损坏的代跳过（历史是数据不是活代码，不配让面板打不开）。
+pub fn list_generations(dir: &Path, name: &str) -> Result<Vec<VersionInfo>, String> {
+    safe_plugin_name(name)?;
+    let hist = history_root(dir, name);
+    let current = hash_plugin(dir, name).ok().map(|live| live.hash);
+    let mut out = Vec::new();
+    if let Ok(items) = fs::read_dir(&hist) {
+        for item in items.flatten() {
+            let p = item.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let Some(meta) = read_meta(&p) else { continue };
+            out.push(VersionInfo {
+                id: item.file_name().to_string_lossy().into_owned(),
+                current: current.as_ref() == Some(&meta.hash),
+                created_at: meta.created_at,
+                version: meta.version,
+                api_version: meta.api_version,
+                hash: meta.hash,
+            });
+        }
+    }
+    out.sort_by_key(|v| std::cmp::Reverse(v.created_at));
+    Ok(out)
+}
+
+/// 回滚：把历史一代原子写回活目录（复用 place_plugin 的 staging 管线）。
+/// id 只许时间戳-hash 形态（字母数字与连字符），防目录逃逸。
+pub fn restore_generation(dir: &Path, name: &str, id: &str) -> Result<(), String> {
+    safe_plugin_name(name)?;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(format!("非法版本 id：{id:?}"));
+    }
+    let gen = history_root(dir, name).join(id);
+    let raw = fs::read_to_string(gen.join("package.json"))
+        .map_err(|e| format!("读版本 {id} 的 package.json 失败：{e}"))?;
+    let (_, _, block) = parse_package_json(&raw)?;
+    let code = fs::read(gen.join(&block.entry))
+        .map_err(|e| format!("读版本 {id} 的 {} 失败：{e}", block.entry))?;
+    place_plugin(
+        dir,
+        &ExtractedPlugin {
+            name: name.to_string(),
+            block,
+            code,
+            raw_package_json: raw,
+        },
+    )
+}
+
 /// registry 元数据解析结果（tarball 地址与 integrity）。
 struct Resolved {
     tarball: String,
@@ -452,6 +666,25 @@ pub fn remove_plugin(app: AppHandle, name: String) -> Result<(), String> {
     remove_plugin_dir(&plugin_dir(&app)?, &name)
 }
 
+/// 版本快照（前端在每次激活成功后调用；内容未变返回 None）。版本仓只增不改，
+/// 不自动激活任何东西——重启后的激活依据仍只有清单。
+#[tauri::command]
+pub fn snapshot_plugin_version(app: AppHandle, name: String) -> Result<Option<String>, String> {
+    snapshot_plugin(&plugin_dir(&app)?, &name)
+}
+
+/// 列版本仓历史（新到旧；current 标记当前活目录内容）。面板版本列表的数据源。
+#[tauri::command]
+pub fn list_plugin_versions(app: AppHandle, name: String) -> Result<Vec<VersionInfo>, String> {
+    list_generations(&plugin_dir(&app)?, &name)
+}
+
+/// 回滚到历史一代：原子写回活目录（激活归前端热重载路径，本命令只管落盘）。
+#[tauri::command]
+pub fn restore_plugin_version(app: AppHandle, name: String, id: String) -> Result<(), String> {
+    restore_generation(&plugin_dir(&app)?, &name, &id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,11 +707,103 @@ mod tests {
         )
     }
 
+    /// 在测试内构造 npm 形态 tgz（package/ 前缀），零网络。
+    fn build_tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (path, bytes) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, path, *bytes).unwrap();
+        }
+        let tar_bytes = builder.into_inner().unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &tar_bytes).unwrap();
+        gz.finish().unwrap()
+    }
+
     fn write_plugin(dir: &std::path::Path, name: &str) {
         let p = dir.join(name);
         std::fs::create_dir_all(&p).unwrap();
         std::fs::write(p.join("package.json"), package_json(name, 1, "index.js")).unwrap();
         std::fs::write(p.join("index.js"), b"export const name = 'x';").unwrap();
+    }
+
+    fn tmp_history(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("sw-hist-{}-{:?}", tag, std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn snapshot_dedups_and_prunes() {
+        let dir = tmp_history("snap");
+        let pkg = package_json("demo", 1, "index.js");
+        let extracted = extract_and_validate(&build_tgz(&[
+            ("package/package.json", pkg.as_bytes()),
+            (
+                "package/index.js",
+                b"export const name='demo'; export function apply(){}",
+            ),
+        ]))
+        .unwrap();
+        place_plugin(&dir, &extracted).unwrap();
+        // 首次快照产一代，id 含 hash 前缀；同内容再快照返回 None
+        let id1 = snapshot_plugin(&dir, "demo")
+            .unwrap()
+            .expect("首次应产新代");
+        assert!(
+            snapshot_plugin(&dir, "demo").unwrap().is_none(),
+            "同内容不增生"
+        );
+        // 改代码 → 新代；逐代塞满超上限后裁最旧
+        for i in 0..11 {
+            std::fs::write(
+                dir.join("demo/index.js"),
+                format!("export const name='demo';export const v={i};export function apply(){{}}"),
+            )
+            .unwrap();
+            snapshot_plugin(&dir, "demo").unwrap();
+        }
+        let gens = list_generations(&dir, "demo").unwrap();
+        assert_eq!(gens.len(), 10, "超出 MAX_GENERATIONS 裁最旧");
+        assert!(gens[0].created_at >= gens[9].created_at, "新到旧排序");
+        assert!(gens[0].current, "首行即活目录内容");
+        assert!(!gens.iter().any(|g| g.id == id1), "最早一代已被裁掉");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn restore_writes_back_and_remove_deletes_history() {
+        let dir = tmp_history("restore");
+        let pkg = package_json("demo", 1, "index.js");
+        let v1 = b"export const name='demo';export const v=1;export function apply(){}";
+        let extracted = extract_and_validate(&build_tgz(&[
+            ("package/package.json", pkg.as_bytes()),
+            ("package/index.js", v1.as_slice()),
+        ]))
+        .unwrap();
+        place_plugin(&dir, &extracted).unwrap();
+        let id1 = snapshot_plugin(&dir, "demo").unwrap().unwrap();
+        std::fs::write(
+            dir.join("demo/index.js"),
+            b"export const name='demo';export const v=2;export function apply(){}",
+        )
+        .unwrap();
+        snapshot_plugin(&dir, "demo").unwrap();
+        // 回滚到 v1：活目录内容回到 v1
+        restore_generation(&dir, "demo", &id1).unwrap();
+        assert_eq!(std::fs::read(dir.join("demo/index.js")).unwrap(), v1);
+        // 非法 id 拒绝（防目录逃逸）
+        assert!(restore_generation(&dir, "demo", "../..").is_err());
+        assert!(restore_generation(&dir, "demo", "no-such-gen").is_err());
+        // 移除连删历史
+        remove_plugin_dir(&dir, "demo").unwrap();
+        assert!(!dir.join(".history/demo").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -598,22 +923,6 @@ mod tests {
 
     mod install {
         use super::*;
-
-        /// 在测试内构造 npm 形态 tgz（package/ 前缀），零网络。
-        fn build_tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
-            let mut builder = tar::Builder::new(Vec::new());
-            for (path, bytes) in files {
-                let mut header = tar::Header::new_gnu();
-                header.set_size(bytes.len() as u64);
-                header.set_mode(0o644);
-                header.set_cksum();
-                builder.append_data(&mut header, path, *bytes).unwrap();
-            }
-            let tar_bytes = builder.into_inner().unwrap();
-            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            std::io::Write::write_all(&mut gz, &tar_bytes).unwrap();
-            gz.finish().unwrap()
-        }
 
         #[test]
         fn extract_validates_closed_contract() {

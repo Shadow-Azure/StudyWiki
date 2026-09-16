@@ -171,6 +171,9 @@ pub fn run() {
             plugins::list_plugins,
             plugins::read_plugin_module,
             plugins::remove_plugin,
+            plugins::snapshot_plugin_version,
+            plugins::list_plugin_versions,
+            plugins::restore_plugin_version,
             plugins::install_plugin,
             plugins::import_plugin
         ])

@@ -41,6 +41,16 @@ export interface BrokenRow {
   reason: string;
 }
 
+/** 版本仓一代（list_plugin_versions 的行）。 */
+export interface PluginVersion {
+  id: string;
+  createdAt: number;
+  version: string | null;
+  apiVersion: number;
+  hash: string;
+  current: boolean;
+}
+
 /** Tauri bindings this service wraps; injectable for tests. */
 export interface PluginsDeps {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -90,6 +100,21 @@ export class PluginsService {
   /** 删除外置插件目录（幂等：目录已不在也成功）。 */
   async remove(name: string): Promise<void> {
     await this.#deps.invoke("remove_plugin", { name });
+  }
+
+  /** 成功激活后快照一代（内容未变返回 null）；三路激活路径共用。 */
+  async snapshot(name: string): Promise<string | null> {
+    return this.#deps.invoke("snapshot_plugin_version", { name }) as Promise<string | null>;
+  }
+
+  /** 列版本仓历史（新到旧；current 标记当前活目录内容）。 */
+  async listVersions(name: string): Promise<PluginVersion[]> {
+    return this.#deps.invoke("list_plugin_versions", { name }) as Promise<PluginVersion[]>;
+  }
+
+  /** 把历史一代原子写回活目录（激活归热重载路径，本方法只管落盘）。 */
+  async restoreVersion(name: string, id: string): Promise<void> {
+    await this.#deps.invoke("restore_plugin_version", { name, id });
   }
 
   /** 读清单原文（null = 首启未生成）。 */
