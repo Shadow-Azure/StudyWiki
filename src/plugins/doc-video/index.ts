@@ -16,12 +16,15 @@ export function apply(ctx: Context): () => void {
     if (!host) return;
     host.replaceChildren();
     const file = ctx.workspace.activeFile;
+    host.hidden = file?.kind !== "video";
     if (file?.kind !== "video") return;
+    const stage = document.createElement("div");
+    stage.className = "video-stage";
     const video = document.createElement("video");
     video.controls = true;
-    video.style.maxWidth = "100%";
     video.src = ctx.files.assetUrl(file.path);
-    host.append(video);
+    stage.append(video);
+    host.append(stage);
   };
 
   const offFile = ctx.workspace.events.on("file-opened", () => render());

@@ -7,9 +7,12 @@ import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-// 白名单：asset/ipc 协议的本地回显地址是 Tauri 机制的一部分，不是外网引用。
-const ALLOWED_URL = ["http://asset.localhost", "http://ipc.localhost", "https://schema.tauri.app"];
-const EXTERNAL_URL_RE = /https?:\/\/[a-z0-9.-]+/gi;
+// 前缀白名单：asset/ipc 协议的本地回显地址是 Tauri 机制的一部分，不是外网引用。
+const ALLOWED_URL_PREFIX = ["http://asset.localhost", "http://ipc.localhost", "https://schema.tauri.app"];
+// 精确白名单：SVG 命名空间标识符（createElementNS 参数，永不联网），豁免已登记
+// docs/environment-independence.md 豁免登记表；不得放宽到整个 host。
+const ALLOWED_EXACT_URL = new Set(["http://www.w3.org/2000/svg"]);
+const EXTERNAL_URL_RE = /https?:\/\/[a-z0-9.-]+(?:\/[^\s"'`<>]*)?/gi;
 
 async function scanDir(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -26,9 +29,13 @@ function externalUrls(text) {
   const hits = new Set();
   for (const url of text.matchAll(EXTERNAL_URL_RE)) {
     const u = url[0];
-    if (!ALLOWED_URL.some((a) => u.startsWith(a))) hits.add(u);
+    if (!isAllowedUrl(u)) hits.add(u);
   }
   return [...hits];
+}
+
+function isAllowedUrl(url) {
+  return ALLOWED_EXACT_URL.has(url) || ALLOWED_URL_PREFIX.some((prefix) => url.startsWith(prefix));
 }
 
 export default async function verifyEnvIndependence() {
@@ -62,7 +69,7 @@ export default async function verifyEnvIndependence() {
     // 只抓 src=/href= 资源引用，正文文本里的链接（如 markdown 渲染产物）不管。
     for (const m of text.matchAll(/(?:src|href)\s*=\s*["'](https?:\/\/[^"']+)["']/gi)) {
       const u = m[1];
-      if (!ALLOWED_URL.some((a) => u.startsWith(a)))
+      if (!isAllowedUrl(u))
         errors.push(`dist/${path.relative("dist", file)}: 资源引用外部 URL ${u}`);
     }
   }

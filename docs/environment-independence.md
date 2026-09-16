@@ -34,6 +34,7 @@ Tauri 不内嵌浏览器引擎，依赖 OS webview：macOS WKWebView（系统集
 |---|---|---|
 | 系统 webview 边界（见上） | 体积/维护取舍 | [.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.md](../.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.md) |
 | 外置插件安装联网（已生效） | 安装 = registry tarball 直拉，运行仍全程离线 | [.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.md](../.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.md) |
+| `http://www.w3.org/2000/svg`（icons.ts） | createElementNS 标识符，永不联网；WKWebView 不绘制 innerHTML 解析的 SVG，须显式构造 | [.agents/notes/implemented/feature/2026-09-13-ui-refresh.md](../.agents/notes/implemented/feature/2026-09-13-ui-refresh.md) |
 
 `node:` 内建引用豁免登记在 [scripts/dep-allowlist.json](../scripts/dep-allowlist.json) 的 `nodeRefExempt` 表（不进 bundle 的包内文件），属依赖白名单门禁，不在此重复。
 

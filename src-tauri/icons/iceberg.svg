@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="StudyWiki iceberg icon">
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1220" />
+      <stop offset="1" stop-color="#194b72" />
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="27" y="27" width="970" height="970" rx="227" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#sea)" />
+    <ellipse cx="532" cy="210" rx="715" ry="660" fill="#449cd6" opacity="0.42" />
+    <polygon points="357,186 472,143 606,327 632,462 564,538 381,538 303,426" fill="#ecf8ff" />
+    <polygon points="357,186 472,143 433,345 342,432 303,426" fill="#fff" />
+    <polygon points="472,143 606,327 632,462 517,462 450,338" fill="#c3e0f2" />
+    <polygon points="433,345 517,462 381,538 342,432" fill="#d9eefa" />
+    <polygon points="381,546 564,546 524,691 447,755 386,665" fill="#62b4dc" opacity="0.64" />
+    <polygon points="447,755 524,691 500,800 439,800" fill="#25709c" opacity="0.57" />
+    <rect x="0" y="535" width="1024" height="489" fill="#06172b" opacity="0.28" />
+    <line x1="85" y1="538" x2="939" y2="538" stroke="#bcebff" stroke-opacity="0.44" stroke-width="6" />
+    <line x1="195" y1="587" x2="370" y2="587" stroke="#aee4ff" stroke-opacity="0.24" stroke-width="4.5" />
+    <line x1="580" y1="627" x2="785" y2="627" stroke="#aee4ff" stroke-opacity="0.19" stroke-width="4.5" />
+  </g>
+  <rect x="27" y="27" width="970" height="970" rx="227" fill="none" stroke="#fff" stroke-opacity="0.16" stroke-width="5" />
+</svg>

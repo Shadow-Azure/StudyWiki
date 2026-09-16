@@ -49,13 +49,17 @@ test("DOM: 编辑模式挂载编辑器工厂、onChange 记脏、保存写回", 
   apply(c.ctx, {}, factory as never);
   await new Promise((r) => setTimeout(r, 0));
   await c.opened()(c.md);
-  (document.querySelector(".viewer-toolbar button") as HTMLButtonElement).click(); // 切到编辑（打开落在预览模式，蓝本用例缺这一步，null.__fire 拒析）
+  const modes = [...document.querySelectorAll<HTMLButtonElement>(".mode-group button")];
+  expect(modes.map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["预览", "true"], ["编辑", "false"]]);
+  expect(document.querySelector(".save-btn")?.textContent).toBe("保存");
+  expect(document.querySelector(".save-btn")?.getAttribute("aria-keyshortcuts")).toBe("Control+S");
+  modes[1]!.click(); // 切到编辑（打开落在预览模式，蓝本用例缺这一步，null.__fire 拒析）
   (document.querySelector(".fake-editor") as HTMLElement & { __fire: (t: string) => void }).__fire("body2");
-  expect(document.querySelector(".viewer-toolbar button:nth-child(2)")?.classList.contains("dirty")).toBe(true);
+  expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(true);
   (document.querySelector(".fake-editor") as HTMLElement & { __save: () => void }).__save();
   await new Promise((r) => setTimeout(r, 0));
   expect(c.writes).toEqual([["/x/a.md", "body2"]]);
-  expect(document.querySelector(".viewer-toolbar button:nth-child(2)")?.classList.contains("dirty")).toBe(false);
+  expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(false);
   expect(c.guardClose).toHaveBeenCalled();
 });
 
@@ -71,9 +75,9 @@ test("DOM: 切到编辑模式渲染编辑器，切回预览销毁", async () => 
   apply(c.ctx, {}, factory as never);
   await new Promise((r) => setTimeout(r, 0));
   await c.opened()(c.md);
-  (document.querySelector(".viewer-toolbar button") as HTMLButtonElement).click(); // 切到编辑
+  ([...document.querySelectorAll<HTMLButtonElement>(".mode-group button")].find((b) => b.textContent === "编辑"))!.click();
   expect(document.querySelector(".fake-editor")).not.toBeNull();
-  (document.querySelector(".viewer-toolbar button") as HTMLButtonElement).click(); // 切回预览
+  ([...document.querySelectorAll<HTMLButtonElement>(".mode-group button")].find((b) => b.textContent === "预览"))!.click();
   expect(document.querySelector(".fake-editor")).toBeNull();
   expect(document.querySelector(".markdown-body")).not.toBeNull();
 });

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StudyWiki UI Preview</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import { mountUiPreview } from "/src/preview.ts";
+      const root = document.getElementById("app");
+      if (root) await mountUiPreview(root);
+    </script>
+  </body>
+</html>
