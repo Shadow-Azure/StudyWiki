@@ -8,21 +8,20 @@ import {
   reloadExternal,
   runningExternals,
   activationFailures,
-  serialized,
 } from "../src/loader/activate";
 import type { Manifest } from "../src/loader/manifest";
 import type { PluginVersion } from "../src/host/plugins";
 
 // 激活面（loader/activate）在面板里是"按顺序调用的运行期动作"：本文件钉住面板调
 // 了谁、传了什么、清单落了什么；真装载行为由 tests/activate.test.ts 覆盖。
-// serialized 直通执行（真实现是入队），保留 R11 的"安装路径自己入队"断言点。
+// R17：安装/导入即激活走 reloadExternal（内部已串行 + 先 dispose 旧 fiber），
+// activateExternal 保留在 mock 里唯一用途是反向断言"面板不再直调它"。
 vi.mock("../src/loader/activate", () => ({
   activateExternal: vi.fn(async () => {}),
   reloadExternal: vi.fn(async () => {}),
   deactivateExternal: vi.fn(async () => {}),
   runningExternals: vi.fn(() => new Set<string>(["demo"])),
   activationFailures: vi.fn(() => new Map<string, string>()),
-  serialized: vi.fn(async (_name: string, fn: () => Promise<void>) => fn()),
 }));
 
 // 同文件的 DOM 测试共享一个 jsdom document：上一用例残留的顶栏按钮/面板会让
@@ -216,7 +215,7 @@ test("面板: 重新加载走 loadModule + reloadExternal", async () => {
   expect(vi.mocked(reloadExternal).mock.calls[0][1]).toBe("demo");
 });
 
-test("面板: 安装写 ext: 清单行（存量缺口）并串行激活（R11）", async () => {
+test("面板: 安装写 ext: 清单行（存量缺口）并走热重载激活（R17）", async () => {
   const f = fakePlugins([["app-shell", true]]);
   await openPanel(f);
   document.querySelector<HTMLInputElement>(".plugin-panel-head input")!.value = "demo-x";
@@ -227,35 +226,54 @@ test("面板: 安装写 ext: 清单行（存量缺口）并串行激活（R11）
   const last = JSON.parse(f.written.at(-1)!);
   expect(last.plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
   expect(last.plugins[1]).toEqual({ id: "ext:demo", enabled: true, config: {} });
-  // R11：激活由面板自己入队（activateExternal 自身不串行），否则与开关并发会漏 dispose
-  expect(serialized).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(serialized).mock.calls[0][0]).toBe("demo");
-  expect(activateExternal).toHaveBeenCalledTimes(1);
-  const call = vi.mocked(activateExternal).mock.calls[0];
+  // R17：安装即激活走 reloadExternal（内部串行 + 先 dispose 旧 fiber + 失败回退旧模块）；
+  // 面板既不自己包 serialized（同名单层嵌套会自锁），也不直调 activateExternal
+  // （那会把已在跑的旧 fiber 覆盖成孤儿，任何面板动作都 dispose 不到）。
+  expect(reloadExternal).toHaveBeenCalledTimes(1);
+  const call = vi.mocked(reloadExternal).mock.calls[0];
   expect(call[1]).toBe("demo");
   expect(call[3]).toEqual({});
   expect(typeof (call[4] as { snapshot: unknown }).snapshot).toBe("function");
+  expect(activateExternal).not.toHaveBeenCalled();
   expect(document.querySelector(".plugin-restart-hint")).toBeNull();
 });
 
-test("面板: 本地导入取消不动清单，成功则同安装路径", async () => {
+test("面板: 覆盖安装已在跑的插件同样走 reloadExternal（不留孤儿 fiber）", async () => {
+  const f = fakePlugins(); // 默认清单已含 enabled 的 ext:demo
+  await openPanel(f);
+  document.querySelector<HTMLInputElement>(".plugin-panel-head input")!.value = "demo";
+  clickButton("安装");
+  await tick();
+  expect(f.plugins.install).toHaveBeenCalledWith("demo");
+  // 已在跑时重装 = 升级：必须经 reloadExternal 的 dispose 路径，而不是再挂一个
+  // fiber 覆盖登记（旧 fiber 会存活到重启，停用/移除都看起来生效却留着插件 UI）。
+  expect(reloadExternal).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(reloadExternal).mock.calls[0][1]).toBe("demo");
+  expect(activateExternal).not.toHaveBeenCalled();
+  // withRow 幂等：覆盖安装不产生重复清单行
+  expect(JSON.parse(f.written.at(-1)!).plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
+});
+
+test("面板: 本地导入取消不动清单，成功则同安装路径（reloadExternal）", async () => {
   const f = fakePlugins([["app-shell", true]]);
   await openPanel(f);
   clickButton("本地导入…"); // importFromTgz → null = 用户取消
   await tick();
   expect(f.written.length).toBe(0);
-  expect(activateExternal).not.toHaveBeenCalled();
+  expect(reloadExternal).not.toHaveBeenCalled();
 
   f.plugins.importFromTgz = vi.fn(async () => "demo");
   clickButton("本地导入…");
   await tick();
   expect(JSON.parse(f.written.at(-1)!).plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
-  expect(activateExternal).toHaveBeenCalledTimes(1);
+  expect(reloadExternal).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(reloadExternal).mock.calls[0][1]).toBe("demo");
+  expect(activateExternal).not.toHaveBeenCalled();
 });
 
 test("面板: 安装成功但激活失败——内联报错，清单行留 enabled 待下次 boot 重试", async () => {
   const f = fakePlugins([["app-shell", true]]);
-  vi.mocked(activateExternal).mockRejectedValueOnce(new Error("激活审计超时：声明的服务未提供？"));
+  vi.mocked(reloadExternal).mockRejectedValueOnce(new Error("激活审计超时：声明的服务未提供？"));
   await openPanel(f);
   document.querySelector<HTMLInputElement>(".plugin-panel-head input")!.value = "demo-x";
   clickButton("安装");
@@ -329,6 +347,30 @@ test("面板: 历史展开版本列表，回退走 restoreVersion + reloadExtern
   expect(f.plugins.restoreVersion).toHaveBeenCalledWith("demo", "1699999999-123456abcdef");
   expect(reloadExternal).toHaveBeenCalledTimes(1);
   expect(vi.mocked(reloadExternal).mock.calls[0][1]).toBe("demo");
+});
+
+test("面板: 停用行不给重新加载，回退只落盘不激活（R18）", async () => {
+  const f = fakePlugins([["app-shell", true], ["ext:demo", false]]);
+  const versions: PluginVersion[] = [
+    { id: "1700000000-abcdef123456", createdAt: 1700000000, version: "1.1.0", apiVersion: 1, hash: "abcdef123456", current: true },
+    { id: "1699999999-123456abcdef", createdAt: 1699999999, version: "1.0.0", apiVersion: 1, hash: "123456abcdef", current: false },
+  ];
+  f.plugins.listVersions = vi.fn(async () => versions);
+  await openPanel(f);
+  // 停用行的清单语义是"不该在跑"：重新加载会把插件装回来而清单仍说停用
+  // （投影按 !enabled 先判 stopped → 行显示停用、插件却在跑）。
+  expect([...rowAt(1).querySelectorAll("button")].map((b) => b.textContent)).toEqual(["历史", "移除"]);
+
+  clickInRow(1, "历史");
+  await tick();
+  const rollback = document.querySelectorAll<HTMLButtonElement>(".plugin-version-row button");
+  expect(rollback.length).toBe(1); // 当前代无回退按钮
+  rollback[0].click();
+  await tick();
+  expect(f.plugins.restoreVersion).toHaveBeenCalledWith("demo", "1699999999-123456abcdef");
+  // 停用行只落盘：不 loadModule、不激活，下次启用/重新加载自然按恢复后的代码跑
+  expect(reloadExternal).not.toHaveBeenCalled();
+  expect(f.plugins.loadModule).not.toHaveBeenCalled();
 });
 
 test("面板: 历史列表读取失败内联显示，不静默", async () => {

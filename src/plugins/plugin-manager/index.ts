@@ -2,12 +2,10 @@ import type { Context } from "cordis";
 import type { Manifest } from "../../loader/manifest";
 import { labelButton } from "../../ui/dom";
 import {
-  activateExternal,
   activationFailures,
   deactivateExternal,
   reloadExternal,
   runningExternals,
-  serialized,
   type ActivateDeps,
 } from "../../loader/activate";
 import { computePanelRows, withEnabled, withoutRow, withRow, type PanelRow } from "./model";
@@ -20,6 +18,9 @@ export const inject = ["plugins", "slots", "windows"];
 /** 插件管理面板（第六内置插件）：顶栏"插件"按钮开合；列已装（内置+外置）、
  * 按名安装、本地导入、启用开关、重新加载、版本回退、外置移除。全部动作即时生效
  * 于本窗口（清单是跨窗口一致性的唯一准源，其他窗口重启后跟随）。
+ * 动作可见性：安装/导入/启停/移除恒在；重新加载只在已启用且健康的外置行出现
+ * （停用行的清单语义是"不该在跑"）；历史在健康外置行恒在，但停用行的回退只落盘。
+ * 安装/导入走 reloadExternal（已在跑的同名插件先 dispose 旧 fiber 再挂新的）。
  * 操作失败内联显示错误，不静默。
  * @param ctx Host context（plugins/slots/windows injected）。
  * @returns Teardown removing the topbar button. */
@@ -134,12 +135,15 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
           const spec = installInput.value.trim();
           if (!spec) return;
           try {
-            // 落清单行 → 取模块 → 进队列激活：安装即生效，且 ext: 行自此有入清单路径
-            // （Phase 2 的验收盲区：此前装完重启也不会被装载）。
+            // 落清单行 → 取模块 → 热重载路径激活：安装即生效，且 ext: 行自此有入清单路径
+            // （Phase 2 的验收盲区：此前装完重启也不会被装载）。走 reloadExternal 而非
+            // activateExternal：覆盖安装 = 升级，它先 dispose 同名旧 fiber 再挂新模块
+            // （直调 activateExternal 会覆盖登记、把旧 fiber 变成谁都没法 dispose 的孤儿）；
+            // 它内部已按名串行，面板不能再套一层 serialized（同名单层嵌套会自锁）。
             const installed = await ctx.plugins.install(spec);
             await ctx.plugins.writeManifest(withRow(manifest, `ext:${installed}`));
             const mod = await ctx.plugins.loadModule(installed);
-            await serialized(installed, () => activateExternal(ctx, installed, mod, {}, activateDeps(ctx)));
+            await reloadExternal(ctx, installed, mod, {}, activateDeps(ctx));
             clearError();
           } catch (e) {
             showError(e);
@@ -152,7 +156,7 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
             if (imported !== null) {
               await ctx.plugins.writeManifest(withRow(manifest, `ext:${imported}`));
               const mod = await ctx.plugins.loadModule(imported);
-              await serialized(imported, () => activateExternal(ctx, imported, mod, {}, activateDeps(ctx)));
+              await reloadExternal(ctx, imported, mod, {}, activateDeps(ctx));
               clearError();
             }
           } catch (e) {
@@ -236,20 +240,26 @@ function rowEl(
   }
   if (row.removable && row.externalName) {
     const name = row.externalName;
-    // 重新加载与历史只在健康行出现：坏行（目录 problem / boot 坏行）连模块都读不出来，
+    // 历史与重新加载只在健康行出现：坏行（目录 problem / boot 坏行）连模块都读不出来，
     // 先动的是"待清理"这条路径（移除），给了按钮只会把错误再报一遍。
     if (!row.problem) {
+      // 重新加载额外要求已启用：停用行的清单语义是"不该在跑"，点它会把插件装回来
+      // 而清单仍是 enabled:false（投影按 enabled 先判 stopped，行显示停用、插件在跑）。
+      if (row.enabled) {
+        line.append(
+          button("重新加载", "btn btn-ghost", async () => {
+            try {
+              const mod = await ctx.plugins.loadModule(name);
+              await reloadExternal(ctx, name, mod, rowOf(manifest, row.id).config, activateDeps(ctx));
+              clearError();
+            } catch (e) {
+              showError(e);
+            }
+            await rerender();
+          }),
+        );
+      }
       line.append(
-        button("重新加载", "btn btn-ghost", async () => {
-          try {
-            const mod = await ctx.plugins.loadModule(name);
-            await reloadExternal(ctx, name, mod, rowOf(manifest, row.id).config, activateDeps(ctx));
-            clearError();
-          } catch (e) {
-            showError(e);
-          }
-          await rerender();
-        }),
         button("历史", "btn btn-ghost", async () => {
           // 展开 = 现读现列（版本仓是磁盘事实，缓存它只会显示陈旧历史）；再点收起。
           const box = line.querySelector(".plugin-versions");
@@ -273,8 +283,12 @@ function rowEl(
                   button("回退", "btn btn-ghost", async () => {
                     try {
                       await ctx.plugins.restoreVersion(name, v.id);
-                      const mod = await ctx.plugins.loadModule(name);
-                      await reloadExternal(ctx, name, mod, rowOf(manifest, row.id).config, activateDeps(ctx));
+                      // 停用行只落盘：清单说 enabled:false，面板就不该把它跑起来——
+                      // 下次启用/重新加载自然按恢复后的代码激活。
+                      if (row.enabled) {
+                        const mod = await ctx.plugins.loadModule(name);
+                        await reloadExternal(ctx, name, mod, rowOf(manifest, row.id).config, activateDeps(ctx));
+                      }
                       clearError();
                     } catch (e) {
                       showError(e);
