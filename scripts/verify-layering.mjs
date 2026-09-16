@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 分层纪律扫描：src/plugins/** 禁触达 @tauri-apps/* 与 host 实现（值导入/副作用导入/转口导出）；
-// src/** 禁动态装载（import()/eval/new Function）。
+// src/** 禁动态装载（import()/eval/new Function）；ctx.plugin( 只允许出现在装载器两文件
+// 且 activate.ts 必经 guard 门面（外置激活路径的机械保证）。
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -66,6 +67,36 @@ export function scanLoadingSeams(relPath, code, allowlist) {
   return violations;
 }
 
+/** ctx.plugin( 的合法调用点：内置表（boot.ts）+ 共享激活函数（activate.ts）。 */
+const ACTIVATION_ALLOWLIST = new Set(["src/loader/boot.ts", "src/loader/activate.ts"]);
+
+/**
+ * External-activation scan: `ctx.plugin(` may only appear in the two loader files
+ * (the built-in table and the shared activation function), and `activate.ts` must go
+ * through `guardExternalModule(` — so the guard facade cannot be bypassed by adding a
+ * second mount point somewhere else in `src/**`.
+ * @param {string} relPath 相对仓库根的文件路径（与白名单登记路径精确匹配）。
+ * @param {string} code 该文件的完整源码文本（行注释与块注释先剪掉，注释里的字样不算）。
+ * @returns {string[]} 违规明细列表（每项一条，空数组即该文件合规）。
+ */
+export function scanExternalActivation(relPath, code) {
+  const violations = [];
+  const stripped = code.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "");
+  if (!/(?<![.\w])ctx\.plugin\s*\(/.test(stripped)) {
+    if (relPath === "src/loader/activate.ts" && !stripped.includes("guardExternalModule(")) {
+      violations.push(`${relPath}: 共享激活函数缺 guardExternalModule 包装（外置路径必须过 guard 门面）`);
+    }
+    return violations;
+  }
+  if (!ACTIVATION_ALLOWLIST.has(relPath)) {
+    violations.push(`${relPath}: ctx.plugin( 调用只允许在 src/loader/boot.ts 与 src/loader/activate.ts`);
+  }
+  if (relPath === "src/loader/activate.ts" && !stripped.includes("guardExternalModule(")) {
+    violations.push(`${relPath}: 共享激活函数缺 guardExternalModule 包装（外置路径必须过 guard 门面）`);
+  }
+  return violations;
+}
+
 function* walkTs(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
@@ -85,6 +116,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const rel = path.relative(root, file);
     const code = readFileSync(file, "utf8");
     violations.push(...scanLoadingSeams(rel, code, allowlist));
+    violations.push(...scanExternalActivation(rel, code));
     if (rel.startsWith("src/plugins/") || rel === "src/plugins") {
       violations.push(...scanPluginSource(rel, code));
     }

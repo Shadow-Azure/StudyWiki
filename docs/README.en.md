@@ -13,6 +13,8 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 | [environment-independence.md](environment-independence.en.md) | Environment-independence constraints + exemption registry |
 | [development.md](development.en.md) | Contributor onboarding |
 | [plugins/authoring.md](plugins/authoring.en.md) | External plugin authoring guide (closed contract / quick start / trial install / publish / trust model) |
+| [plugins/contract.md](plugins/contract.en.md) | External plugin contract (module shape / inject permissions / boundaries / failure handling) |
+| [plugins/dynamic.md](plugins/dynamic.en.md) | Dynamic-loading behaviour contract (live scope / reload / version store / where failures land) |
 | [commands.md](commands.en.md) | Tauri command catalog (generated region) |
 | [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract |
 | [i18n/terminology.md](i18n/terminology.en.md) | Terminology alignment (banned alternates gate-backed) |

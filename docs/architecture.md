@@ -71,7 +71,7 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。外置插件——安装（plugin-manager → ctx.plugins.install → install_plugin：查元数据→拉 tarball→sha512→解包校验封闭契约→入插件目录，产品唯一联网动作）；装载（boot 对 ext: 行 → read_plugin_module → blob URL 动态 import（唯一装载缝 src/loader/external.ts）→ 支持集/形状校验 → 与静态表同流程激活；坏行分治跳过、面板点名待清理）；管理（面板改动写清单、重启生效，无热装载）。
+数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。外置插件——安装（plugin-manager → ctx.plugins.install → install_plugin：查元数据→拉 tarball→sha512→解包校验封闭契约→入插件目录，产品唯一联网动作）；装载（boot 对 ext: 行 → read_plugin_module → blob URL 动态 import（唯一装载缝 src/loader/external.ts）→ 支持集/形状校验 → 与静态表同流程激活；坏行分治跳过、面板点名待清理）；管理（面板改动写清单、本窗即时生效——四动作经共享激活函数（guard 门面 + fiber 审计），版本仓兜底，他窗重启跟随清单）。
 
 ## 关键决策点
 
