@@ -21,6 +21,7 @@ export const inject = ["plugins", "slots", "windows"];
  * 动作可见性：安装/导入/启停/移除恒在；重新加载只在已启用且健康的外置行出现
  * （停用行的清单语义是"不该在跑"）；历史在健康外置行恒在，但停用行的回退只落盘。
  * 安装/导入走 reloadExternal（已在跑的同名插件先 dispose 旧 fiber 再挂新的）。
+ * 安装/导入同时把清单行置为 enabled（显式意图：同名行原本停用时也启用，不留"在跑但清单说停用"）。
  * 操作失败内联显示错误，不静默。
  * @param ctx Host context（plugins/slots/windows injected）。
  * @returns Teardown removing the topbar button. */
@@ -141,7 +142,11 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
             // （直调 activateExternal 会覆盖登记、把旧 fiber 变成谁都没法 dispose 的孤儿）；
             // 它内部已按名串行，面板不能再套一层 serialized（同名单层嵌套会自锁）。
             const installed = await ctx.plugins.install(spec);
-            await ctx.plugins.writeManifest(withRow(manifest, `ext:${installed}`));
+            // 写行同时补启用：装/导入是"要有这个插件"的显式意图，而 withRow 对已存在的
+            // 停用行是空操作——不补启用就会出现插件在跑而清单仍说停用（投影按 !enabled
+            // 先判 stopped，下次启动又不装，面板与清单长期打架）。
+            const row = `ext:${installed}`;
+            await ctx.plugins.writeManifest(withEnabled(withRow(manifest, row), row, true));
             const mod = await ctx.plugins.loadModule(installed);
             await reloadExternal(ctx, installed, mod, {}, activateDeps(ctx));
             clearError();
@@ -154,7 +159,9 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
           try {
             const imported = await ctx.plugins.importFromTgz();
             if (imported !== null) {
-              await ctx.plugins.writeManifest(withRow(manifest, `ext:${imported}`));
+              // 同安装路径：导入也是"要有这个插件"的显式意图，停用的同名行一并启用。
+              const row = `ext:${imported}`;
+              await ctx.plugins.writeManifest(withEnabled(withRow(manifest, row), row, true));
               const mod = await ctx.plugins.loadModule(imported);
               await reloadExternal(ctx, imported, mod, {}, activateDeps(ctx));
               clearError();

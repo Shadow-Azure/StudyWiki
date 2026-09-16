@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- docs/plugins/dynamic.md
-dynamic.md: 0e421dcb7b99bd0d306491b122991a327b47585d
-dynamic.en.md: cd4f7bc2a1085f41ea47b756c64f8267c0d07fd5
+dynamic.md: a2dd3b01f83650f69137a27ae6e34a8ac21726e1
+dynamic.en.md: ae525d00af445a19715db6d0a4239c2d410a4433

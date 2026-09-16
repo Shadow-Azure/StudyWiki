@@ -254,6 +254,34 @@ test("面板: 覆盖安装已在跑的插件同样走 reloadExternal（不留孤
   expect(JSON.parse(f.written.at(-1)!).plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
 });
 
+test("面板: 安装到已停用的同名行会同时启用该行（R19）", async () => {
+  const f = fakePlugins([["app-shell", true], ["ext:demo", false]]);
+  await openPanel(f);
+  document.querySelector<HTMLInputElement>(".plugin-panel-head input")!.value = "demo";
+  clickButton("安装");
+  await tick();
+  expect(reloadExternal).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(reloadExternal).mock.calls[0][1]).toBe("demo");
+  // 安装是"要有这个插件"的显式意图：withRow 对已存在的停用行是空操作，不补启用
+  // 就会装完在跑而清单仍说停用（下次启动又不装，面板与清单长期打架）。
+  const last = JSON.parse(f.written.at(-1)!);
+  expect(last.plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
+  expect(last.plugins[1].enabled).toBe(true);
+});
+
+test("面板: 本地导入到已停用的同名行会同时启用该行（R19）", async () => {
+  const f = fakePlugins([["app-shell", true], ["ext:demo", false]]);
+  f.plugins.importFromTgz = vi.fn(async () => "demo");
+  await openPanel(f);
+  clickButton("本地导入…");
+  await tick();
+  expect(reloadExternal).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(reloadExternal).mock.calls[0][1]).toBe("demo");
+  const last = JSON.parse(f.written.at(-1)!);
+  expect(last.plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
+  expect(last.plugins[1].enabled).toBe(true);
+});
+
 test("面板: 本地导入取消不动清单，成功则同安装路径（reloadExternal）", async () => {
   const f = fakePlugins([["app-shell", true]]);
   await openPanel(f);
