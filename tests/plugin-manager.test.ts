@@ -338,7 +338,7 @@ test("面板: 移除先确认——确认才 deactivate + remove + 清单过滤"
   clickInRow(1, "移除");
   await tick();
   expect(f.windows.confirmDialog).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(f.windows.confirmDialog).mock.calls[0][0]).toContain("版本历史将一并删除");
+  expect(vi.mocked(f.windows.confirmDialog).mock.calls[0][0]).toContain("并尽力清理版本历史");
   expect(deactivateExternal).toHaveBeenCalledWith("demo");
   expect(f.plugins.remove).toHaveBeenCalledWith("demo");
   expect(JSON.parse(f.written.at(-1)!).plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell"]);

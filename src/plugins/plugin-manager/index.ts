@@ -316,7 +316,7 @@ function rowEl(
     line.append(
       button("移除", "btn btn-danger", async () => {
         try {
-          if (await ctx.windows.confirmDialog(`移除 ${name}？其版本历史将一并删除。`)) {
+          if (await ctx.windows.confirmDialog(`移除 ${name}？将删除插件目录，并尽力清理版本历史。`)) {
             await deactivateExternal(name);
             await ctx.plugins.remove(name);
             await ctx.plugins.writeManifest(withoutRow(manifest, row.id));

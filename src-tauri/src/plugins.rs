@@ -185,17 +185,30 @@ pub fn read_entry_source(dir: &Path, name: &str) -> Result<PluginModuleSource, S
     })
 }
 
-/// 纯删目录与版本历史（可测）：幂等，目录已不在视为成功。
+/// 删除历史残留；缺失视为幂等成功，其他失败返回告警文案（主删除不被次要清理卡死）。
+fn history_cleanup_warning(dir: &Path, name: &str) -> Option<String> {
+    let history = history_root(dir, name);
+    match fs::remove_dir_all(&history) {
+        Ok(()) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => Some(format!("删除 {} 失败：{e}", history.display())),
+    }
+}
+
+/// 纯删目录与版本历史（可测）：幂等，目录已不在视为成功。主目录先删成功，
+/// 再 best-effort 连删历史；非缺失失败留日志，不阻塞主操作。
 pub fn remove_plugin_dir(dir: &Path, name: &str) -> Result<(), String> {
     safe_plugin_name(name)?;
     let target = dir.join(name);
-    // 版本历史连删：同名重装不应复活旧历史。
-    let _ = fs::remove_dir_all(history_root(dir, name));
     match fs::remove_dir_all(&target) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("删除 {} 失败：{e}", target.display())),
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(format!("删除 {} 失败：{e}", target.display())),
     }
+    if let Some(warning) = history_cleanup_warning(dir, name) {
+        eprintln!("[plugins] {warning}");
+    }
+    Ok(())
 }
 
 /// npm registry 固定公网 npmjs（不内置镜像；用户侧差异交给系统级代理）。
@@ -803,6 +816,43 @@ mod tests {
         // 移除连删历史
         remove_plugin_dir(&dir, "demo").unwrap();
         assert!(!dir.join(".history/demo").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn history_cleanup_reports_non_missing_failure_only() {
+        let dir = tmp_history("remove-warning");
+        std::fs::create_dir_all(dir.join(".history")).unwrap();
+        std::fs::write(dir.join(".history/demo"), "not a directory").unwrap();
+
+        let warning = history_cleanup_warning(&dir, "demo")
+            .expect("history cleanup failure should produce a warning");
+        assert!(
+            warning.contains(".history/demo"),
+            "warning names the residue"
+        );
+
+        std::fs::remove_file(dir.join(".history/demo")).unwrap();
+        assert!(
+            history_cleanup_warning(&dir, "demo").is_none(),
+            "missing history is idempotent success"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn remove_failure_preserves_history_until_main_delete_succeeds() {
+        let dir = tmp_history("remove-order");
+        let history = dir.join(".history/demo");
+        std::fs::create_dir_all(&history).unwrap();
+        std::fs::write(history.join("meta.json"), "{}").unwrap();
+        std::fs::write(dir.join("demo"), "not a directory").unwrap();
+
+        assert!(remove_plugin_dir(&dir, "demo").is_err());
+        assert!(
+            history.join("meta.json").exists(),
+            "main delete failure must not destroy history first"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
