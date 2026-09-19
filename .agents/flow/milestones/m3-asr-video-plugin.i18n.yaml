@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/milestones/m3-asr-video-plugin.md
+m3-asr-video-plugin.md: b7a7bc0cd5efc153443a87a20ba9c3ccda6e1f17
+m3-asr-video-plugin.en.md: 92ceda8b9564e6c5613b3e1d786ba72f1ef3ed35

@@ -28,6 +28,7 @@ describe("run-gates 模式组合", () => {
   it("doc-sync 关键叶子在列（防误删——删一个 CI 就静默失明一角）", () => {
     for (const leaf of [
       "verify-agent-notes",
+      "verify-flow",
       "verify-archived-agent-notes",
       "verify-doc-index",
       "verify-postmortem",
@@ -68,6 +69,14 @@ describe("CI 接线", () => {
     const release = await readFile(".github/workflows/release.yml", "utf8");
     expect(release).toContain("--mode release");
     expect(release).toContain("verify-env-independence.mjs");
+  });
+});
+
+describe("CI 的开发流程接线", () => {
+  it("PR diff 校验与在线 lane 在列（防误删——删了流程约束就静默失明）", async () => {
+    const ci = await readFile(".github/workflows/ci.yml", "utf8");
+    expect(ci).toContain("verify-flow.mjs --diff");
+    expect(ci).toContain("verify-flow-online.mjs");
   });
 });
 

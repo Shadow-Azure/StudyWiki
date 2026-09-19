@@ -13,6 +13,7 @@ const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 /** 非同名覆盖的登记：脚本 → 覆盖它的 spec 文件（须真实存在，防映射表腐烂）。 */
 const COVERED_BY = {
   "run-gates.mjs": ["ci-wiring.spec.mjs"], // 模式组合与接线（LEAVES/MODES）
+  "flow-lib.mjs": ["verify-flow.spec.mjs"], // 流程纯逻辑层（解析/校验/资格/glob）
   "install-merge-driver.mjs": ["install-git-hooks.spec.mjs"], // registerMergeDriver 的 .git/config 断言
   "verify-translation-pairing.mjs": [
     "translation-pairing-lib.spec.mjs", // 纯逻辑层

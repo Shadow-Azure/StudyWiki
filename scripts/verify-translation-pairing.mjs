@@ -45,10 +45,10 @@ async function collectTree(dir, out = []) {
   return out;
 }
 
-/** 发现全库语料：docs/、.agents/notes/（除 archived）、根 README 三件套。 */
+/** 发现全库语料：docs/、.agents/notes/（除 archived）、.agents/flow/、根 README 三件套。 */
 async function discoverCorpus() {
   const files = new Set(["README.md", "README.en.md", "README.i18n.yaml"]);
-  for (const root of ["docs", ".agents/notes"])
+  for (const root of ["docs", ".agents/notes", ".agents/flow"])
     for (const file of await collectTree(root)) files.add(file);
   return [...files].filter((f) => existsSync(f)).sort();
 }

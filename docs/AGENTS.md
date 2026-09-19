@@ -13,6 +13,7 @@
 | `docs/i18n/README.md` | 双语配对契约（三件套、镜像、豁免） | 翻译教程 |
 | `docs/postmortem/` | 事故复盘——全库唯一允许叙事的层级 | — |
 | Agent Notes（`.agents/notes/`） | 决策记录：为什么、放弃了什么 | 现状描述（→ docs） |
+| `.agents/flow/` | 开发流程工作文件（roadmap/milestone/issue）+ 契约 README | 决策理由（→ Agent Note） |
 | 代码内文档 | 契约语义（何时触发/边界/失败处置） | 推理过程、代码复述 |
 
 放置口诀：bug → postmortem；理由 → Agent Note；步骤 → development.md；现状 → 对应 docs 页；常驻规则 → 根 AGENTS.md（附理由链接）。

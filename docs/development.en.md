@@ -10,6 +10,10 @@ English | [中文](development.md)
 - macOS: Xcode CLT; Windows: MSVC Build Tools; Linux: `libwebkit2gtk-dev` etc. (see the official Tauri 2 prerequisites)
 - These are **build-time** only; the artifact-side environment-independence constraint is in [environment-independence.en.md](environment-independence.en.md)
 
+## Development flow
+
+File an issue before changing code: `.agents/flow/` holds the roadmap → milestone → issue working files; the contract and the priority-progression rules live in [.agents/flow/README.md](../.agents/flow/README.en.md). Scaffold a new issue trio with `pnpm flow:new-issue -- …`; commit and PR titles carry a `(#N)` reference; `pnpm flow:sync` syncs the flow tree to GitHub and backfills numbers. Locally `pnpm verify:flow` checks the state machine; CI adds the diff check and the GitHub-consistency lane on PRs.
+
 ## Daily loop
 
 ```sh

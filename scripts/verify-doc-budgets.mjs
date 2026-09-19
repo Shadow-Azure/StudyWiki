@@ -24,12 +24,18 @@ function authoredWords(text) {
 
 /** 发现必须登记预算的常驻文档（存在的 base 侧）：docs/**\/*.md、根
  *  README.md、AGENTS.md（CLAUDE.md 是它的 symlink，不单列）、
- *  .agents/notes/README.md；.en.md 除外（预算按 base 侧计），postmortem
- *  事故件除外（冻结历史，README.md 才是常驻规则文档）。 */
+ *  .agents/notes/README.md、.agents/flow/ 的 README/roadmap/milestones
+ *  （issues 是随讨论膨胀的工作文件，不登记）；.en.md 除外（预算按 base
+ *  侧计），postmortem 事故件除外（冻结历史，README.md 才是常驻规则文档）。 */
 async function residentDocs() {
   const files = new Set(
-    ["README.md", "AGENTS.md", ".agents/notes/README.md"].filter((f) => existsSync(f)),
+    ["README.md", "AGENTS.md", ".agents/notes/README.md", ".agents/flow/README.md", ".agents/flow/roadmap.md"].filter((f) => existsSync(f)),
   );
+  const flowMilestones = ".agents/flow/milestones";
+  if (existsSync(flowMilestones))
+    for (const entry of await readdir(flowMilestones))
+      if (entry.endsWith(".md") && !entry.endsWith(".en.md"))
+        files.add(`${flowMilestones}/${entry}`);
   const walk = async (dir) => {
     if (!existsSync(dir)) return;
     for (const entry of await readdir(dir, { withFileTypes: true })) {

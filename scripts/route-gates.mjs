@@ -28,6 +28,11 @@ export const ROUTES = [
     reason: "门禁脚本：自测试必跑（gate-coverage/ci-wiring 对账接线与门禁本体）",
   },
   {
+    match: (p) => p.startsWith(".agents/flow/"),
+    commands: ["verify:flow", "verify:docs"],
+    reason: "流程树：状态机校验 + 配对/预算全量档",
+  },
+  {
     match: (p) => p.startsWith("docs/") || p.startsWith(".agents/") || p.endsWith(".md") || p === "AGENTS.md",
     commands: ["verify:docs"],
     reason: "文档语料：配对、预算、type-equiv、生成区、索引全量档",
@@ -73,6 +78,7 @@ export function classify(paths) {
 const COMMAND_ORDER = [
   "build",
   "test",
+  "verify:flow",
   "verify:dep-audit",
   "verify:layering",
   "verify:native-links",

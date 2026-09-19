@@ -1,13 +1,13 @@
 {
   "//": "常驻文档词数上限。计数规则见 scripts/verify-doc-budgets.mjs。超限处置：搬层 → 压缩 → 提预算（PR 说明理由）。",
   ".agents/notes/README.md": 980,
-  "AGENTS.md": 690,
+  "AGENTS.md": 800,
   "README.md": 350,
-  "docs/AGENTS.md": 710,
+  "docs/AGENTS.md": 750,
   "docs/README.md": 640,
   "docs/architecture.md": 880,
   "docs/commands.md": 150,
-  "docs/development.md": 460,
+  "docs/development.md": 580,
   "docs/environment-independence.md": 760,
   "docs/i18n/README.md": 790,
   "docs/i18n/terminology.md": 300,
@@ -16,5 +16,12 @@
   "docs/plugins/contract.md": 560,
   "docs/plugins/dynamic.md": 570,
   "docs/postmortem/README.md": 170,
-  "docs/release-checklist.md": 350
+  "docs/release-checklist.md": 350,
+  ".agents/flow/README.md": 900,
+  ".agents/flow/roadmap.md": 280,
+  ".agents/flow/milestones/m0-flow-infra.md": 150,
+  ".agents/flow/milestones/m1-prototype-shell.md": 150,
+  ".agents/flow/milestones/m2-ai-agent-host.md": 230,
+  ".agents/flow/milestones/m3-asr-video-plugin.md": 230,
+  ".agents/flow/milestones/m4-study-interaction.md": 200
 }
