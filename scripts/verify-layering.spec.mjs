@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { scanPluginSource, scanLoadingSeams } from "./verify-layering.mjs";
+import { scanPluginSource, scanLoadingSeams, scanExternalActivation } from "./verify-layering.mjs";
 
 test("插件层: @tauri-apps 值导入红、type 导入放行", () => {
   expect(scanPluginSource("src/plugins/a/index.ts", `import { invoke } from "@tauri-apps/api/core";`).length).toBe(1);
@@ -41,4 +41,11 @@ test("插件层: 无空白 import/export 同样红（盲区顺修）", () => {
   // 不误伤：import/export 作标识符片段（lookbehind 挡）
   expect(scanPluginSource("src/plugins/a/index.ts", `const imported = { from: 1 };`).length).toBe(0);
   expect(scanPluginSource("src/plugins/a/index.ts", `const exports2 = 1; exports2.from("x");`).length).toBe(0);
+});
+
+test("外置激活扫描：ctx.plugin 白名单外即违规，activate.ts 缺 guard 包装即违规", () => {
+  expect(scanExternalActivation("src/plugins/x/index.ts", "ctx.plugin(m, {})")).toHaveLength(1);
+  expect(scanExternalActivation("src/loader/boot.ts", "ctx.plugin(entry.plugin, c)")).toHaveLength(0);
+  expect(scanExternalActivation("src/loader/activate.ts", "guardExternalModule(mod); ctx.plugin(m, {})")).toHaveLength(0);
+  expect(scanExternalActivation("src/loader/activate.ts", "ctx.plugin(m, {})")).toHaveLength(1);
 });

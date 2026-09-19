@@ -41,6 +41,16 @@ export interface BrokenRow {
   reason: string;
 }
 
+/** 版本仓一代（list_plugin_versions 的行）。 */
+export interface PluginVersion {
+  id: string;
+  createdAt: number;
+  version: string | null;
+  apiVersion: number;
+  hash: string;
+  current: boolean;
+}
+
 /** Tauri bindings this service wraps; injectable for tests. */
 export interface PluginsDeps {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -63,6 +73,7 @@ export const defaultPluginsDeps: PluginsDeps = {
  * 的唯一入口；plugin-manager 是其唯一消费者（Phase 2 内）。 */
 export class PluginsService {
   readonly #deps: PluginsDeps;
+  #manifestUpdates: Promise<unknown> = Promise.resolve();
   /** boot 报告的外置坏行；bootstrap 在 boot 后回填，面板读它点名待清理。 */
   bootBroken: BrokenRow[] = [];
 
@@ -92,6 +103,21 @@ export class PluginsService {
     await this.#deps.invoke("remove_plugin", { name });
   }
 
+  /** 成功激活后快照一代（内容未变返回 null）；三路激活路径共用。 */
+  async snapshot(name: string): Promise<string | null> {
+    return this.#deps.invoke("snapshot_plugin_version", { name }) as Promise<string | null>;
+  }
+
+  /** 列版本仓历史（新到旧；current 标记当前活目录内容）。 */
+  async listVersions(name: string): Promise<PluginVersion[]> {
+    return this.#deps.invoke("list_plugin_versions", { name }) as Promise<PluginVersion[]>;
+  }
+
+  /** 把历史一代原子写回活目录（激活归热重载路径，本方法只管落盘）。 */
+  async restoreVersion(name: string, id: string): Promise<void> {
+    await this.#deps.invoke("restore_plugin_version", { name, id });
+  }
+
   /** 读清单原文（null = 首启未生成）。 */
   async readManifest(): Promise<string | null> {
     return this.#deps.invoke("read_manifest") as Promise<string | null>;
@@ -102,6 +128,19 @@ export class PluginsService {
     await this.#deps.invoke("write_manifest", {
       json: JSON.stringify(manifest, null, 2),
     });
+  }
+
+  /** 同窗串行执行清单读-改-写闭环：每次读取最新清单，等待变换完成后再写回；
+   * 任一环节失败释放队列且错误原样上抛，不阻塞后续 update。调用方应把安装、
+   * 激活、删除等慢操作留在 update 外，只在变换中做纯清单修改。 */
+  async update(fn: (manifest: Manifest) => Manifest | Promise<Manifest>): Promise<void> {
+    const operation = this.#manifestUpdates.then(async () => {
+      const raw = await this.readManifest();
+      const current = JSON.parse(raw ?? '{"plugins":[]}') as Manifest;
+      await this.writeManifest(await fn(current));
+    });
+    this.#manifestUpdates = operation.catch(() => {});
+    return operation;
   }
 
   /** 经装载通道取外置模块：apiVersion 支持集判定 + 形状校验，不符即拒

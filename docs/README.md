@@ -13,6 +13,8 @@
 | [environment-independence.md](environment-independence.md) | 环境无关约束 + 豁免登记 |
 | [development.md](development.md) | 贡献者上手 |
 | [plugins/authoring.md](plugins/authoring.md) | 外置插件作者指南（封闭契约/快速开始/试装/发布/信任模型） |
+| [plugins/contract.md](plugins/contract.md) | 外置插件契约（模块形状/inject 权限/边界/失败处置） |
+| [plugins/dynamic.md](plugins/dynamic.md) | 动态加载行为契约（即时生效范围/重载/版本仓/失败去处） |
 | [commands.md](commands.md) | Tauri 命令目录（生成区） |
 | [i18n/README.md](i18n/README.md) | 双语配对契约 |
 | [i18n/terminology.md](i18n/terminology.md) | 术语对齐表（禁用替写受门禁背书） |

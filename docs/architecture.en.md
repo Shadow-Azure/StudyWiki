@@ -20,8 +20,10 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/换根单路 changeRoot/确认框/关闭守卫（deps 可注入）（→ workspace.ts）
   host/workspace.ts                窗口 scope 工作区状态机：root/activeFile + root-changed/file-opened 事件流（→ emitter.ts、types.ts）
-  loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ manifest.ts、table.ts、types.ts）
+  loader/activate.ts               外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
+  loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ activate.ts、manifest.ts、table.ts、types.ts）
   loader/external.ts               外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
+  loader/guard.ts                  外置插件 guard 门面：inject 白名单 Proxy（只包外置；收窄服务面非语言能力，非沙箱）（→ types.ts）
   loader/manifest.ts               插件清单装载：缺失时从模块表生成默认并写回 + 存量迁移（表新增内置行合并落盘），损坏 fail-loud（→ table.ts）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
@@ -33,8 +35,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts  doc-markdown 纯函数：markdown-it 渲染（html:false，内嵌 HTML 转义）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放；file-opened 挂渲染，kind 不符清空）
-  plugins/plugin-manager/index.ts  plugin-manager 插件：顶栏入口 + 插件管理面板（列已装/按名安装/本地导入/启用开关/外置移除；改动写清单后提示重启生效）（→ manifest.ts、model.ts、dom.ts）
-  plugins/plugin-manager/model.ts  plugin-manager 纯函数：面板行三源合一投影（boot 坏行 > 扫描 problem > 目录缺失）+ 清单开关/移除纯变换（→ plugins.ts、manifest.ts）
+  plugins/plugin-manager/index.ts  plugin-manager 插件：顶栏入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
+  plugins/plugin-manager/model.ts  plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
   plugins/view-filetree/tree.ts    view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
   preview.ts                       浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归（→ workspace.ts、styles.css、types.ts）
@@ -69,7 +71,7 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder (dialog) → `read_tree` assigns kind by extension → view-filetree renders the sidebar; opening — `workspace.openFile` dispatches by kind, markdown goes through `read_text_file` + markdown-it, video through `files.assetUrl` (asset protocol) into the system webview `<video>`; saving — `write_text_file` broadcasts `fs://changed` on landing, every window's tree re-reads; window creation — app-windows → `create_window` registers the table entry and creates the WebviewWindow → the new webview bootstraps (`get_window_state` fetches the root → the loader activates per the manifest). External plugins — install (plugin-manager → ctx.plugins.install → install_plugin: fetch metadata → pull the tarball → sha512 → unpack and validate the closed contract → place into the plugin directory, the product's only networked action); loading (boot sees an `ext:` row → read_plugin_module → dynamic import of a blob URL (the sole loading seam, src/loader/external.ts) → support-set/shape validation → activated through the same flow as the static table; bad rows are skipped in isolation and named as needs-cleanup in the panel); management (panel changes write the manifest and take effect on restart, no hot loading).
+Data flows: tree reading — pick a folder (dialog) → `read_tree` assigns kind by extension → view-filetree renders the sidebar; opening — `workspace.openFile` dispatches by kind, markdown goes through `read_text_file` + markdown-it, video through `files.assetUrl` (asset protocol) into the system webview `<video>`; saving — `write_text_file` broadcasts `fs://changed` on landing, every window's tree re-reads; window creation — app-windows → `create_window` registers the table entry and creates the WebviewWindow → the new webview bootstraps (`get_window_state` fetches the root → the loader activates per the manifest). External plugins — install (plugin-manager → ctx.plugins.install → install_plugin: fetch metadata → pull the tarball → sha512 → unpack and validate the closed contract → place into the plugin directory, the product's only networked action); loading (boot sees an `ext:` row → read_plugin_module → dynamic import of a blob URL (the sole loading seam, src/loader/external.ts) → support-set/shape validation → activated through the same flow as the static table; bad rows are skipped in isolation and named as needs-cleanup in the panel); management (panel changes write the manifest and take effect in this window immediately — install / import / enable-disable / reload / rollback / remove, all six through the shared activation function (guard facade + fiber audit), the version store backs them up, and other windows follow the manifest at their next start).
 
 ## Key decision points
 

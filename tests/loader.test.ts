@@ -11,6 +11,9 @@ const noExt = async () => {
   throw new Error("不应触达外置装载");
 };
 
+/** 外置激活参数：零等待审计（外置行不再靠 50ms 固定静默，测试不坐真实预算）。 */
+const deps = { snapshot: async () => {}, wait: { intervalMs: 0, budgetMs: 50, sleep: () => Promise.resolve() } };
+
 test("boot: 注入缺失 fail-loud 点名", async () => {
   const table: ModuleTable = { "p-orphan": entry({ name: "p-orphan", inject: ["nope"], apply() {} }) };
   await expect(boot(new Context(), { plugins: [{ id: "p-orphan", enabled: true, config: {} }] }, table, noExt))
@@ -44,6 +47,7 @@ test("boot: ext: 行经 loadExternal 装载，row.config 直传（无 defaults �
     { plugins: [{ id: "p-on", enabled: true, config: {} }, { id: "ext:demo", enabled: true, config: { x: 1 } }] },
     table,
     loadExternal,
+    deps,
   );
   expect(report).toEqual({ loaded: ["p-on", "ext:demo"], broken: [] });
   expect(configs).toEqual([{ x: 1 }]);
@@ -59,6 +63,7 @@ test("boot: ext: 行装载失败分治为坏行，不阻断其余插件", async 
     { plugins: [{ id: "ext:demo", enabled: true, config: {} }, { id: "p-on", enabled: true, config: {} }] },
     table,
     loadExternal,
+    deps,
   );
   expect(report.loaded).toEqual(["p-on"]);
   expect(report.broken).toEqual([{ id: "ext:demo", reason: "读 demo/package.json 失败：NotFound" }]);
@@ -67,10 +72,10 @@ test("boot: ext: 行装载失败分治为坏行，不阻断其余插件", async 
 test("boot: ext: 行审计卡死也归坏行；内置卡死仍 fail-loud", async () => {
   const table: ModuleTable = { "p-bad": entry({ name: "p-bad", inject: ["nope"], apply() {} }) };
   const stuck = async () => ({ name: "ext-stuck", inject: ["nope"], apply() {} });
-  // 外置卡死：不抛，进 broken
-  const r1 = await boot(new Context(), { plugins: [{ id: "ext:stuck", enabled: true, config: {} }] }, {}, stuck);
+  // 外置卡死：由 waitActive 审计判超时，不抛，进 broken
+  const r1 = await boot(new Context(), { plugins: [{ id: "ext:stuck", enabled: true, config: {} }] }, {}, stuck, deps);
   expect(r1.broken[0].id).toBe("ext:stuck");
-  expect(r1.broken[0].reason).toMatch(/未激活/);
+  expect(r1.broken[0].reason).toMatch(/审计超时.*声明的服务未提供/);
   // 内置卡死：照旧抛（契约不变）
   await expect(boot(new Context(), { plugins: [{ id: "p-bad", enabled: true, config: {} }] }, table, noExt))
     .rejects.toThrow(/装载审计失败/);
