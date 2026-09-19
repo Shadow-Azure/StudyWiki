@@ -16,6 +16,10 @@ pnpm lint:docs           # 快速文档门禁
 pnpm verify:docs         # 全量文档门禁
 pnpm verify:env-independence  # 环境无关性单项
 pnpm verify:dep-audit    # 依赖白名单 diff + node: 扫描
+pnpm verify:flow         # 开发流程门禁（roadmap/milestone/issue 状态机）
+pnpm verify:flow-online  # 与 GitHub 双侧一致（需 gh，CI 在线 lane）
+pnpm flow:sync           # 流程树 → GitHub 唯一写入口（需 gh 登录）
+pnpm flow:new-issue -- …  # 新建 issue 三件套骨架
 pnpm verify:layering     # 分层纪律 + 装载缝扫描
 pnpm verify:native-links # 发布产物动态链接扫描（需先 build）
 pnpm verify:release      # 发布前校验
@@ -33,6 +37,7 @@ pnpm install:hooks       # 装 git 钩子并注册 i18n merge driver
 ## 惯例
 
 - 每个非平凡变更在同一 PR 内新增或更新至少一条 Agent Note（[规则](.agents/notes/README.md)）。
+- 代码改动必须挂 `.agents/flow/` 的 issue（流程契约见 [.agents/flow/README.md](.agents/flow/README.md)），提交与 PR 标题含 `(#N)`，无豁免通道。
 - 前端不加 UI 框架；依赖只进 `dependencies` 且须是构建期可打包的库，禁止任何 CDN/运行时加载。
 - 插件只经宿主服务触达系统能力（`src/plugins/` 禁 import `@tauri-apps/*`，`pnpm verify:layering` 机械校验）。
 - 本地文件访问只走 `src-tauri/src/lib.rs` 的命令 + asset protocol，扩展名分派在 Rust 侧。

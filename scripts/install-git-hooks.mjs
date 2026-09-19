@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // 安装本地 git 钩子（每个 clone 跑一次），刻意窄：pre-commit 只查暂存文本的尾随空白，
+// commit-msg 只提醒提交标题挂 (#N) 流程引用，
 // pre-push 只跑 doc-quick。穷尽覆盖归 CI——钩子是提醒，不是门禁。幂等，重复安装安全。
 // 同时注册 .i18n.yaml 的 fail-closed merge driver（.gitattributes 已引用），
 // 免得安装入口散成两条命令。
@@ -22,6 +23,15 @@ for f in $(git diff --cached --name-only --diff-filter=ACM); do
 done
 [ $status -eq 0 ] || echo "pre-commit: 修掉尾随空白再提交（git commit --no-verify 可跳过，风险自担）" >&2
 exit $status
+`,
+  "commit-msg": `#!/bin/sh
+# Installed by scripts/install-git-hooks.mjs — do not edit.
+# 开发流程的本地提醒：提交标题须挂 flow issue 引用 (#N)（契约见
+# .agents/flow/README.md；穷尽覆盖归 CI 的 verify-flow --diff）。
+grep -Eq '[([]#[0-9]+[)]]' "$1" || {
+  echo "commit-msg: 提交标题缺 issue 引用 (#N)（--no-verify 可跳过，风险自担）" >&2
+  exit 1
+}
 `,
   "pre-push": `#!/bin/sh
 # Installed by scripts/install-git-hooks.mjs — do not edit.

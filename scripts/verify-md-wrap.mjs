@@ -15,7 +15,7 @@ import path from "node:path";
 import { FENCE_OPEN_RE, REGION_BEGIN, REGION_END } from "./translation-pairing-lib.mjs";
 
 const ROOT_FILES = ["README.md", "README.en.md", "AGENTS.md"];
-const ROOTS = [path.resolve("docs"), path.resolve(".agents/notes")];
+const ROOTS = [path.resolve("docs"), path.resolve(".agents/notes"), path.resolve(".agents/flow")];
 const ARCHIVED_PREFIX = path.resolve(".agents/notes/archived") + path.sep;
 
 const HEADING = /^ {0,3}#{1,6}(\s|$)/;

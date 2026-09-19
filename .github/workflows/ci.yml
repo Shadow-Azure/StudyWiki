@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
@@ -30,6 +32,32 @@ jobs:
         run: pnpm build
       - name: 文档门禁（doc-sync，含产物扫描）
         run: pnpm verify:docs
+      - name: 开发流程门禁（PR diff：commit/PR 标题引用 + scope 覆盖）
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/verify-flow.mjs --diff origin/${{ github.base_ref }}
+
+  flow-online:
+    # 在线 lane：流程树与 GitHub 双侧一致（只校验；写 GitHub 的唯一入口是 pnpm flow:sync）。
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 流程树与 GitHub 一致性
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/verify-flow-online.mjs
 
   rust:
     runs-on: ${{ matrix.os }}

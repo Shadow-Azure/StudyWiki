@@ -56,6 +56,7 @@ function enCorpus() {
   };
   walk("docs");
   walk(".agents/notes");
+  walk(".agents/flow");
   return files.filter((f) => f !== TERMINOLOGY_EN).sort();
 }
 

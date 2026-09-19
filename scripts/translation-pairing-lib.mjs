@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { basename } from "node:path";
 
 /** 语料根：这些树下的 markdown 是双语语料（归档树除外）。 */
-const SCOPE_ROOTS = [".agents/notes/", "docs/"];
+const SCOPE_ROOTS = [".agents/notes/", ".agents/flow/", "docs/"];
 
 /** 语料发现时跳过的非源码目录段。 */
 const NON_SOURCE_SEGMENTS = new Set(["node_modules", "dist"]);

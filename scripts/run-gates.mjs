@@ -4,6 +4,7 @@
 //   node scripts/run-gates.mjs --mode doc-quick|doc-sync|release [--tag vX.Y.Z]
 
 import verifyAgentNotes from "./verify-agent-notes.mjs";
+import verifyFlow from "./verify-flow.mjs";
 import verifyDocIndex from "./verify-doc-index.mjs";
 import verifyPostmortem from "./verify-postmortem.mjs";
 import verifyDocBudgets from "./verify-doc-budgets.mjs";
@@ -23,6 +24,7 @@ const tag = args.includes("--tag") ? args[args.indexOf("--tag") + 1] : undefined
 
 export const LEAVES = {
   "verify-agent-notes": verifyAgentNotes,
+  "verify-flow": verifyFlow,
   "verify-archived-agent-notes": verifyArchivedAgentNotes,
   "verify-doc-index": verifyDocIndex,
   "verify-postmortem": verifyPostmortem,
@@ -114,6 +116,7 @@ export const MODES = {
   // 快速档：无构建、秒级，提交前随手跑。配对/类型等价两叶读盘即可判。
   "doc-quick": [
     "verify-agent-notes",
+    "verify-flow",
     "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-postmortem",
@@ -129,6 +132,7 @@ export const MODES = {
   // 全量文档档：死链 + 环境无关源检查 + ts 围栏真实编译 + 生成区新鲜度 + 自测试。
   "doc-sync": [
     "verify-agent-notes",
+    "verify-flow",
     "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-postmortem",
@@ -152,6 +156,7 @@ export const MODES = {
   // （在 build 之后跑会连同 dist 一起扫描）。
   release: [
     "verify-agent-notes",
+    "verify-flow",
     "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-postmortem",

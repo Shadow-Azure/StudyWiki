@@ -34,7 +34,7 @@ async function installOnce() {
 describe("install-git-hooks", () => {
   it("写入 pre-commit / pre-push 且可执行", async () => {
     const dir = await installOnce();
-    for (const hook of ["pre-commit", "pre-push"]) {
+    for (const hook of ["pre-commit", "pre-push", "commit-msg"]) {
       const mode = statSync(path.join(dir, ".git/hooks", hook)).mode;
       expect(mode & 0o111).not.toBe(0);
     }
