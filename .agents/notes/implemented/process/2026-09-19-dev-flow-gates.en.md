@@ -28,7 +28,9 @@ Ad-hoc development has no flow constraints: requirements scattered across conver
 
 ## Consequences
 
-- `flow:sync` and the online lane require a logged-in gh; at the time of writing the local gh token is invalid, so the first real number backfill waits for re-authentication.
+- `flow:sync` and the online lane require a logged-in gh; the first real run backfilled milestones m0–m4 → #1–#5 and issues #24 / #25, and the first PR #26 carries m0-01 + milestone + project.
+- Two implementation defects surfaced by that run are fixed: `flow:sync` never wrote the milestone number back into the in-memory tree (the first sync could not finish in one pass); `gh pr view --json projectItems` returns an array, not `{nodes}` (a PR genuinely linked to a project was judged unlinked).
+- The online lane's project link reads user-level Projects v2, where an app token only ever sees an empty list and cannot tell "not linked" from "no permission": with `FLOW_TOKEN` (a PAT carrying `project`) CI enforces it, otherwise the item drops to a reminder and the local `pnpm verify:flow-online` enforces it.
 - Status moves edit both fence sides and re-record the pairing record; the backfill case is handled by flow:sync, manual moves go through record:i18n.
 - The budgets of AGENTS.md / docs/development.md / docs/AGENTS.md rise with this change (gate command list and flow conventions join in).
 - Debt: fine-grained issue decomposition for m1–m4 awaits discussion rounds; the model-inference supply question for m2 must be settled in environment-independence.md before work starts.

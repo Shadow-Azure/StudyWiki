@@ -28,7 +28,9 @@ Status: implemented
 
 ## Consequences
 
-- `flow:sync` 与在线 lane 以 gh 已登录为前提；写本 note 时本机 gh token 已失效，首个真实编号回填待重新登录后执行。
+- `flow:sync` 与在线 lane 以 gh 已登录为前提；真机首跑已回填 milestone m0–m4 → #1–#5、issue #24 / #25，首个 PR #26 挂 m0-01 + milestone + project。
+- 首跑暴露的两处实现缺陷已修：`flow:sync` 没把 milestone 编号写回内存树（首次同步一轮跑不完）；`gh pr view --json projectItems` 给的是数组而非 `{nodes}`（真挂 project 也被判未关联）。
+- 在线 lane 的 project 关联读的是用户级 Projects v2，app token 恒见空列表、区分不了"没挂"与"没权限"：配 `FLOW_TOKEN`（PAT，`project` scope）时 CI 强校验，未配则该项降级提醒、由本地 `pnpm verify:flow-online` 把关。
 - 状态翻转要改两侧围栏并重录配对记录；回填场景由 flow:sync 代劳，手工流转走 record:i18n。
 - AGENTS.md / docs/development.md / docs/AGENTS.md 的预算随本变更上调（门禁清单与流程惯例入列）。
 - 欠账：m1–m4 的 issue 细化拆分待逐轮讨论；m2 的模型推理供给方式须在 environment-independence.md 定论后才能开工。
