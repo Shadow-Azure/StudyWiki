@@ -726,29 +726,51 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 .plugin-list { display: flex; flex-direction: column; }
 
 .plugin-row {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 9px 2px;
   border-top: 1px solid var(--hairline-soft);
   font-size: 13px;
 }
 
 .plugin-row-broken .plugin-problem {
-  grid-column: 1 / -1;
-  grid-row: 2;
+  flex: 1 1 100%;
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: left;
 }
 
-.plugin-name { min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-name { flex: 1 1 auto; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-version { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .plugin-version:empty { display: none; }
-.plugin-problem { color: var(--cinnabar); font-size: 12px; }
-.plugin-restart-hint { color: var(--ink-2); font-size: 12.5px; margin: 12px 0 0; }
+.plugin-problem { flex: 1 1 100%; color: var(--cinnabar); font-size: 12px; }
+.plugin-runtime { color: var(--ink-2); font-size: 12px; }
+.plugin-note { color: var(--ink-2); font-size: 12.5px; margin: 12px 0 0; }
 .plugin-error { color: var(--cinnabar); font-size: 12.5px; margin: 10px 0 0; }
+
+.plugin-versions {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-m);
+}
+
+.plugin-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ============ 启动错误面板（boot-error.ts）：白屏的最小可见出口 ============ */
 

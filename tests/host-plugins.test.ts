@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { PluginsService, SUPPORTED_API_VERSIONS } from "../src/host/plugins";
+import type { PluginsDeps } from "../src/host/plugins";
 
 const deps = (invoke: ReturnType<typeof vi.fn>, loadExternal?: (code: string) => Promise<Record<string, unknown>>) => ({
   invoke,
@@ -73,3 +74,87 @@ test("loadModule: inject 非 undefined 且非字符串数组即拒（undefined �
   const noInject = { ...bad, loadExternal: async () => ({ name: "demo", apply: () => {} }) };
   await expect(new PluginsService(noInject).loadModule("demo")).resolves.toMatchObject({ name: "demo" });
 });
+
+test("版本仓三方法走 invoke 且参数/返回形状正确", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const stub: PluginsDeps = {
+    invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+      calls.push([cmd, args]);
+      if (cmd === "snapshot_plugin_version") return "1690000000-abcd1234ef56";
+      if (cmd === "list_plugin_versions") {
+        return [
+          {
+            id: "1690000000-abcd1234ef56",
+            createdAt: 1690000000,
+            version: "1.0.0",
+            apiVersion: 1,
+            hash: "abcd",
+            current: true,
+          },
+        ];
+      }
+      return undefined;
+    }),
+    loadExternal: vi.fn(),
+    pickTgz: vi.fn(),
+  };
+  const svc = new PluginsService(stub);
+  await expect(svc.snapshot("demo")).resolves.toBe("1690000000-abcd1234ef56");
+  const versions = await svc.listVersions("demo");
+  expect(versions[0].current).toBe(true);
+  await svc.restoreVersion("demo", "1690000000-abcd1234ef56");
+  expect(calls.map(([c]) => c)).toEqual([
+    "snapshot_plugin_version",
+    "list_plugin_versions",
+    "restore_plugin_version",
+  ]);
+  expect(calls[2][1]).toEqual({ name: "demo", id: "1690000000-abcd1234ef56" });
+});
+
+test("update: 同窗串行读改写；失败释放队列不阻塞后续", async () => {
+  const state = { json: JSON.stringify({ plugins: [{ id: "app-shell", enabled: true, config: {} }] }) };
+  const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === "read_manifest") return state.json;
+    if (cmd === "write_manifest") state.json = args!.json as string;
+    return null;
+  });
+  const service = new PluginsService(deps(invoke));
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let secondStarted = false;
+
+  const first = service.update(async (current) => {
+    await firstGate;
+    return withId(current, "ext:first");
+  });
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("read_manifest"));
+  const second = service.update((current) => {
+    secondStarted = true;
+    return withId(current, "ext:second");
+  });
+  await Promise.resolve();
+  expect(secondStarted).toBe(false);
+
+  releaseFirst();
+  await Promise.all([first, second]);
+  expect(JSON.parse(state.json).plugins.map((row: { id: string }) => row.id)).toEqual([
+    "app-shell",
+    "ext:first",
+    "ext:second",
+  ]);
+  expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual(["read_manifest", "write_manifest", "read_manifest", "write_manifest"]);
+
+  const failing = service.update(async () => {
+    throw new Error("清单变换失败");
+  });
+  const afterFailure = service.update((current) => withId(current, "ext:after-failure"));
+  await expect(failing).rejects.toThrow("清单变换失败");
+  await afterFailure;
+  expect(JSON.parse(state.json).plugins.at(-1).id).toBe("ext:after-failure");
+});
+
+function withId(manifest: { plugins: Array<{ id: string }> }, id: string) {
+  return { plugins: [...manifest.plugins, { id, enabled: true, config: {} }] };
+}

@@ -39,7 +39,7 @@ The generated `src/index.ts` is a runnable topbar hello example (the `name`/`inj
 
 ## Trial install in the host
 
-Start the host with `pnpm tauri dev` → plugin panel → “本地导入…” (import local) → pick the tgz produced by `npm pack` → **restart to take effect**. No hot reload (Phase 2 ruling): manifest consistency, failure rollback, and multi-window sync are simplest-correct as "seen at next boot"; broken rows are named in the panel for cleanup and don't affect other plugins.
+Start the host with `pnpm tauri dev` → plugin panel → “本地导入…” (import local) → pick the tgz produced by `npm pack` → it takes effect in this window immediately (directory and manifest land together; other windows follow at their next start). **Produce the tgz with `npm pack` only**: system `tar` on macOS writes extended attributes as `._*` entries, which the host rejects. The full hot-path behaviour contract lives in [dynamic.en.md](dynamic.en.md); broken rows are named in the panel for cleanup and don't affect other plugins.
 
 ## Publish
 
