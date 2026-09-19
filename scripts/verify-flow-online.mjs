@@ -36,11 +36,17 @@ export function checkMilestoneRemote(file, local, remote) {
   return errors;
 }
 
-/** PR 关联校验：必须挂 milestone 与 project。 */
+/**
+ * PR 关联校验：必须挂 milestone 与 project。
+ * `gh pr view --json projectItems` 给数组，GraphQL 给 `{nodes}`——两种形状都认，
+ * 否则真挂了 project 的 PR 也会被判成未关联。
+ */
 export function checkPrRemote(pr) {
   const errors = [];
   if (!pr.milestone) errors.push("PR 未关联 milestone（GitHub 侧栏设置）");
-  if (!pr.projectItems?.nodes?.length) errors.push("PR 未关联 project（GitHub 侧栏设置）");
+  const items = pr.projectItems;
+  const count = Array.isArray(items) ? items.length : (items?.nodes?.length ?? 0);
+  if (count === 0) errors.push("PR 未关联 project（GitHub 侧栏设置）");
   return errors;
 }
 

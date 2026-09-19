@@ -39,9 +39,11 @@ describe("milestone 远端一致性", () => {
 });
 
 describe("PR 关联", () => {
-  it("必须挂 milestone 与 project", () => {
+  it("必须挂 milestone 与 project（gh 的数组形状与 GraphQL 的 nodes 形状都认）", () => {
+    expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: [{}] })).toEqual([]);
     expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: { nodes: [{}] } })).toEqual([]);
-    expect(checkPrRemote({ milestone: null, projectItems: { nodes: [{}] } }).join()).toContain("milestone");
+    expect(checkPrRemote({ milestone: null, projectItems: [{}] }).join()).toContain("milestone");
+    expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: [] }).join()).toContain("project");
     expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: { nodes: [] } }).join()).toContain("project");
   });
 });
