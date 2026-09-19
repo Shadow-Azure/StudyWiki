@@ -827,8 +827,9 @@ mod tests {
 
         let warning = history_cleanup_warning(&dir, "demo")
             .expect("history cleanup failure should produce a warning");
+        let residue = std::path::Path::new(".history").join("demo");
         assert!(
-            warning.contains(".history/demo"),
+            warning.contains(residue.to_string_lossy().as_ref()),
             "warning names the residue"
         );
 
