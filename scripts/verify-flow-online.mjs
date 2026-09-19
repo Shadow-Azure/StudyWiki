@@ -40,13 +40,19 @@ export function checkMilestoneRemote(file, local, remote) {
  * PR 关联校验：必须挂 milestone 与 project。
  * `gh pr view --json projectItems` 给数组，GraphQL 给 `{nodes}`——两种形状都认，
  * 否则真挂了 project 的 PR 也会被判成未关联。
+ * project 项只有在 token 能读 Projects v2 时才可信（app token 恒见空列表），
+ * 调用方用 projectCheck 显式开关；关掉时该项交本地 `pnpm verify:flow-online`。
+ * @param {object} pr `gh pr view --json milestone,projectItems` 的结果
+ * @param {{projectCheck?: boolean}} [options]
  */
-export function checkPrRemote(pr) {
+export function checkPrRemote(pr, { projectCheck = true } = {}) {
   const errors = [];
   if (!pr.milestone) errors.push("PR 未关联 milestone（GitHub 侧栏设置）");
-  const items = pr.projectItems;
-  const count = Array.isArray(items) ? items.length : (items?.nodes?.length ?? 0);
-  if (count === 0) errors.push("PR 未关联 project（GitHub 侧栏设置）");
+  if (projectCheck) {
+    const items = pr.projectItems;
+    const count = Array.isArray(items) ? items.length : (items?.nodes?.length ?? 0);
+    if (count === 0) errors.push("PR 未关联 project（GitHub 侧栏设置）");
+  }
   return errors;
 }
 
@@ -92,7 +98,10 @@ async function main() {
   const prNumber = process.env.PR_NUMBER;
   if (prNumber) {
     const pr = gh(["pr", "view", prNumber, "--repo", repo, "--json", "milestone,projectItems"]);
-    all.push(...checkPrRemote(pr));
+    const projectCheck = process.env.FLOW_PROJECT_CHECK === "1";
+    if (!projectCheck)
+      console.log("verify-flow-online: 未配 FLOW_TOKEN，project 关联降级为提醒（本地跑本命令用 PAT 强校验）");
+    all.push(...checkPrRemote(pr, { projectCheck }));
   }
   if (all.length > 0) {
     console.error(`verify-flow-online: FAIL\n  ${all.join("\n  ")}`);

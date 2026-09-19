@@ -55,7 +55,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 流程树与 GitHub 一致性
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # FLOW_TOKEN（可选 PAT，含 project scope）用于读用户级 Projects v2；
+          # 未配置时 project 关联降级为提醒，本地 verify-flow-online 强校验。
+          GH_TOKEN: ${{ secrets.FLOW_TOKEN || secrets.GITHUB_TOKEN }}
+          FLOW_PROJECT_CHECK: ${{ secrets.FLOW_TOKEN && '1' || '' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/verify-flow-online.mjs
 

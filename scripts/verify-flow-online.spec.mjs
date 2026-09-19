@@ -46,4 +46,11 @@ describe("PR 关联", () => {
     expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: [] }).join()).toContain("project");
     expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: { nodes: [] } }).join()).toContain("project");
   });
+
+  it("token 读不到 Projects v2 时（projectCheck 关）只查 milestone", () => {
+    expect(checkPrRemote({ milestone: { title: "M1" }, projectItems: [] }, { projectCheck: false })).toEqual([]);
+    expect(
+      checkPrRemote({ milestone: null, projectItems: [] }, { projectCheck: false }).join(),
+    ).toContain("milestone");
+  });
 });

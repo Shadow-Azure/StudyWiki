@@ -46,12 +46,14 @@ roadmap fence fields: `kind: roadmap`, `milestones` (ordered id list). milestone
 |---|---|---|
 | `pnpm verify:flow` | local + CI static lane | every offline rule on this page |
 | `verify-flow --diff <base>` | CI on PR | `(#N)` references in commit and PR titles, referenced issues in ready/in-progress, diff files covered by the referenced issues' scope union |
-| `verify-flow-online` | CI online lane | two-sided consistency with GitHub: issue exists, milestone membership, state mapping, PR linked to a project and a milestone |
+| `verify-flow-online` | CI online lane | two-sided consistency with GitHub: issue exists, milestone membership, state mapping, PR linked to a milestone and a project (see below) |
 | commit-msg hook | local (`pnpm install:hooks`) | commit title carries `(#N)` (reminder-level; exhaustive coverage belongs to CI) |
 
 ## GitHub sync
 
 `pnpm flow:sync` is the only entry point that writes the flow tree to GitHub (creates milestones / issues, backfills number/url, re-records pairing records); the CI online lane verifies without modifying. Requires a logged-in local gh.
+
+Issues / milestones / state mapping check out with `GITHUB_TOKEN`; **a PR's project link** needs user-level Projects v2, where an app token only ever sees an empty list: with `FLOW_TOKEN` (a PAT carrying `project`) CI enforces it, otherwise it drops to a reminder and the local `pnpm verify:flow-online` enforces it.
 
 ## Tooling
 
