@@ -7,7 +7,6 @@ kind: issue
 milestone: m0
 priority: P0
 status: in-progress
-bootstrap: true
 scope:
   - scripts/**
   - .agents/flow/**
@@ -21,8 +20,8 @@ scope:
 adr:
   - ../../notes/implemented/process/2026-09-19-dev-flow-gates.md
 github:
-  number: null
-  url: null
+  number: 24
+  url: https://github.com/Shadow-Azure/StudyWiki/issues/24
 ```
 
 ## 背景
@@ -40,4 +39,4 @@ github:
 
 - `pnpm verify:flow` 绿；`pnpm verify:docs`、`pnpm test` 绿。
 - 流程树包含 roadmap、m0–m4 milestone 与本 issue；原型诉求拆进 m1–m4。
-- 本 issue 是 bootstrap 豁免的唯一持有者，编号回填后移除标记。
+- 编号已回填（#24），bootstrap 标记随之移除；PR 标题带 `(#24)` 引用。

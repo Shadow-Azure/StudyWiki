@@ -8,8 +8,8 @@ id: m0
 title: 流程基建
 status: active
 github:
-  number: null
-  url: null
+  number: 1
+  url: https://github.com/Shadow-Azure/StudyWiki/milestone/1
 ```
 
 ## Goal

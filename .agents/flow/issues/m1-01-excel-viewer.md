@@ -18,8 +18,8 @@ scope:
   - scripts/dep-allowlist.json
 adr: []
 github:
-  number: null
-  url: null
+  number: 25
+  url: https://github.com/Shadow-Azure/StudyWiki/issues/25
 ```
 
 ## 背景

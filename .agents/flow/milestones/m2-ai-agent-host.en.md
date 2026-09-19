@@ -8,8 +8,8 @@ id: m2
 title: AI agent 宿主
 status: planned
 github:
-  number: null
-  url: null
+  number: 3
+  url: https://github.com/Shadow-Azure/StudyWiki/milestone/3
 ```
 
 ## Goal

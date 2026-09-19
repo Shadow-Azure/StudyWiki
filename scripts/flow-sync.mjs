@@ -6,6 +6,7 @@
 // （verify-flow-online）只校验，写操作全部走这里。
 
 import { readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { blobHash, pairPaths, renderPairRecord } from "./translation-pairing-lib.mjs";
 import { loadFlowTree } from "./flow-lib.mjs";
@@ -57,6 +58,33 @@ function titleOf(content) {
   return m[1].trim();
 }
 
+/**
+ * 执行同步计划：milestone 先行、issue 随后。milestone 的编号必须回填到内存树
+ * 上——issue 归属校验读的是内存字段，只写文件的话首次同步一轮跑不完。
+ * @param {{milestones: Array, issues: Array}} tree 流程树
+ * @param {{createMilestone: Function, createIssue: Function, backfill: Function}} io 远端与文件副作用
+ * @returns {Promise<{milestones: number, issues: number}>} 新建数量
+ */
+export async function runSync(tree, io) {
+  const plan = planSync(tree);
+  for (const milestone of plan.milestones) {
+    const { number, url } = await io.createMilestone(milestone);
+    await io.backfill(milestone.file, number, url);
+    milestone.data.github = { number, url };
+    console.log(`flow:sync: milestone ${milestone.data.id} → #${number}`);
+  }
+  for (const issue of plan.issues) {
+    const milestone = tree.milestones.find((m) => m.data.id === issue.data.milestone);
+    if (!Number.isInteger(milestone?.data.github?.number))
+      throw new Error(`${issue.file}: 所属 milestone ${issue.data.milestone} 尚未同步——重跑本命令`);
+    const { number, url } = await io.createIssue(issue, milestone);
+    await io.backfill(issue.file, number, url);
+    issue.data.github = { number, url };
+    console.log(`flow:sync: issue ${issue.name} → #${number}`);
+  }
+  return { milestones: plan.milestones.length, issues: plan.issues.length };
+}
+
 async function main() {
   const repoUrl = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim();
   const repo = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(repoUrl)?.[1];
@@ -66,32 +94,28 @@ async function main() {
     console.error(`flow:sync: 流程树有错误，先修到 verify:flow 绿\n  ${errors.join("\n  ")}`);
     process.exit(1);
   }
-  const plan = planSync(tree);
-  if (plan.milestones.length === 0 && plan.issues.length === 0) {
+  const created = await runSync(tree, {
+    createMilestone(milestone) {
+      const out = gh(["api", `repos/${repo}/milestones`, "-f", `title=${milestone.data.title}`, "-f", "state=open"]);
+      const { number } = JSON.parse(out);
+      return { number, url: `https://github.com/${repo}/milestone/${number}` };
+    },
+    createIssue(issue, milestone) {
+      const url = gh([
+        "issue", "create", "--repo", repo,
+        "--title", titleOf(readFileSync(issue.file, "utf8")),
+        "--milestone", milestone.data.title,
+        "--body", `流程树条目：${issue.file}（详见仓库 .agents/flow/）`,
+      ]);
+      const number = Number.parseInt(url.match(/\/issues\/(\d+)/)?.[1] ?? "", 10);
+      if (!Number.isInteger(number)) throw new Error(`无法从 gh 输出解析 issue 编号：${url}`);
+      return { number, url };
+    },
+    backfill,
+  });
+  if (created.milestones + created.issues === 0) {
     console.log("flow:sync: 没有待同步项");
     return;
-  }
-  for (const m of plan.milestones) {
-    const out = gh(["api", `repos/${repo}/milestones`, "-f", `title=${m.data.title}`, "-f", "state=open"]);
-    const { number } = JSON.parse(out);
-    const url = `https://github.com/${repo}/milestone/${number}`;
-    await backfill(m.file, number, url);
-    console.log(`flow:sync: milestone ${m.data.id} → #${number}`);
-  }
-  for (const issue of plan.issues) {
-    const milestone = tree.milestones.find((m) => m.data.id === issue.data.milestone);
-    if (milestone?.data.github?.number === null)
-      throw new Error(`${issue.file}: 所属 milestone ${issue.data.milestone} 尚未同步——重跑本命令`);
-    const title = titleOf(await readFile(issue.file, "utf8"));
-    const body = `流程树条目：${issue.file}（详见仓库 .agents/flow/）`;
-    const url = gh([
-      "issue", "create", "--repo", repo, "--title", title,
-      "--milestone", milestone?.data.title ?? "", "--body", body,
-    ]);
-    const number = Number.parseInt(url.match(/\/issues\/(\d+)/)?.[1] ?? "", 10);
-    if (!Number.isInteger(number)) throw new Error(`无法从 gh 输出解析 issue 编号：${url}`);
-    await backfill(issue.file, number, url);
-    console.log(`flow:sync: issue ${issue.name} → #${number}`);
   }
   console.log("flow:sync: 完成");
 }

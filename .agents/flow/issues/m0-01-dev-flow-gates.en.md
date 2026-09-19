@@ -7,7 +7,6 @@ kind: issue
 milestone: m0
 priority: P0
 status: in-progress
-bootstrap: true
 scope:
   - scripts/**
   - .agents/flow/**
@@ -21,8 +20,8 @@ scope:
 adr:
   - ../../notes/implemented/process/2026-09-19-dev-flow-gates.md
 github:
-  number: null
-  url: null
+  number: 24
+  url: https://github.com/Shadow-Azure/StudyWiki/issues/24
 ```
 
 ## Background
@@ -40,4 +39,4 @@ Ad-hoc development has no flow constraints, and requirements scattered across co
 
 - `pnpm verify:flow` is green; `pnpm verify:docs` and `pnpm test` are green.
 - The flow tree contains the roadmap, milestones m0–m4, and this issue; the prototype requirements are decomposed into m1–m4.
-- This issue is the sole holder of the bootstrap exemption; the flag is removed once the number is backfilled.
+- The number is backfilled (#24) and the bootstrap flag is gone with it; the PR title carries a `(#24)` reference.

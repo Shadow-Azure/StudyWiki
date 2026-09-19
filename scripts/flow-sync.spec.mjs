@@ -1,8 +1,8 @@
-// 门禁自测试：flow-sync 的纯函数——同步计划（只挑 number 为 null 的）与
-// 围栏回填（两侧同一字符串变换；已回填的拒绝重复回填）。
+// 门禁自测试：flow-sync 的纯函数——同步计划（只挑 number 为 null 的）、
+// 围栏回填（两侧同一字符串变换；已回填的拒绝重复回填）与一轮跑完的同步编排。
 
 import { describe, expect, it } from "vitest";
-import { applyGithubRef, planSync } from "./flow-sync.mjs";
+import { applyGithubRef, planSync, runSync } from "./flow-sync.mjs";
 
 const DOC = `# T
 
@@ -44,5 +44,57 @@ describe("applyGithubRef", () => {
   it("已回填的拒绝重复回填", () => {
     const done = applyGithubRef(DOC, 12, "https://github.com/o/r/issues/12");
     expect(() => applyGithubRef(done, 13, "x")).toThrow("回填失败");
+  });
+});
+
+describe("runSync", () => {
+  const fresh = () => ({
+    milestones: [
+      { file: "m0.md", data: { id: "m0", title: "M0", github: { number: null, url: null } } },
+      { file: "m1.md", data: { id: "m1", title: "M1", github: { number: 9, url: "u9" } } },
+    ],
+    issues: [
+      { file: "a.md", name: "a", data: { milestone: "m0", github: { number: null, url: null } } },
+      { file: "b.md", name: "b", data: { milestone: "m1", github: { number: 3, url: "u3" } } },
+    ],
+  });
+
+  const io = (tree) => {
+    const calls = { milestones: [], issues: [], backfilled: [] };
+    let next = 10;
+    return {
+      calls,
+      createMilestone(m) {
+        calls.milestones.push(m.data.id);
+        return { number: 1, url: "https://github.com/o/r/milestone/1" };
+      },
+      createIssue(issue, milestone) {
+        calls.issues.push([issue.name, milestone.data.id]);
+        return { number: (next += 1), url: `https://github.com/o/r/issues/${next}` };
+      },
+      backfill(file, number) {
+        calls.backfilled.push([file, number]);
+      },
+      tree,
+    };
+  };
+
+  it("milestone 编号写回内存，一轮即可新建 issue（首次同步不会被 null 卡住）", async () => {
+    const tree = fresh();
+    const fake = io(tree);
+    const created = await runSync(tree, fake);
+    expect(created).toEqual({ milestones: 1, issues: 1 });
+    expect(fake.calls.issues).toEqual([["a", "m0"]]);
+    expect(fake.calls.backfilled).toEqual([
+      ["m0.md", 1],
+      ["a.md", 11],
+    ]);
+    expect(tree.milestones[0].data.github.number).toBe(1);
+    expect(tree.issues[0].data.github.url).toBe("https://github.com/o/r/issues/11");
+  });
+
+  it("所属 milestone 不在树上时拒绝开工", async () => {
+    const tree = { milestones: [], issues: [{ file: "a.md", name: "a", data: { milestone: "m0", github: { number: null, url: null } } }] };
+    await expect(runSync(tree, io(tree))).rejects.toThrow("尚未同步");
   });
 });

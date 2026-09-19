@@ -8,8 +8,8 @@ id: m1
 title: 原型壳补全
 status: planned
 github:
-  number: null
-  url: null
+  number: 2
+  url: https://github.com/Shadow-Azure/StudyWiki/milestone/2
 ```
 
 ## Goal
