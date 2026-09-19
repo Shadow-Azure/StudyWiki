@@ -146,7 +146,7 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
             // 停用行是空操作——不补启用就会出现插件在跑而清单仍说停用（投影按 !enabled
             // 先判 stopped，下次启动又不装，面板与清单长期打架）。
             const row = `ext:${installed}`;
-            await ctx.plugins.writeManifest(withEnabled(withRow(manifest, row), row, true));
+            await ctx.plugins.update((current) => withEnabled(withRow(current, row), row, true));
             const mod = await ctx.plugins.loadModule(installed);
             await reloadExternal(ctx, installed, mod, {}, activateDeps(ctx));
             clearError();
@@ -161,7 +161,7 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
             if (imported !== null) {
               // 同安装路径：导入也是"要有这个插件"的显式意图，停用的同名行一并启用。
               const row = `ext:${imported}`;
-              await ctx.plugins.writeManifest(withEnabled(withRow(manifest, row), row, true));
+              await ctx.plugins.update((current) => withEnabled(withRow(current, row), row, true));
               const mod = await ctx.plugins.loadModule(imported);
               await reloadExternal(ctx, imported, mod, {}, activateDeps(ctx));
               clearError();
@@ -220,7 +220,7 @@ function rowEl(
           await deactivateExternal(row.externalName);
         }
       }
-      await ctx.plugins.writeManifest(withEnabled(manifest, row.id, toggle.checked));
+      await ctx.plugins.update((current) => withEnabled(current, row.id, toggle.checked));
       clearError();
     } catch (e) {
       showError(e);
@@ -274,6 +274,7 @@ function rowEl(
             box.remove();
             return;
           }
+          clearError();
           try {
             const versions = await ctx.plugins.listVersions(name);
             const list = document.createElement("div");
@@ -319,7 +320,7 @@ function rowEl(
           if (await ctx.windows.confirmDialog(`移除 ${name}？将删除插件目录，并尽力清理版本历史。`)) {
             await deactivateExternal(name);
             await ctx.plugins.remove(name);
-            await ctx.plugins.writeManifest(withoutRow(manifest, row.id));
+            await ctx.plugins.update((current) => withoutRow(current, row.id));
             clearError();
           }
         } catch (e) {

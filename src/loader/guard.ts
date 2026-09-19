@@ -1,8 +1,11 @@
 import { Context } from "cordis";
 import type { PluginModule } from "./types";
 
+const jsProtocolProperties = new Set(["then", "toJSON", "toString", "valueOf"]);
+
 /** 外置插件 guard 门面（只包外置；内置一等公民静态表直装）。
- * 白名单：inject 声明过的服务名；其余属性读即抛教学错误，赋值即抛只读错误，
+ * 白名单：inject 声明过的服务名；未声明的 JS 协议属性按缺席返回 undefined，
+ * 其余属性读即抛教学错误，赋值/删除/定义均抛只读错误，
  * 服务返回值里的 cordis Context 一律拒绝（防经返回值摸到别的上下文）。
  * 边界诚实化：本门面收窄的是服务面，不是语言能力——外置插件仍可触达
  * DOM/fetch/全局对象，这不是沙箱（同进程真沙箱在停机坪，见 Phase 4 Note）。
@@ -24,8 +27,9 @@ function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
   const wrapped = new Map<string, unknown>();
   return new Proxy(Object.create(null), {
     get(_target, prop) {
-      // symbol 探测（then / Symbol.toPrimitive 等）一律缺席，防 thenable 副作用。
+      // symbol 探测与未声明 JS 协议属性一律缺席；已声明同名服务优先放行。
       if (typeof prop !== "string") return undefined;
+      if (!declared.has(prop) && jsProtocolProperties.has(prop)) return undefined;
       if (!declared.has(prop)) {
         throw new Error(
           `外置插件 ${name} 访问了未声明的服务 "${prop}"——在模块的 inject 数组里声明 "${prop}" 后重新加载。已声明：${[...declared].join(", ") || "（无）"}`,
@@ -38,6 +42,18 @@ function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
     },
     set(_target, prop) {
       throw new Error(`外置插件 ${name} 的 ctx 只读：不可赋值 "${String(prop)}"`);
+    },
+    setPrototypeOf() {
+      throw new Error(`外置插件 ${name} 的 ctx 只读：不可修改原型`);
+    },
+    deleteProperty(_target, prop) {
+      throw new Error(`外置插件 ${name} 的 ctx 只读：不可删除属性 "${String(prop)}"`);
+    },
+    defineProperty(_target, prop) {
+      throw new Error(`外置插件 ${name} 的 ctx 只读：不可定义属性 "${String(prop)}"`);
+    },
+    preventExtensions() {
+      throw new Error(`外置插件 ${name} 的 ctx 只读：不可改变扩展形态`);
     },
     has(_target, prop) {
       return typeof prop === "string" && declared.has(prop);
@@ -58,6 +74,27 @@ function guardService(name: string, serviceName: string, service: unknown): unkn
         if (result instanceof Promise) return result.then((r) => denyContext(name, serviceName, r));
         return denyContext(name, serviceName, result);
       };
+    },
+    set(_target, prop) {
+      throw new Error(
+        `外置插件 ${name} 的服务 "${serviceName}" 只读：不可赋值属性 "${String(prop)}"`,
+      );
+    },
+    setPrototypeOf() {
+      throw new Error(`外置插件 ${name} 的服务 "${serviceName}" 只读：不可修改原型`);
+    },
+    deleteProperty(_target, prop) {
+      throw new Error(
+        `外置插件 ${name} 的服务 "${serviceName}" 只读：不可删除属性 "${String(prop)}"`,
+      );
+    },
+    defineProperty(_target, prop) {
+      throw new Error(
+        `外置插件 ${name} 的服务 "${serviceName}" 只读：不可定义属性 "${String(prop)}"`,
+      );
+    },
+    preventExtensions() {
+      throw new Error(`外置插件 ${name} 的服务 "${serviceName}" 只读：不可改变扩展形态`);
     },
   });
 }

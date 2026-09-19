@@ -73,6 +73,7 @@ export const defaultPluginsDeps: PluginsDeps = {
  * 的唯一入口；plugin-manager 是其唯一消费者（Phase 2 内）。 */
 export class PluginsService {
   readonly #deps: PluginsDeps;
+  #manifestUpdates: Promise<unknown> = Promise.resolve();
   /** boot 报告的外置坏行；bootstrap 在 boot 后回填，面板读它点名待清理。 */
   bootBroken: BrokenRow[] = [];
 
@@ -127,6 +128,19 @@ export class PluginsService {
     await this.#deps.invoke("write_manifest", {
       json: JSON.stringify(manifest, null, 2),
     });
+  }
+
+  /** 同窗串行执行清单读-改-写闭环：每次读取最新清单，等待变换完成后再写回；
+   * 任一环节失败释放队列且错误原样上抛，不阻塞后续 update。调用方应把安装、
+   * 激活、删除等慢操作留在 update 外，只在变换中做纯清单修改。 */
+  async update(fn: (manifest: Manifest) => Manifest | Promise<Manifest>): Promise<void> {
+    const operation = this.#manifestUpdates.then(async () => {
+      const raw = await this.readManifest();
+      const current = JSON.parse(raw ?? '{"plugins":[]}') as Manifest;
+      await this.writeManifest(await fn(current));
+    });
+    this.#manifestUpdates = operation.catch(() => {});
+    return operation;
   }
 
   /** 经装载通道取外置模块：apiVersion 支持集判定 + 形状校验，不符即拒

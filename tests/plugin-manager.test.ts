@@ -84,6 +84,7 @@ interface FakePlugins {
     list: ReturnType<typeof vi.fn>;
     bootBroken: Array<{ id: string; reason: string }>;
     writeManifest: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
     remove: ReturnType<typeof vi.fn>;
     install: ReturnType<typeof vi.fn>;
     importFromTgz: ReturnType<typeof vi.fn>;
@@ -99,18 +100,26 @@ interface FakePlugins {
 function fakePlugins(rows: Array<[string, boolean]> = [["app-shell", true], ["ext:demo", true]]): FakePlugins {
   const state = { rows };
   const written: string[] = [];
+  const readManifest = vi.fn(async () => JSON.stringify(manifest(state.rows)));
+  const writeManifest = vi.fn(async (m: Manifest) => {
+    written.push(JSON.stringify(m));
+    state.rows = m.plugins.map((r) => [r.id, r.enabled]);
+  });
   return {
     written,
     state,
     plugins: {
-      readManifest: vi.fn(async () => JSON.stringify(manifest(state.rows))),
+      readManifest,
       list: vi.fn(async () => [
         { name: "demo", version: "1.0.0", apiVersion: 1, entry: "index.js", problem: null },
       ]),
       bootBroken: [],
-      writeManifest: vi.fn(async (m: Manifest) => {
-        written.push(JSON.stringify(m));
-        state.rows = m.plugins.map((r) => [r.id, r.enabled]);
+      writeManifest,
+      update: vi.fn(async (fn: (manifest: Manifest) => Manifest | Promise<Manifest>) => {
+        const raw = await readManifest();
+        const current = JSON.parse(raw ?? '{"plugins":[]}') as Manifest;
+        const next = await fn(current);
+        await writeManifest(next);
       }),
       remove: vi.fn(async () => {}),
       install: vi.fn(async () => "demo"),
@@ -252,6 +261,29 @@ test("面板: 覆盖安装已在跑的插件同样走 reloadExternal（不留孤
   expect(activateExternal).not.toHaveBeenCalled();
   // withRow 幂等：覆盖安装不产生重复清单行
   expect(JSON.parse(f.written.at(-1)!).plugins.map((r: { id: string }) => r.id)).toEqual(["app-shell", "ext:demo"]);
+});
+
+test("面板: 安装完成后的清单写入不回滚并发 update（旧面板快照不是准源）", async () => {
+  const f = fakePlugins([["app-shell", true], ["ext:demo", false]]);
+  let resolveInstall!: (name: string) => void;
+  const installGate = new Promise<string>((resolve) => {
+    resolveInstall = resolve;
+  });
+  f.plugins.install = vi.fn(() => installGate);
+  await openPanel(f);
+  document.querySelector<HTMLInputElement>(".plugin-panel-head input")!.value = "demo";
+  clickButton("安装");
+  await vi.waitFor(() => expect(f.plugins.install).toHaveBeenCalled());
+
+  const concurrent = f.plugins.update((current) => withEnabled(current, "app-shell", false));
+  await concurrent;
+  resolveInstall("demo");
+  await tick();
+
+  const last = JSON.parse(f.written.at(-1)!);
+  expect(last.plugins.map((row: { id: string }) => row.id)).toEqual(["app-shell", "ext:demo"]);
+  expect(last.plugins[0].enabled).toBe(false);
+  expect(last.plugins[1].enabled).toBe(true);
 });
 
 test("面板: 安装到已停用的同名行会同时启用该行（R19）", async () => {
@@ -410,6 +442,35 @@ test("面板: 历史列表读取失败内联显示，不静默", async () => {
   clickInRow(1, "历史");
   await tick();
   expect(document.querySelector<HTMLElement>(".plugin-error")!.textContent).toContain("list_plugin_versions 失败");
+});
+
+test("面板: 历史先失败再成功时清除旧错误并展示列表", async () => {
+  const f = fakePlugins();
+  const versions: PluginVersion[] = [
+    { id: "1700000000-abcdef123456", createdAt: 1700000000, version: "1.1.0", apiVersion: 1, hash: "abcdef123456", current: true },
+  ];
+  let failed = false;
+  f.plugins.listVersions = vi.fn(async () => {
+    if (!failed) {
+      failed = true;
+      throw new Error("list_plugin_versions 失败：目录不存在");
+    }
+    return versions;
+  });
+  await openPanel(f);
+  clickInRow(1, "历史");
+  await tick();
+  const err = document.querySelector<HTMLElement>(".plugin-error")!;
+  expect(err.hidden).toBe(false);
+  expect(err.textContent).toContain("list_plugin_versions 失败");
+  expect(document.querySelector(".plugin-versions")).toBeNull();
+
+  clickInRow(1, "历史");
+  await tick();
+  expect(err.hidden).toBe(true);
+  expect(err.textContent).toBe("");
+  expect(document.querySelectorAll<HTMLElement>(".plugin-version-row")).toHaveLength(1);
+  expect(document.querySelector<HTMLElement>(".plugin-version-row")!.textContent).toContain("1.1.0");
 });
 
 test("面板: 安装失败内联显示错误（fail-loud 不静默）", async () => {

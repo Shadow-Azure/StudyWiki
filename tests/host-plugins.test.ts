@@ -110,3 +110,51 @@ test("版本仓三方法走 invoke 且参数/返回形状正确", async () => {
   ]);
   expect(calls[2][1]).toEqual({ name: "demo", id: "1690000000-abcd1234ef56" });
 });
+
+test("update: 同窗串行读改写；失败释放队列不阻塞后续", async () => {
+  const state = { json: JSON.stringify({ plugins: [{ id: "app-shell", enabled: true, config: {} }] }) };
+  const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === "read_manifest") return state.json;
+    if (cmd === "write_manifest") state.json = args!.json as string;
+    return null;
+  });
+  const service = new PluginsService(deps(invoke));
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let secondStarted = false;
+
+  const first = service.update(async (current) => {
+    await firstGate;
+    return withId(current, "ext:first");
+  });
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("read_manifest"));
+  const second = service.update((current) => {
+    secondStarted = true;
+    return withId(current, "ext:second");
+  });
+  await Promise.resolve();
+  expect(secondStarted).toBe(false);
+
+  releaseFirst();
+  await Promise.all([first, second]);
+  expect(JSON.parse(state.json).plugins.map((row: { id: string }) => row.id)).toEqual([
+    "app-shell",
+    "ext:first",
+    "ext:second",
+  ]);
+  expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual(["read_manifest", "write_manifest", "read_manifest", "write_manifest"]);
+
+  const failing = service.update(async () => {
+    throw new Error("清单变换失败");
+  });
+  const afterFailure = service.update((current) => withId(current, "ext:after-failure"));
+  await expect(failing).rejects.toThrow("清单变换失败");
+  await afterFailure;
+  expect(JSON.parse(state.json).plugins.at(-1).id).toBe("ext:after-failure");
+});
+
+function withId(manifest: { plugins: Array<{ id: string }> }, id: string) {
+  return { plugins: [...manifest.plugins, { id, enabled: true, config: {} }] };
+}

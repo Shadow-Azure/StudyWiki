@@ -22,7 +22,7 @@ export function apply(ctx) {
 
 ## inject 即权限声明
 
-apply 拿到的 ctx 是 guard 门面：只能读 inject 声明过的宿主服务（`files` / `windows` / `workspace` / `slots` / `plugins`），读未声明的服务当场抛错并点名补声明；ctx 只读，赋值也抛错；服务方法直接返回的 cordis Context（含 promise 解出的返回值）会被拒绝。声明了但宿主没提供的服务：插件停在等待态，激活审计 2 秒后判失败，面板点名"声明的服务未提供"。
+apply 拿到的 ctx 是 guard 门面：只能读 inject 声明过的宿主服务（`files` / `windows` / `workspace` / `slots` / `plugins`），读普通未声明属性当场抛错并点名补声明；未声明的 JS 协议属性 `then` / `toJSON` / `toString` / `valueOf` 按缺席处理。ctx 与宿主服务对象的顶层形状只读：赋值、删除与 `defineProperty` 都抛错；服务方法直接返回的 cordis Context（含 promise 解出的返回值）会被拒绝。声明了但宿主没提供的服务：插件停在等待态，激活审计 2 秒后判失败，面板点名"声明的服务未提供"。
 
 ## 边界（诚实声明）
 

@@ -22,7 +22,7 @@ export function apply(ctx) {
 
 ## inject is a permission declaration
 
-The ctx handed to apply is the guard facade: you can read only the host services your inject declares (`files` / `windows` / `workspace` / `slots` / `plugins`); reading one you did not declare throws on the spot and names the declaration to add. The ctx is read-only — assigning throws too — and a cordis Context returned directly from a service method (including as a resolved promise value) is rejected. A service you declared but the host never provides leaves the plugin parked: the activation audit fails after 2 seconds and the panel row says "the declared service is not provided".
+The ctx handed to apply is the guard facade: you can read only the host services your inject declares (`files` / `windows` / `workspace` / `slots` / `plugins`); reading any other undeclared property throws on the spot and names the declaration to add, while undeclared JavaScript protocol properties `then` / `toJSON` / `toString` / `valueOf` are absent. The top-level shapes of ctx and every host service object are read-only — assignment, deletion and `defineProperty` all throw — and a cordis Context returned directly from a service method (including as a resolved promise value) is rejected. A service you declared but the host never provides leaves the plugin parked: the activation audit fails after 2 seconds and the panel row says "the declared service is not provided".
 
 ## Boundaries (honest statement)
 

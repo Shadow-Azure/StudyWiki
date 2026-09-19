@@ -6,7 +6,7 @@ English | [中文](dynamic.md)
 
 ## Behaviour contract
 
-Every action in the plugin panel (topbar "插件") takes effect immediately in this window and no longer asks for a restart: install and import (registry or local tgz → on disk → manifest → activate here), the enable/disable toggle, reload (click it after editing code), remove, and version rollback. Other windows do not follow — they align with the manifest naturally at their next start, and the manifest is the single source of truth for cross-window consistency.
+Plugin-panel actions (topbar "插件") take effect in this window immediately: install/import (registry or local tgz → on disk → manifest → activate), toggle, reload, remove and rollback. Manifest updates use a serial read-modify-write chain in this window, with failures releasing the chain; there is no cross-window lock, concurrent writes are last-writer-wins, and the next start aligns with the final manifest. Other windows do not follow immediately; the manifest is the cross-window source of truth.
 
 ## Reload
 
@@ -14,7 +14,7 @@ Reload validates before it switches: the new code must pass the load checks (sha
 
 ## Version store
 
-Successful activation leaves a snapshot generation (`plugins/.history/<name>/`, deduplicated by content hash, 10 generations per plugin). The panel's "历史" (history) expands the version list and "回退" (roll back) atomically writes the chosen generation back to the live directory — an enabled row hot-reloads it right away, a disabled row only lands it on disk to take effect at the next activation. The "（当前）" marker in that list is a disk fact (Rust compares the live directory's content hash), not a runtime fact: after a failed reload the old module keeps running in memory while the live directory already holds the new code, and the failed attempt also leaves a generation holding that live content — possibly code that never ran — so rolling back to it fails activation again with the reason in the panel. The store only grows and never activates anything by itself; removal deletes the live directory first and cleans history best-effort; failures are logged without blocking removal.
+Successful activation leaves a snapshot generation (`plugins/.history/<name>/`, deduplicated by content hash, 10 generations per plugin); when a failed reload restores the in-memory old module, the bad live directory is not snapshotted and no never-ran generation is added. The panel's "历史" (history) expands the version list and "回退" (roll back) atomically writes the chosen generation back to the live directory — an enabled row hot-reloads it right away, a disabled row only lands it on disk for the next activation. "（当前）" is a disk fact, not a runtime fact; a bad live directory may have no matching generation, every list row may lack the marker, and memory still runs the old module. `meta.json` contains only hash, createdAt, version and apiVersion, with the entry name coming from package.json; extra fields in older metadata remain readable, while generations with missing or corrupt metadata are omitted. The store only grows and never activates; removal deletes the live directory first and cleans history best-effort, logging failures without blocking.
 
 ## Where activation failures land
 

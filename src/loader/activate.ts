@@ -131,7 +131,10 @@ export async function reloadExternal(
     } catch (e) {
       if (prev) {
         try {
-          await activateExternal(ctx, name, prev.module, prev.config, deps);
+          await activateExternal(ctx, name, prev.module, prev.config, {
+            snapshot: async () => {},
+            wait: deps.wait,
+          });
         } catch (restoreError) {
           failures.set(name, (restoreError as Error).message);
         }

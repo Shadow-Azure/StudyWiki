@@ -1,8 +1,8 @@
 import { expect, test, vi } from "vitest";
-import { Context } from "cordis";
+import { Context, FiberState } from "cordis";
 import {
   activateExternal, activationFailures, deactivateExternal, reloadExternal,
-  runningExternals, serialized,
+  runningExternals, serialized, waitActive,
 } from "../src/loader/activate";
 
 const noopDeps = { snapshot: vi.fn(async () => {}) };
@@ -28,6 +28,25 @@ test("激活成功：登记 running + 快照被调 + guard 包装生效（apply 
   await deactivateExternal("demo");
 });
 
+test("激活成功：apply 读取 JS 协议属性名不阻断激活", async () => {
+  const ctx = new Context();
+  ctx.provide("toString", () => "declared");
+  ctx.provide("toJSON", () => ({ declared: true }));
+  const seen: unknown[] = [];
+  await activateExternal(ctx, "protocol-demo", {
+    name: "ext-demo",
+    inject: ["toString", "toJSON"],
+    apply: (ctx2: any) => {
+      seen.push(ctx2.toString, ctx2.toJSON);
+      return () => {};
+    },
+  }, {}, noopDeps);
+  expect(seen).toHaveLength(2);
+  expect(seen.every((value) => value !== undefined)).toBe(true);
+  expect(runningExternals().has("protocol-demo")).toBe(true);
+  await deactivateExternal("protocol-demo");
+});
+
 test("声明服务未提供：审计超时失败，fiber 被处置，记入 activationFailures", async () => {
   const ctx = new Context();
   await expect(
@@ -40,9 +59,13 @@ test("声明服务未提供：审计超时失败，fiber 被处置，记入 acti
 test("重载失败回退旧版：新模块激活抛错，旧模块重新激活并仍在 running", async () => {
   const ctx = new Context();
   const v1 = hello();
-  await activateExternal(ctx, "demo", v1, {}, noopDeps);
+  const snapshot = vi.fn(async () => {});
+  const deps = { snapshot, wait: fastWait };
+  await activateExternal(ctx, "demo", v1, {}, deps);
+  expect(snapshot).toHaveBeenCalledTimes(1);
   const bad = { name: "ext-demo", apply: () => { throw new Error("new code boom"); } };
-  await expect(reloadExternal(ctx, "demo", bad as never, {}, { ...noopDeps, wait: fastWait })).rejects.toThrow("new code boom");
+  await expect(reloadExternal(ctx, "demo", bad as never, {}, deps)).rejects.toThrow("new code boom");
+  expect(snapshot).toHaveBeenCalledTimes(1);
   expect(runningExternals().has("demo")).toBe(true); // 旧版已恢复
   expect(activationFailures().has("demo")).toBe(false);
   await deactivateExternal("demo");
@@ -62,4 +85,18 @@ test("同一插件操作串行：两次 reload 不交错", async () => {
   ]);
   expect(order).toEqual(["apply:v1", "dispose:v1", "apply:v2", "dispose:v2", "apply:v3"]);
   await deactivateExternal("demo");
+});
+
+test("fiber 已 dispose 后 waitActive 立即拒绝并点名 DISPOSED", async () => {
+  const ctx = new Context();
+  const fiber = ctx.plugin(hello("disposed-demo") as never, {});
+  await fiber.dispose();
+  const sleep = vi.fn(() => Promise.resolve());
+
+  await expect(waitActive(fiber, "disposed", {
+    intervalMs: 0,
+    budgetMs: 50,
+    sleep,
+  })).rejects.toThrow(`state=${FiberState.DISPOSED}`);
+  expect(sleep).not.toHaveBeenCalled();
 });

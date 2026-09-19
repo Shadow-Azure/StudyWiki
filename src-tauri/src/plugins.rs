@@ -368,7 +368,7 @@ pub fn place_plugin(dir: &Path, extracted: &ExtractedPlugin) -> Result<(), Strin
 /// 版本仓单代上限：超出裁最旧（单文件插件体积极小，10 代覆盖调试内环足够）。
 const MAX_GENERATIONS: usize = 10;
 
-/// 版本仓一代的 meta.json（创建时间/来源版本/apiVersion/入口名/内容指纹）。
+/// 版本仓一代的 meta.json（创建时间/来源版本/apiVersion/内容指纹）。
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionMeta {
@@ -376,7 +376,6 @@ pub struct VersionMeta {
     pub created_at: i64,
     pub version: Option<String>,
     pub api_version: i64,
-    pub entry: String,
 }
 
 /// list_plugin_versions 的行：一代历史 + 是否当前活目录内容。
@@ -516,7 +515,6 @@ pub fn snapshot_plugin(dir: &Path, name: &str) -> Result<Option<String>, String>
         created_at: ts,
         version: live.version,
         api_version: live.block.api_version,
-        entry: live.block.entry,
     };
     let meta_json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
     fs::write(gen.join("meta.json"), meta_json).map_err(|e| format!("write meta.json: {e}"))?;
@@ -786,6 +784,55 @@ mod tests {
         assert!(gens[0].created_at >= gens[9].created_at, "新到旧排序");
         assert!(gens[0].current, "首行即活目录内容");
         assert!(!gens.iter().any(|g| g.id == id1), "最早一代已被裁掉");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn list_generations_skips_missing_or_corrupt_meta() {
+        let dir = tmp_history("list-meta");
+        write_plugin(&dir, "demo");
+        let valid_id = snapshot_plugin(&dir, "demo")
+            .unwrap()
+            .expect("valid generation should be listed");
+        std::fs::create_dir_all(dir.join(".history/demo/1-missing-meta")).unwrap();
+        std::fs::create_dir_all(dir.join(".history/demo/2-corrupt-meta")).unwrap();
+        std::fs::write(
+            dir.join(".history/demo/2-corrupt-meta/meta.json"),
+            "{ not json",
+        )
+        .unwrap();
+
+        let gens = list_generations(&dir, "demo").unwrap();
+        let ids: Vec<_> = gens.iter().map(|gen| gen.id.as_str()).collect();
+        assert_eq!(ids, [valid_id.as_str()]);
+        assert!(gens[0].current);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn version_meta_omits_entry_and_accepts_legacy_entry() {
+        let dir = tmp_history("meta-shape");
+        write_plugin(&dir, "demo");
+        let id = snapshot_plugin(&dir, "demo")
+            .unwrap()
+            .expect("snapshot should create a generation");
+        let raw =
+            std::fs::read_to_string(dir.join(".history/demo").join(id).join("meta.json")).unwrap();
+        let meta_json = serde_json::from_str::<serde_json::Value>(&raw).unwrap();
+        assert!(meta_json.get("entry").is_none());
+
+        let legacy = r#"{
+            "hash":"0123456789abcdef",
+            "createdAt":1,
+            "version":"1.0.0",
+            "apiVersion":1,
+            "entry":"index.js"
+        }"#;
+        let legacy_meta = serde_json::from_str::<VersionMeta>(legacy)
+            .expect("legacy metadata with entry should remain readable");
+        assert_eq!(legacy_meta.hash, "0123456789abcdef");
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
