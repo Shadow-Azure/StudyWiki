@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
 mod plugins;
@@ -137,6 +138,45 @@ fn ensure_authorized(
     path_authorized(&state.lock().unwrap(), path)
 }
 
+const PATH_HEADER: &str = "x-studywiki-path";
+
+/// 纯 UTF-8 percent 解码：HTTP header 只能携带 ASCII，前端先 `encodeURIComponent` 非 ASCII。
+fn decode_path_header(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let hex = bytes
+            .get(index + 1..index + 3)
+            .ok_or_else(|| "路径 header 的 percent 序列不完整".to_string())?;
+        let high = (hex[0] as char)
+            .to_digit(16)
+            .ok_or_else(|| "路径 header 含非法 percent 序列".to_string())?;
+        let low = (hex[1] as char)
+            .to_digit(16)
+            .ok_or_else(|| "路径 header 含非法 percent 序列".to_string())?;
+        decoded.push((high * 16 + low) as u8);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| "路径 header 不是有效 UTF-8".to_string())
+}
+
+/// 读取并解码 raw IPC 请求上的路径 header；缺失、非字符串或坏编码在授权前失败。
+fn request_path(request: &Request<'_>) -> Result<String, String> {
+    let encoded = request
+        .headers()
+        .get(PATH_HEADER)
+        .ok_or_else(|| format!("缺少 {PATH_HEADER} header"))?
+        .to_str()
+        .map_err(|_| format!("{PATH_HEADER} header 不是 ASCII 字符串"))?;
+    decode_path_header(encoded)
+}
+
 /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
 /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
 /// 命令面与 assetProtocol 运行期授权同源收口）。
@@ -165,28 +205,37 @@ fn write_text_file(
         .map_err(|e| format!("emit: {e}"))
 }
 
-/// 读取整文件字节（excel 等二进制文档的数据源）；错误携带 OS 失败原文。
-/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+/// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
+/// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；授权与 FS 访问前先校验。
 #[tauri::command]
 fn read_binary_file(
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
-    path: String,
-) -> Result<Vec<u8>, String> {
+    request: Request<'_>,
+) -> Result<Response, String> {
+    let path = request_path(&request)?;
     ensure_authorized(&state, &path)?;
-    fs::read(&path).map_err(|e| format!("read {path}: {e}"))
+    fs::read(&path)
+        .map(Response::new)
+        .map_err(|e| format!("read {path}: {e}"))
 }
 
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
-/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+/// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
 #[tauri::command]
 fn write_binary_file(
     app: tauri::AppHandle,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
-    path: String,
-    bytes: Vec<u8>,
+    request: Request<'_>,
 ) -> Result<(), String> {
+    let path = request_path(&request)?;
     ensure_authorized(&state, &path)?;
-    atomic_write(Path::new(&path), &bytes)?;
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes,
+        InvokeBody::Json(_) => {
+            return Err("write_binary_file 需要 Tauri raw IPC bytes，而不是 JSON".to_string())
+        }
+    };
+    atomic_write(Path::new(&path), bytes)?;
     app.emit("fs://changed", &path)
         .map_err(|e| format!("emit: {e}"))
 }
@@ -355,6 +404,26 @@ mod tests {
             assert!(tree[2].children.is_none());
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_utf8_percent_encoded_path_headers() {
+        assert_eq!(
+            decode_path_header("/lib/root/a.xlsx").as_deref(),
+            Ok("/lib/root/a.xlsx")
+        );
+        assert_eq!(
+            decode_path_header("/%E5%BA%93/%E7%B0%BF.xlsx").as_deref(),
+            Ok("/库/簿.xlsx")
+        );
+        assert_eq!(
+            decode_path_header("/lib/root/sub%2Fx.xlsx").as_deref(),
+            Ok("/lib/root/sub/x.xlsx")
+        );
+        assert!(decode_path_header("/lib/%").is_err());
+        assert!(decode_path_header("/lib/%2").is_err());
+        assert!(decode_path_header("/lib/%zz").is_err());
+        assert!(decode_path_header("/lib/%FF").is_err());
     }
 
     #[test]

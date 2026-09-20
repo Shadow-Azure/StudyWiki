@@ -6,7 +6,12 @@ export interface SheetSource {
   model?: { merges?: string[] };
   getColumn(columnNumber: number): { width?: number };
   eachRow(options: { includeEmpty: boolean }, onRow: (row: {
-    eachCell(options: { includeEmpty: boolean }, onCell: (cell: { text?: unknown; style?: CellStyleSource }, columnNumber: number) => void): void;
+    eachCell(options: { includeEmpty: boolean }, onCell: (cell: {
+      text?: unknown;
+      value?: unknown;
+      numFmt?: string;
+      style?: CellStyleSource;
+    }, columnNumber: number) => void): void;
   }, rowNumber: number) => void): void;
 }
 
@@ -38,6 +43,14 @@ export interface ExcelCell {
   hidden: boolean;
 }
 
+/** A merge normalized to zero-based, in-grid worksheet coordinates. */
+export interface ExcelMerge {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
 /** Plain view model for one worksheet. */
 export interface ExcelSheetModel {
   name: string;
@@ -45,6 +58,7 @@ export interface ExcelSheetModel {
   columnCount: number;
   columnWidths: number[];
   rows: ExcelCell[][];
+  merges: ExcelMerge[];
 }
 
 /** Create an untouched, renderable placeholder cell. */
@@ -61,16 +75,191 @@ function cssColor(color: { argb?: string; rgb?: string } | undefined): string | 
   return undefined;
 }
 
-/** A merge range normalized to zero-based, in-grid coordinates. */
-interface MergeRange {
-  top: number;
-  left: number;
-  bottom: number;
-  right: number;
+/** The formatter supports common date/time placeholders only; any other grammar falls back to ExcelJS text. */
+const DATE_LOCALE = "en-CA";
+
+/** Get the effective scalar behind direct, formula, and other ExcelJS value envelopes. */
+function scalarValue(cell: { value?: unknown; text?: unknown }): unknown {
+  const value = cell.value;
+  if (value instanceof Date) return value;
+  if (typeof value === "object" && value !== null && "formula" in value) {
+    return (value as { result?: unknown }).result;
+  }
+  return value;
+}
+
+/** Format one date component through Intl so browser locale data supplies numeric rendering. */
+function datePart(date: Date, component: string, twoDigit: boolean, hasAmPm: boolean): string {
+  const width = twoDigit ? "2-digit" : "numeric";
+  const options: Intl.DateTimeFormatOptions = component === "year" ? { year: width }
+    : component === "month" ? { month: width }
+    : component === "day" ? { day: width }
+    : component === "hour" ? { hour: width, hourCycle: hasAmPm ? "h11" : "h23" }
+    : component === "minute" ? { hour: "numeric", hourCycle: hasAmPm ? "h11" : "h23", minute: width }
+    : component === "second"
+    ? { hour: "numeric", hourCycle: hasAmPm ? "h11" : "h23", minute: "2-digit", second: width }
+    : { second: width };
+  const parts = new Intl.DateTimeFormat(DATE_LOCALE, options).formatToParts(date);
+  return parts.find((part) => part.type === (component === "hour" ? "hour" : component))?.value ?? "";
+}
+
+/** Render supported date/time tokens in their authored order, keeping separator literals. */
+function formatDate(value: unknown, numFmt: string): string | undefined {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return undefined;
+  const hasAmPm = numFmt.includes("AM/PM");
+  let output = "";
+  let index = 0;
+  let afterHour = false;
+  while (index < numFmt.length) {
+    if (numFmt[index] === '"') {
+      const end = numFmt.indexOf('"', index + 1);
+      if (end < 0) return undefined;
+      output += numFmt.slice(index + 1, end);
+      index = end + 1;
+      continue;
+    }
+    if (numFmt[index] === "\\") {
+      if (index + 1 >= numFmt.length) return undefined;
+      output += numFmt[index + 1];
+      index += 2;
+      continue;
+    }
+    const token = (/^(yyyy|yy|mm|dd|hh|ss)/.exec(numFmt.slice(index)) ?? /^(y|m|d|h|s)/.exec(numFmt.slice(index)))?.[0];
+    if (token) {
+      const component = token.startsWith("y") ? "year"
+        : token.startsWith("d") ? "day"
+        : token.startsWith("h") ? "hour"
+        : token.startsWith("s") ? "second"
+        : afterHour ? "minute" : "month";
+      if (component === "hour") afterHour = true;
+      else if (component !== "minute") afterHour = false;
+      output += datePart(value, component, token.length === 2, hasAmPm);
+      index += token.length;
+      continue;
+    }
+    if (numFmt.startsWith("AM/PM", index)) {
+      const parts = new Intl.DateTimeFormat(DATE_LOCALE, { hour: "numeric", hourCycle: "h11" }).formatToParts(value);
+      const period = parts.find((part) => part.type === "dayPeriod")?.value.toUpperCase().replace(/\./g, "");
+      if (period !== "AM" && period !== "PM") return undefined;
+      output += period;
+      index += 5;
+      continue;
+    }
+    const character = numFmt[index];
+    if (/[a-z]/i.test(character) || !" -/:.,()".includes(character)) return undefined;
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
+/** Parse the supported numeric body and adjacent literal, currency, grouping, and percent decorations. */
+function parseNumberFormat(numFmt: string): {
+  prefix: string;
+  suffix: string;
+  grouping: boolean;
+  decimals: number;
+  percent: boolean;
+} | undefined {
+  let prefix = "";
+  let index = 0;
+  while (index < numFmt.length) {
+    if (numFmt[index] === '"') {
+      const end = numFmt.indexOf('"', index + 1);
+      if (end < 0) return undefined;
+      prefix += numFmt.slice(index + 1, end);
+      index = end + 1;
+      continue;
+    }
+    if (numFmt[index] === "\\") {
+      if (index + 1 >= numFmt.length) return undefined;
+      prefix += numFmt[index + 1];
+      index += 2;
+      continue;
+    }
+    if ("$€¥£".includes(numFmt[index])) {
+      prefix += numFmt[index];
+      index += 1;
+      continue;
+    }
+    break;
+  }
+
+  const core = /^(\#?,##)?0(?:\.(0+))?/.exec(numFmt.slice(index));
+  if (!core) return undefined;
+  index += core[0].length;
+  const grouping = core[1] !== undefined;
+  const decimals = core[2]?.length ?? 0;
+  let percent = false;
+  let suffix = "";
+  while (index < numFmt.length) {
+    if (numFmt.startsWith("%", index)) {
+      percent = true;
+      index += 1;
+      continue;
+    }
+    if (numFmt[index] === '"') {
+      const end = numFmt.indexOf('"', index + 1);
+      if (end < 0) return undefined;
+      suffix += numFmt.slice(index + 1, end);
+      index = end + 1;
+      continue;
+    }
+    if (numFmt[index] === "\\") {
+      if (index + 1 >= numFmt.length) return undefined;
+      suffix += numFmt[index + 1];
+      index += 2;
+      continue;
+    }
+    if ("$€¥£".includes(numFmt[index])) {
+      suffix += numFmt[index];
+      index += 1;
+      continue;
+    }
+    if (numFmt[index] === " ") {
+      suffix += " ";
+      index += 1;
+      continue;
+    }
+    return undefined;
+  }
+  return { prefix, suffix, grouping, decimals, percent };
+}
+
+/** Format supported decimal, grouped, percent, and currency numbers; ambiguous formats return undefined. */
+function formatNumber(value: unknown, numFmt: string): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const format = parseNumberFormat(numFmt);
+  if (!format) return undefined;
+  const formatted = new Intl.NumberFormat(DATE_LOCALE, {
+    style: format.percent ? "percent" : "decimal",
+    useGrouping: format.grouping,
+    minimumFractionDigits: format.decimals,
+    maximumFractionDigits: format.decimals,
+  }).format(value);
+  return format.prefix + formatted + format.suffix;
+}
+
+/** Render supported numeric/date values without mutating the ExcelJS source; unsupported data falls back to its text. */
+function formatCellValue(cell: { text?: unknown; value?: unknown; numFmt?: string }): string {
+  try {
+    if (cell.numFmt) {
+      const value = scalarValue(cell);
+      if (value instanceof Date) {
+        return formatDate(value, cell.numFmt) ?? String(cell.text ?? "");
+      }
+      const formatted = formatNumber(value, cell.numFmt);
+      if (formatted !== undefined) return formatted;
+    }
+  } catch {
+    // Formatting is a presentation enhancement; never let an unsupported webview locale break the grid.
+  }
+  const fallback = cell.text ?? scalarValue(cell);
+  return typeof fallback === "number" || typeof fallback === "string" ? String(fallback) : "";
 }
 
 /** Parse an A1:B2 Excel merge reference and clamp it to the initialized worksheet grid. */
-function parseMergeRange(merge: string, rowCount: number, columnCount: number): MergeRange | undefined {
+function parseMergeRange(merge: string, rowCount: number, columnCount: number): ExcelMerge | undefined {
   const match = /^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/.exec(merge);
   if (!match) return undefined;
 
@@ -102,7 +291,15 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
 
   const merges = (sheet.model?.merges ?? [])
     .map((merge) => parseMergeRange(merge, sheet.rowCount, sheet.columnCount))
-    .filter((merge): merge is MergeRange => merge !== undefined);
+    .filter((merge): merge is ExcelMerge => merge !== undefined);
+  const owner = rows.map(() => Array.from({ length: sheet.columnCount }, () => undefined as ExcelMerge | undefined));
+  for (const merge of merges) {
+    for (let row = merge.top; row <= merge.bottom; row += 1) {
+      for (let column = merge.left; column <= merge.right; column += 1) {
+        owner[row][column] ??= merge;
+      }
+    }
+  }
 
   sheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
     row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
@@ -112,11 +309,8 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
         return;
       }
 
-      const mergeRange = merges.find(
-        ({ top, left, bottom, right }) =>
-          rowIndex >= top && rowIndex <= bottom && columnIndex >= left && columnIndex <= right,
-      );
-      const isCovered = mergeRange !== undefined && !(rowIndex === mergeRange.top && columnIndex === mergeRange.left);
+      const ownedMerge = owner[rowIndex][columnIndex];
+      const isCovered = ownedMerge !== undefined && !(rowIndex === ownedMerge.top && columnIndex === ownedMerge.left);
 
       const sourceStyle = cell.style;
       const style: ExcelCellStyle = {};
@@ -139,7 +333,7 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
 
       rows[rowIndex][columnIndex] = {
         // Do not read ExcelJS covered-cell text getters: they can throw for an empty merge master.
-        text: isCovered ? "" : String(cell.text ?? ""),
+        text: isCovered ? "" : formatCellValue(cell),
         style,
         rowSpan: 1,
         colSpan: 1,
@@ -149,10 +343,14 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
   });
 
   for (const { top, left, bottom, right } of merges) {
-    rows[top][left] = { ...rows[top][left], rowSpan: bottom - top + 1, colSpan: right - left + 1 };
+    if (rows[top][left].rowSpan === 1 && rows[top][left].colSpan === 1) {
+      rows[top][left] = { ...rows[top][left], rowSpan: bottom - top + 1, colSpan: right - left + 1, hidden: false };
+    }
     for (let row = top; row <= bottom; row += 1) {
       for (let column = left; column <= right; column += 1) {
-        if (row !== top || column !== left) rows[row][column] = { ...rows[row][column], text: "", hidden: true };
+        if ((row !== top || column !== left) && rows[row][column].rowSpan === 1 && rows[row][column].colSpan === 1) {
+          rows[row][column] = { ...rows[row][column], text: "", hidden: true };
+        }
       }
     }
   }
@@ -163,6 +361,7 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
     columnCount: sheet.columnCount,
     columnWidths,
     rows,
+    merges,
   };
 }
 

@@ -36,3 +36,32 @@ test("excel: 超过单元格上限拒绝读取", async () => {
   await expect(excel.read("/lib/huge.xlsx")).rejects.toThrow(/过大/);
   expect(MAX_EXCEL_CELLS).toBe(1_000_000);
 });
+
+
+test("excel: write 产出可被 ExcelJS 解析回读的工作簿", async () => {
+  const source = new Workbook();
+  const ws = source.addWorksheet("Data");
+  ws.getCell("A1").value = "保留值";
+  ws.getCell("A1").style.font = { bold: true };
+  ws.getCell("A1").style.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFABCDEF" } };
+  ws.mergeCells("A2:B3");
+  ws.getCell("A4").value = { formula: "1+2", result: 3 };
+  const files = {
+    readBinary: vi.fn(),
+    writeBinary: vi.fn(async (_path: string, written: Uint8Array) => { captured = written; }),
+  };
+  let captured = new Uint8Array();
+  const excel = new ExcelService(files);
+  await excel.write("/lib/data.xlsx", source);
+
+  const copy = new ArrayBuffer(captured.byteLength);
+  new Uint8Array(copy).set(captured);
+  const parsed = await new Workbook().xlsx.load(copy as Parameters<Workbook["xlsx"]["load"]>[0]);
+  expect(parsed.getWorksheet("Data")).toBeDefined();
+  expect(parsed.getWorksheet("Data")?.getCell("A1").value).toBe("保留值");
+  expect(parsed.getWorksheet("Data")?.getCell("A1").style.font?.bold).toBe(true);
+  expect(parsed.getWorksheet("Data")?.getCell("A1").style.fill?.fgColor?.argb).toBe("FFABCDEF");
+  expect(parsed.getWorksheet("Data")?.model.merges).toEqual(["A2:B3"]);
+  expect(parsed.getWorksheet("Data")?.getCell("A4").formula).toBe("1+2");
+  expect(parsed.getWorksheet("Data")?.getCell("A4").result).toBe(3);
+});

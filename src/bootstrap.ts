@@ -3,7 +3,7 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { FilesService } from "./host/files";
+import { FilesService, type FilesInvokeArgs, type FilesInvokeOptions } from "./host/files";
 import { ExcelService } from "./host/excel";
 import { WindowsService, defaultWindowsDeps } from "./host/windows";
 import { WorkspaceService } from "./host/workspace";
@@ -16,7 +16,7 @@ import { MODULE_TABLE, type ModuleTable } from "./loader/table";
 
 /** Injected environment; defaults bind real Tauri APIs (tests fake these). */
 export interface BootstrapEnv {
-  invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+  invoke: (cmd: string, args?: FilesInvokeArgs, options?: FilesInvokeOptions) => Promise<unknown>;
   listen: (event: string, cb: (e: { payload: unknown }) => void) => Promise<() => void>;
   openDialog: () => Promise<string | null>;
   assetUrl: (path: string) => string;

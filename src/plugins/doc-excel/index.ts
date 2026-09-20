@@ -1,7 +1,7 @@
 import type { Context } from "cordis";
 import type { Workbook } from "exceljs";
 import type { FileNode } from "../../types";
-import { createSheetModel, visibleRowRange, type ExcelSheetModel, type SheetSource } from "./model";
+import { createSheetModel, visibleRowRange, type ExcelMerge, type ExcelSheetModel, type SheetSource } from "./model";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "doc-excel";
@@ -41,13 +41,12 @@ interface MergeSegment {
   visualEnd: number;
 }
 
-/** Collect anchors whose spans make them merge masters (not ordinary covered placeholders). */
+/** Collect normalized merge anchors directly from the sheet-model index. */
 function mergeAnchors(model: ExcelSheetModel): MergeAnchor[] {
   const anchors: MergeAnchor[] = [];
-  for (const [row, cells] of model.rows.entries()) {
-    for (const [column, cell] of cells.entries()) {
-      if (cell.rowSpan > 1 || cell.colSpan > 1) anchors.push({ row, column, cell });
-    }
+  for (const { top, left } of model.merges satisfies ExcelMerge[]) {
+    const cell = model.rows[top]?.[left];
+    if (cell) anchors.push({ row: top, column: left, cell });
   }
   return anchors;
 }

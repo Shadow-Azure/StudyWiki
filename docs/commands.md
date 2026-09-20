@@ -21,15 +21,15 @@ fn read_tree(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
 #[tauri::command]
 fn write_text_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String, contents: String) -> Result<(), String>;
 
-/// 读取整文件字节（excel 等二进制文档的数据源）；错误携带 OS 失败原文。
-/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+/// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
+/// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；授权与 FS 访问前先校验。
 #[tauri::command]
-fn read_binary_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String) -> Result<Vec<u8>, String>;
+fn read_binary_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<Response, String>;
 
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
-/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+/// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
 #[tauri::command]
-fn write_binary_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String, bytes: Vec<u8>) -> Result<(), String>;
+fn write_binary_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<(), String>;
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.

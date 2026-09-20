@@ -35,23 +35,34 @@ test("files: fs://changed 桥接为 onFsChanged", async () => {
   expect(seen).toEqual(["/x/a.md"]);
 });
 
-test("files: readBinary 把命令字节数组归一为 Uint8Array", async () => {
-  const invoke = vi.fn().mockResolvedValue([1, 2, 3]);
+test("files: readBinary 使用 raw IPC 并归一响应字节", async () => {
+  const path = "/库/工作簿.xlsx";
+  const invoke = vi.fn()
+    .mockResolvedValueOnce(new Uint8Array([1, 2, 3]))
+    .mockResolvedValueOnce(new ArrayBuffer(3))
+    .mockResolvedValueOnce([4, 5, 6])
+    .mockResolvedValueOnce(42);
   const files = new FilesService({ invoke, listen: vi.fn(), openDialog: vi.fn(), assetUrl: (p) => p });
-  await expect(files.readBinary("/x/a.xlsx")).resolves.toEqual(new Uint8Array([1, 2, 3]));
-  expect(invoke).toHaveBeenCalledWith("read_binary_file", { path: "/x/a.xlsx" });
+  await expect(files.readBinary(path)).resolves.toEqual(new Uint8Array([1, 2, 3]));
+  expect(invoke).toHaveBeenNthCalledWith(1, "read_binary_file", new Uint8Array(0), {
+    headers: { "x-studywiki-path": encodeURIComponent(path) },
+  });
+  await expect(files.readBinary(path)).resolves.toEqual(new Uint8Array(3));
+  await expect(files.readBinary(path)).resolves.toEqual(new Uint8Array([4, 5, 6]));
+  await expect(files.readBinary(path)).rejects.toThrow(/raw byte/);
 });
 
-test("files: writeBinary 发送普通数组并透传错误", async () => {
+test("files: writeBinary 直接发送 raw IPC 字节与 UTF-8 安全路径头", async () => {
+  const path = "/库/工作簿.xlsx";
+  const bytes = new Uint8Array([4, 5]);
   const invoke = vi.fn().mockResolvedValue(null);
   const files = new FilesService({ invoke, listen: vi.fn(), openDialog: vi.fn(), assetUrl: (p) => p });
-  await files.writeBinary("/x/a.xlsx", new Uint8Array([4, 5]));
-  expect(invoke).toHaveBeenCalledWith("write_binary_file", {
-    path: "/x/a.xlsx",
-    bytes: [4, 5],
+  await files.writeBinary(path, bytes);
+  expect(invoke).toHaveBeenCalledWith("write_binary_file", bytes, {
+    headers: { "x-studywiki-path": encodeURIComponent(path) },
   });
   invoke.mockRejectedValueOnce(new Error("denied"));
-  await expect(files.writeBinary("/x/a.xlsx", new Uint8Array())).rejects.toThrow("denied");
+  await expect(files.writeBinary(path, new Uint8Array())).rejects.toThrow("denied");
 });
 
 test("windows: fetchRoot 对 null 状态安全；confirmDialog 透传", async () => {

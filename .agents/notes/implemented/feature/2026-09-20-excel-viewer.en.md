@@ -12,10 +12,10 @@ M1 requires markdown / excel / video to be readable; excel is missing. The need 
 
 - Architecture: frontend ExcelJS data model + Rust byte boundary. The ExcelJS workbook is the single xlsx data model (parsing, editing, serialization all frontend); Rust never understands xlsx — it only moves bytes, validates path roots, and writes atomically.
 - Add a sixth host service `ctx.excel` (independent from `ctx.files`): `read(path) → Workbook`, `write(path, workbook) → void`. Spreadsheet semantics get their own service so guard whitelists, AI tool surfaces, and test boundaries stay clean; humans and AI share one contract with no special cases.
-- Extend `ctx.files` with binary I/O (`readBinary` / `writeBinary`); `ctx.excel` wraps ExcelJS on top. Layering keeps format semantics frontend and system access in the host.
+- Binary I/O in `ctx.files` uses Tauri 2 raw IPC: the body is a `Uint8Array`, and the path travels UTF-8 percent-encoded in an `x-studywiki-path` header. `ctx.excel` wraps ExcelJS on top. Layering keeps format semantics frontend and system access in the host.
 - Format scope is `.xlsx` only; csv and legacy .xls would be separate issues rather than special cases in the multi-sheet contract.
 - Rust `EXCEL_EXTS = ["xlsx"]` dispatch; `FileNode.kind` gains `"excel"` (TS/Rust same shape, type-equiv fence updated).
-- Viewer (this phase, m1-01): sheet switching, virtual scrolling, style rendering (font, bold/italic, fill, borders, alignment, number formats, merged cells, column widths), empty-sheet state. The `ctx.excel.write` service lands now (contract complete), but page editing UI does not.
+- Viewer (this phase, m1-01): sheet switching, virtual scrolling, style rendering (font, bold/italic, fill, borders, alignment, a supported common number/date-format subset, merged cells, column widths), empty-sheet state. The `ctx.excel.write` service lands now (contract complete), but page editing UI does not.
 - Editing (new issue): cell value editing, style toolbar (font/color/merge), dirty flag and close guard, save via `ctx.excel.write` → atomic Rust write → `fs://changed` broadcast.
 - Fidelity boundary A+B: data-level plus style-level editing; writes preserve most styles/merges/formulas. Charts and pivot tables are not promised lossless — content wins for study material.
 - Errors: corrupt file / non-zip → in-viewer error panel (no white screen); very large files hit a cell-count cap (about 1M) and are declined with a message; write failures during editing keep the dirty state and show an error so input is never lost.
