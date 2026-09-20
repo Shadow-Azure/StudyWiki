@@ -1,5 +1,6 @@
 import type { Context } from "cordis";
 import type { FilesService } from "./files";
+import type { ExcelService } from "./excel";
 import type { WindowsService } from "./windows";
 import type { WorkspaceService } from "./workspace";
 import type { SlotsService } from "./slots";
@@ -9,6 +10,8 @@ declare module "cordis" {
   interface Context {
     /** 文件通道（读树/读写文本/选目录/媒体 URL/fs 变更流）。 */
     files: FilesService;
+    /** Excel 数据模型服务（xlsx 解析/序列化；人与 AI 共用读写面）。 */
+    excel: ExcelService;
     /** 窗口身份/创建/原生确认框/关窗守卫。 */
     windows: WindowsService;
     /** 窗口 scope 工作区状态（root/activeFile）。 */

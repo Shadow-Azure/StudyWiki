@@ -7,7 +7,7 @@ function fakeEnv(table: ModuleTable) {
   const written: string[] = [];
   const ran: string[] = [];
   const openDialog = vi.fn();
-  const probe = { name: "probe", inject: ["files", "windows", "workspace", "slots"], apply(ctx: any) { ran.push(`ctx-ok:${!!ctx.files && !!ctx.windows && !!ctx.workspace && !!ctx.slots}`); } };
+  const probe = { name: "probe", inject: ["files", "windows", "workspace", "slots", "excel"], apply(ctx: any) { ran.push(`ctx-ok:${!!ctx.files && !!ctx.windows && !!ctx.workspace && !!ctx.slots && !!(ctx as any).excel}`); } };
   table["probe"] = { plugin: probe, defaults: {} };
   const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     if (cmd === "read_manifest") return null;
@@ -42,6 +42,7 @@ test("bootstrap: 首启生成默认清单、宿主服务齐全、插件激活", 
   expect(JSON.parse(f.written[0]).plugins.map((p: { id: string }) => p.id)).toContain("app-shell");
   expect(document.querySelector(".main")).not.toBeNull();
   expect((ctx as any).files).toBeDefined();
+  expect((ctx as any).excel).toBeDefined();
 });
 
 test("bootstrap: 欢迎态按钮 → pickFolder → changeRoot（授权+登记+切工作区）", async () => {
