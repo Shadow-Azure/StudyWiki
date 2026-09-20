@@ -6,7 +6,7 @@ English | [中文](m1-01-excel-viewer.md)
 kind: issue
 milestone: m1
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m1-01-excel-viewer.*
   - .agents/notes/proposed/feature/2026-09-20-excel-viewer.*

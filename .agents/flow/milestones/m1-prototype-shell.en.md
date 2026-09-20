@@ -6,7 +6,7 @@ English | [中文](m1-prototype-shell.md)
 kind: milestone
 id: m1
 title: 原型壳补全
-status: planned
+status: active
 github:
   number: 2
   url: https://github.com/Shadow-Azure/StudyWiki/milestone/2

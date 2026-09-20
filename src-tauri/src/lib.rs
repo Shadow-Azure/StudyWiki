@@ -1,6 +1,9 @@
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 mod plugins;
@@ -18,11 +21,15 @@ pub struct FileNode {
 
 const MARKDOWN_EXTS: &[&str] = &["md", "markdown"];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "m4v", "mkv"];
+const EXCEL_EXTS: &[&str] = &["xlsx"];
+static ATOMIC_WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn kind_for_ext(ext: &str) -> Option<&'static str> {
     let ext = ext.to_ascii_lowercase();
     if MARKDOWN_EXTS.contains(&ext.as_str()) {
         Some("markdown")
+    } else if EXCEL_EXTS.contains(&ext.as_str()) {
+        Some("excel")
     } else if VIDEO_EXTS.contains(&ext.as_str()) {
         Some("video")
     } else {
@@ -74,6 +81,32 @@ fn walk_dir(root: &Path) -> Result<Vec<FileNode>, String> {
 
 fn std_write(path: &Path, contents: &str) -> Result<(), String> {
     fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| format!("路径没有文件名：{}", path.display()))?;
+    let seq = ATOMIC_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = path.with_file_name(format!(
+        ".{name}.studywiki-{}-{seq}-{nanos}.tmp",
+        std::process::id()
+    ));
+    fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "rename {} -> {}: {e}",
+            tmp.display(),
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 /// 命令面根域校验（单一决策点）：路径须落在某个已授权 root 之内。
@@ -132,6 +165,32 @@ fn write_text_file(
         .map_err(|e| format!("emit: {e}"))
 }
 
+/// 读取整文件字节（excel 等二进制文档的数据源）；错误携带 OS 失败原文。
+/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+#[tauri::command]
+fn read_binary_file(
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    ensure_authorized(&state, &path)?;
+    fs::read(&path).map_err(|e| format!("read {path}: {e}"))
+}
+
+/// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
+/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+#[tauri::command]
+fn write_binary_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    ensure_authorized(&state, &path)?;
+    atomic_write(Path::new(&path), &bytes)?;
+    app.emit("fs://changed", &path)
+        .map_err(|e| format!("emit: {e}"))
+}
+
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
 /// 路径须在已授权文件夹内（欢迎态无授权即拒）。
@@ -163,6 +222,8 @@ pub fn run() {
             read_tree,
             read_text_file,
             write_text_file,
+            read_binary_file,
+            write_binary_file,
             windows::create_window,
             windows::get_window_state,
             windows::set_window_root,
@@ -226,6 +287,31 @@ mod tests {
         assert_eq!(kind_for_ext("md"), Some("markdown"));
         assert_eq!(kind_for_ext("MP4"), Some("video"));
         assert_eq!(kind_for_ext("txt"), None);
+    }
+
+    #[test]
+    fn classifies_excel_extensions() {
+        assert_eq!(kind_for_ext("xlsx"), Some("excel"));
+        assert_eq!(kind_for_ext("XLSX"), Some("excel"));
+        assert_eq!(kind_for_ext("xls"), None);
+        assert_eq!(kind_for_ext("csv"), None);
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_and_leaves_no_temp() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("sw-atomic-{}-{}.xlsx", std::process::id(), line!()));
+        std::fs::write(&path, b"old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&format!(".{}", path.file_name().unwrap().to_string_lossy())))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+        let _ = std::fs::remove_file(&path);
     }
 
     fn fixture_tree() -> std::path::PathBuf {
