@@ -22,6 +22,49 @@ function columnAddress(column: number): string {
   return text;
 }
 
+/** Build the shared explicit CSS track template for a worksheet's header and data grid. */
+function trackTemplate(model: ExcelSheetModel): string {
+  return `36px ${model.columnWidths.map((width) => `${width}px`).join(" ")}`;
+}
+
+/** One merge anchor promoted from the plain worksheet model. */
+interface MergeAnchor {
+  row: number;
+  column: number;
+  cell: ExcelSheetModel["rows"][number][number];
+}
+
+/** A merge segment clipped to the current visible row window. */
+interface MergeSegment {
+  anchor: MergeAnchor;
+  visualStart: number;
+  visualEnd: number;
+}
+
+/** Collect anchors whose spans make them merge masters (not ordinary covered placeholders). */
+function mergeAnchors(model: ExcelSheetModel): MergeAnchor[] {
+  const anchors: MergeAnchor[] = [];
+  for (const [row, cells] of model.rows.entries()) {
+    for (const [column, cell] of cells.entries()) {
+      if (cell.rowSpan > 1 || cell.colSpan > 1) anchors.push({ row, column, cell });
+    }
+  }
+  return anchors;
+}
+
+/** Clip every merge intersecting the window to one segment, including anchors above the window. */
+function visibleMergeSegments(model: ExcelSheetModel, start: number, end: number): Map<string, MergeSegment> {
+  const segments = new Map<string, MergeSegment>();
+  for (const anchor of mergeAnchors(model)) {
+    const anchorEnd = anchor.row + anchor.cell.rowSpan - 1;
+    if (anchorEnd < start) continue;
+    const visualStart = Math.max(anchor.row, start);
+    const visualEnd = Math.min(anchorEnd, end);
+    segments.set(`${anchor.row}:${anchor.column}`, { anchor, visualStart, visualEnd });
+  }
+  return segments;
+}
+
 /** Apply the model's plain style fields as inline CSS and border classes. */
 function paintCellStyle(cell: HTMLElement, model: ExcelSheetModel["rows"][number][number]): void {
   const { style } = model;
@@ -38,7 +81,7 @@ function paintCellStyle(cell: HTMLElement, model: ExcelSheetModel["rows"][number
 }
 
 /** Excel viewer for the active workbook: sheet tabs, styled grid cells, merged
- * placeholders, and row-windowed repaint driven by the pure sheet model.
+ * merge segments, and row-windowed repaint driven by the pure sheet model.
  * @param ctx Host context (excel/workspace/slots injected).
  * @param _config Unused; the plugin takes no options.
  * @returns Teardown removing the file-opened subscription, slot renderer and scroll listener. */
@@ -73,25 +116,38 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     firstRow = range.start;
     topSpacer.style.height = `${range.start * ROW_HEIGHT}px`;
     bottomSpacer.style.height = `${Math.max(0, model.rowCount - (range.start + range.count)) * ROW_HEIGHT}px`;
-    grid.style.setProperty("--excel-cols", String(model.columnCount));
-    grid.style.setProperty("--excel-rows", String(range.count));
-    grid.style.setProperty("--excel-col-width", `${model.columnWidths[0] ?? 64}px`);
+    const segments = visibleMergeSegments(model, range.start, range.start + range.count - 1);
+    grid.style.gridTemplateColumns = trackTemplate(model);
+    grid.style.gridTemplateRows = `repeat(${range.count}, 28px)`;
     grid.replaceChildren();
 
     for (let rowIndex = range.start; rowIndex < range.start + range.count; rowIndex += 1) {
       const row = document.createElement("div");
       row.className = "excel-row";
       for (const [columnIndex, cellModel] of model.rows[rowIndex].entries()) {
+        if (cellModel.hidden || segments.has(`${rowIndex}:${columnIndex}`)) continue;
         const cell = document.createElement("div");
-        cell.className = cellModel.hidden ? "excel-cell excel-cell-hidden" : "excel-cell";
+        cell.className = "excel-cell";
         cell.dataset.address = `${columnAddress(columnIndex + 1)}${rowIndex + 1}`;
         cell.style.gridColumn = `${columnIndex + 2} / span ${cellModel.colSpan}`;
-        cell.style.gridRow = `${rowIndex - range.start + 1} / span ${cellModel.rowSpan}`;
+        cell.style.gridRow = `${rowIndex - range.start + 1} / span 1`;
         paintCellStyle(cell, cellModel);
         cell.textContent = cellModel.text;
         row.append(cell);
       }
       grid.append(row);
+    }
+
+    for (const segment of segments.values()) {
+      const { anchor, visualStart, visualEnd } = segment;
+      const cell = document.createElement("div");
+      cell.className = "excel-cell";
+      cell.dataset.address = `${columnAddress(anchor.column + 1)}${visualStart + 1}`;
+      cell.style.gridColumn = `${anchor.column + 2} / span ${anchor.cell.colSpan}`;
+      cell.style.gridRow = `${visualStart - range.start + 1} / span ${visualEnd - visualStart + 1}`;
+      paintCellStyle(cell, anchor.cell);
+      cell.textContent = anchor.cell.text;
+      grid.append(cell);
     }
   };
 
@@ -154,13 +210,15 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     bottomSpacer.className = "excel-bottom-spacer";
     const grid = document.createElement("div");
     grid.className = "excel-grid";
-    scroll.append(topSpacer, header, grid, bottomSpacer);
+    scroll.append(header, topSpacer, grid, bottomSpacer);
     viewer.append(tabs, scroll);
     host.append(viewer);
 
     const selectedModel = model();
-    grid.style.setProperty("--excel-cols", String(selectedModel?.columnCount ?? 0));
-    grid.style.setProperty("--excel-col-width", `${selectedModel?.columnWidths[0] ?? 64}px`);
+    const tracks = selectedModel ? trackTemplate(selectedModel) : "36px";
+    header.style.gridTemplateColumns = tracks;
+    grid.style.gridTemplateColumns = tracks;
+    grid.style.gridTemplateRows = "repeat(0, 28px)";
     if (!selectedModel || selectedModel.rowCount === 0) {
       const empty = document.createElement("div");
       empty.className = "excel-empty";
@@ -173,13 +231,12 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     scroll.addEventListener("scroll", onScroll);
   };
 
-  /** Paint the sticky row-number/column-letter header for the selected model. */
+  /** Paint the sticky column-letter header for the selected model. */
   function paintHeader(header: HTMLElement): void {
     const model = models[sheetIndex];
     header.replaceChildren();
     if (!model) return;
-    header.style.setProperty("--excel-cols", String(model.columnCount));
-    header.style.setProperty("--excel-col-width", `${model.columnWidths[0] ?? 64}px`);
+    header.style.gridTemplateColumns = trackTemplate(model);
     const corner = document.createElement("div");
     corner.className = "excel-header-cell";
     corner.style.gridColumn = "1";

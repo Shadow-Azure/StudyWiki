@@ -62,3 +62,98 @@ test("DOM：非 excel 清空；读取失败显示错误面板", async () => {
   await open({ name: "bad.xlsx", path: "/x/bad.xlsx", kind: "excel" });
   await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("读取失败"));
 });
+
+function mergeWorkbook() {
+  return {
+    worksheets: [{
+      name: "合并",
+      rowCount: 80,
+      columnCount: 2,
+      model: { merges: ["A1:A10"] },
+      getColumn: (column: number) => (column === 1 ? { width: 18 } : {}),
+      eachRow: (_o: never, onRow: any) => onRow({
+        eachCell: (_o: never, onCell: any) => {
+          onCell({ text: "跨窗标题", style: { font: { bold: true }, fill: { fgColor: { argb: "FF112233" } } } }, 1);
+        },
+      }, 1),
+    }],
+  };
+}
+
+function scrollStep(scroll: HTMLElement, rows: number): void {
+  scroll.scrollTop = 28 * rows;
+  scroll.dispatchEvent(new Event("scroll"));
+}
+
+test("DOM：跨虚拟窗口的纵向合并渲染裁剪片段与稳定几何", async () => {
+  document.body.replaceChildren();
+  const { opened } = harness(mergeWorkbook());
+  await opened({ name: "merge.xlsx", path: "/x/merge.xlsx", kind: "excel" });
+  const scroll = document.querySelector<HTMLElement>(".excel-scroll");
+  const topSpacer = document.querySelector<HTMLElement>(".excel-top-spacer");
+  const bottomSpacer = document.querySelector<HTMLElement>(".excel-bottom-spacer");
+  const grid = document.querySelector<HTMLElement>(".excel-grid");
+  expect(scroll).not.toBeNull();
+  expect(topSpacer).not.toBeNull();
+  expect(bottomSpacer).not.toBeNull();
+  expect(grid).not.toBeNull();
+  if (!scroll || !topSpacer || !bottomSpacer || !grid) return;
+
+  scrollStep(scroll, 5);
+  const promoted = document.querySelector<HTMLElement>('[data-address="A3"]');
+  expect(promoted?.textContent).toBe("跨窗标题");
+  expect(promoted?.style.fontWeight).toBe("700");
+  expect(promoted?.style.backgroundColor).toBe("rgb(17, 34, 51)");
+  expect(promoted?.style.gridRow).toBe("1 / span 8");
+  expect(promoted?.style.gridColumn).toBe("2 / span 1");
+  expect(document.querySelector('[data-address="A1"]')).toBeNull();
+
+  scrollStep(scroll, 12);
+  const continuation = document.querySelector<HTMLElement>('[data-address="A10"]');
+  expect(continuation?.textContent).toBe("跨窗标题");
+  expect(continuation?.style.backgroundColor).toBe("rgb(17, 34, 51)");
+  expect(continuation?.style.gridRow).toBe("1 / span 1");
+  expect([...document.querySelectorAll<HTMLElement>(".excel-cell")].filter((cell) => cell.textContent === "跨窗标题")).toHaveLength(1);
+
+  const top = Number.parseFloat(topSpacer.style.height);
+  const bottom = Number.parseFloat(bottomSpacer.style.height);
+  const trackMatch = /^repeat\((\d+), 28px\)$/.exec(grid.style.gridTemplateRows);
+  expect(trackMatch).not.toBeNull();
+  const visibleTracks = Number(trackMatch?.[1] ?? 0);
+  expect(document.querySelectorAll(".excel-row")).toHaveLength(visibleTracks);
+  expect((top + bottom) / 28 + visibleTracks + 1).toBe(81);
+});
+
+test("DOM：列宽使用显式逐列轨道", async () => {
+  document.body.replaceChildren();
+  const { opened } = harness(mergeWorkbook());
+  await opened({ name: "widths.xlsx", path: "/x/widths.xlsx", kind: "excel" });
+  const expected = "36px 152px 64px";
+  expect(document.querySelector<HTMLElement>(".excel-grid")?.style.gridTemplateColumns).toBe(expected);
+  expect(document.querySelector<HTMLElement>(".excel-header-row")?.style.gridTemplateColumns).toBe(expected);
+});
+
+test("DOM：迟到的 Excel 读取不能覆盖后打开的文档", async () => {
+  document.body.replaceChildren();
+  const oldWorkbook = { worksheets: [{ ...workbook().worksheets[0], name: "旧" }] };
+  const newWorkbook = { worksheets: [{ ...workbook().worksheets[0], name: "新" }] };
+  let resolveOld!: (value: unknown) => void;
+  const read = vi.fn((path: string) => {
+    if (path === "/x/old.xlsx") return new Promise((resolve) => { resolveOld = resolve; });
+    return Promise.resolve(newWorkbook);
+  });
+  let opened!: (file: unknown) => void;
+  const workspace = {
+    activeFile: null as unknown,
+    events: { on: (_k: string, fn: (f: unknown) => void) => { opened = fn; return () => {}; } },
+  };
+  apply({ excel: { read }, workspace, slots: { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } } } as never, {});
+
+  opened({ name: "old.xlsx", path: "/x/old.xlsx", kind: "excel" });
+  await vi.waitFor(() => expect(read).toHaveBeenCalledWith("/x/old.xlsx"));
+  opened({ name: "new.xlsx", path: "/x/new.xlsx", kind: "excel" });
+  await vi.waitFor(() => expect(read).toHaveBeenCalledWith("/x/new.xlsx"));
+  resolveOld(oldWorkbook);
+  await vi.waitFor(() => expect(document.querySelector(".excel-tab")?.textContent).toBe("新"));
+  expect(document.querySelector(".excel-viewer")?.textContent).not.toContain("旧");
+});

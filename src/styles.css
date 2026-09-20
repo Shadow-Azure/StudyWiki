@@ -864,14 +864,12 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   display: grid;
   width: max-content;
   min-width: 100%;
-  grid-template-columns: 36px repeat(var(--excel-cols), var(--excel-col-width));
 }
 
 .excel-header-row {
   position: sticky;
   top: 0;
   z-index: 2;
-  margin-top: -28px;
   min-height: 28px;
   background: color-mix(in srgb, var(--chrome) 74%, var(--paper));
   border-bottom: 1px solid var(--hairline);
@@ -888,15 +886,15 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   border-right: 1px solid var(--hairline-soft);
 }
 
-.excel-grid { --excel-rows: 0; grid-auto-rows: 28px; }
+.excel-grid { grid-auto-rows: 0; }
 
 .excel-row { display: contents; }
 
 .excel-cell {
   display: inline-flex;
   align-items: center;
+  width: 100%;
   min-width: 0;
-  min-height: 28px;
   padding: 0 7px;
   overflow: hidden;
   background-clip: padding-box;
@@ -911,19 +909,22 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 .excel-cell:nth-child(1),
 .excel-cell:first-of-type { border-left: 1px solid var(--hairline-soft); }
 .excel-cell:hover { background-color: color-mix(in srgb, var(--ink) 3%, transparent); }
-.excel-cell:focus-visible {
-  outline: 2px solid var(--azurite);
-  outline-offset: -2px;
-}
-.excel-cell-hidden { visibility: hidden; pointer-events: none; }
-
 .excel-border-top { border-top: 1px solid var(--ink-3); }
 .excel-border-right { border-right: 1px solid var(--ink-3); }
 .excel-border-bottom { border-bottom: 1px solid var(--ink-3); }
 .excel-border-left { border-left: 1px solid var(--ink-3); }
 
 .excel-empty {
-  padding: 28px 32px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 32px;
+  background: var(--paper);
   color: var(--ink-2);
   font-size: 13px;
 }
