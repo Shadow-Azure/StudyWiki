@@ -39,3 +39,7 @@ test("虚拟滚动：视口加 overscan，且不到底时不制造空白", () =>
   expect(visibleRowRange(28 * 500, 280, 28, 1000, 10)).toEqual({ start: 490, count: 30 });
   expect(visibleRowRange(28 * 995, 280, 28, 1000, 10)).toEqual({ start: 970, count: 30 });
 });
+
+test("虚拟滚动：默认 overscan 是上下各 3 行", () => {
+  expect(visibleRowRange(0, 280, 28, 1000)).toEqual({ start: 0, count: 16 });
+});

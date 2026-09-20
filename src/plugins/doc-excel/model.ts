@@ -95,8 +95,7 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
   );
   const columnWidths = Array.from({ length: sheet.columnCount }, (_, index) => {
     const width = sheet.getColumn(index + 1).width;
-    if (width === undefined) return 64;
-    return Math.min(240, Math.max(64, Math.round(width * 8 + 8)));
+    return Math.min(240, Math.max(64, Math.round((width ?? 7) * 8 + 8)));
   });
 
   const merges = (sheet.model?.merges ?? [])
@@ -165,7 +164,7 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
   };
 }
 
-/** Return the safe row window for a virtualized worksheet viewport, including top and bottom overscan. */
+/** Return the safe row window for a virtualized worksheet viewport; overscan defaults to 3 rows on each side. */
 export function visibleRowRange(
   scrollTop: number,
   viewportHeight: number,
