@@ -157,3 +157,25 @@ test("DOM：迟到的 Excel 读取不能覆盖后打开的文档", async () => {
   await vi.waitFor(() => expect(document.querySelector(".excel-tab")?.textContent).toBe("新"));
   expect(document.querySelector(".excel-viewer")?.textContent).not.toContain("旧");
 });
+
+test("DOM：完全位于窗口下方的合并不产生片段或几何膨胀", async () => {
+  document.body.replaceChildren();
+  const belowMerge = mergeWorkbook();
+  belowMerge.worksheets[0].model.merges = ["A50:A60"];
+  belowMerge.worksheets[0].eachRow = () => {};
+  const { opened } = harness(belowMerge);
+  await opened({ name: "below.xlsx", path: "/x/below.xlsx", kind: "excel" });
+  expect(document.querySelector('[data-address="A50"]')).toBeNull();
+  expect(document.querySelector('[data-address="A60"]')).toBeNull();
+  expect([...document.querySelectorAll<HTMLElement>(".excel-cell")]
+    .filter((cell) => cell.textContent === "跨窗标题")).toHaveLength(0);
+  const topSpacer = document.querySelector<HTMLElement>(".excel-top-spacer");
+  const bottomSpacer = document.querySelector<HTMLElement>(".excel-bottom-spacer");
+  const grid = document.querySelector<HTMLElement>(".excel-grid");
+  expect(topSpacer?.style.height).toBe("0px");
+  expect(bottomSpacer?.style.height).toBe("1792px");
+  expect(grid?.style.gridTemplateRows).toBe("repeat(16, 28px)");
+  expect(document.querySelectorAll(".excel-row")).toHaveLength(16);
+  expect((Number.parseFloat(topSpacer?.style.height ?? "0") +
+    Number.parseFloat(bottomSpacer?.style.height ?? "0")) / 28 + 16 + 1).toBe(81);
+});

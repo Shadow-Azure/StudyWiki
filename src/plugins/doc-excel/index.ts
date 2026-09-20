@@ -57,7 +57,8 @@ function visibleMergeSegments(model: ExcelSheetModel, start: number, end: number
   const segments = new Map<string, MergeSegment>();
   for (const anchor of mergeAnchors(model)) {
     const anchorEnd = anchor.row + anchor.cell.rowSpan - 1;
-    if (anchorEnd < start) continue;
+    // Reject both directions: an anchor wholly below has anchorStart > end, wholly above has anchorEnd < start.
+    if (anchor.row > end || anchorEnd < start) continue;
     const visualStart = Math.max(anchor.row, start);
     const visualEnd = Math.min(anchorEnd, end);
     segments.set(`${anchor.row}:${anchor.column}`, { anchor, visualStart, visualEnd });
