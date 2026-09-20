@@ -8,12 +8,16 @@ milestone: m1
 priority: P0
 status: backlog
 scope:
+  - .agents/flow/issues/m1-01-excel-viewer.*
   - .agents/notes/proposed/feature/2026-09-20-excel-viewer.*
+  - .agents/plans/**
+  - tests/**
   - src/host/excel.ts
   - src/host/files.ts
   - src/types.ts
   - src/plugins/doc-excel/**
   - src/loader/table.ts
+  - src/ui/icons.ts
   - src-tauri/**
   - docs/architecture.*
   - docs/commands.*
