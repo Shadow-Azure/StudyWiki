@@ -35,6 +35,25 @@ test("files: fs://changed 桥接为 onFsChanged", async () => {
   expect(seen).toEqual(["/x/a.md"]);
 });
 
+test("files: readBinary 把命令字节数组归一为 Uint8Array", async () => {
+  const invoke = vi.fn().mockResolvedValue([1, 2, 3]);
+  const files = new FilesService({ invoke, listen: vi.fn(), openDialog: vi.fn(), assetUrl: (p) => p });
+  await expect(files.readBinary("/x/a.xlsx")).resolves.toEqual(new Uint8Array([1, 2, 3]));
+  expect(invoke).toHaveBeenCalledWith("read_binary_file", { path: "/x/a.xlsx" });
+});
+
+test("files: writeBinary 发送普通数组并透传错误", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const files = new FilesService({ invoke, listen: vi.fn(), openDialog: vi.fn(), assetUrl: (p) => p });
+  await files.writeBinary("/x/a.xlsx", new Uint8Array([4, 5]));
+  expect(invoke).toHaveBeenCalledWith("write_binary_file", {
+    path: "/x/a.xlsx",
+    bytes: [4, 5],
+  });
+  invoke.mockRejectedValueOnce(new Error("denied"));
+  await expect(files.writeBinary("/x/a.xlsx", new Uint8Array())).rejects.toThrow("denied");
+});
+
 test("windows: fetchRoot 对 null 状态安全；confirmDialog 透传", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
   const confirmDialog = vi.fn().mockResolvedValue(true);

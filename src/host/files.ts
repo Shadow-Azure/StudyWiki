@@ -57,6 +57,20 @@ export class FilesService {
     return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
   }
 
+  /** Whole-file binary read — the Excel service's byte source. */
+  async readBinary(path: string): Promise<Uint8Array> {
+    const bytes = await this.#deps.invoke("read_binary_file", { path }) as number[];
+    return Uint8Array.from(bytes);
+  }
+
+  /** Whole-file binary write; Rust writes atomically and broadcasts the change. */
+  writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+    return this.#deps.invoke("write_binary_file", {
+      path,
+      bytes: Array.from(bytes),
+    }) as Promise<void>;
+  }
+
   /** System folder picker; null when cancelled. */
   pickFolder(): Promise<string | null> {
     return this.#deps.openDialog();
