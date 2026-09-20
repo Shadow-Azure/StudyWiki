@@ -60,7 +60,7 @@ export async function verifyFlowDiff(base) {
   const offline = await verifyFlow();
   const errors = [...offline.errors];
 
-  const subjects = git(["log", "--format=%s", `${base}..HEAD`]).split("\n").filter(Boolean);
+  const subjects = git(["log", "--format=%s", "--no-merges", `${base}..HEAD`]).split("\n").filter(Boolean);
   if (subjects.length === 0) errors.push(`${base}..HEAD 没有 commit`);
   const referenced = new Set();
   for (const subject of subjects) {

@@ -35,6 +35,7 @@ New exemptions must be registered in this table with an Agent Note link; unregis
 | System webview boundary (see above) | Volume/maintenance tradeoff | [.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.en.md](../.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.en.md) |
 | External plugin install networking (active) | Install = registry tarball direct fetch; runtime stays fully offline | [.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.en.md](../.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.en.md) |
 | `http://www.w3.org/2000/svg` (icons.ts) | createElementNS identifier, never fetched; WKWebView does not paint innerHTML-parsed SVGs, explicit construction required | [.agents/notes/implemented/feature/2026-09-13-ui-refresh.en.md](../.agents/notes/implemented/feature/2026-09-13-ui-refresh.en.md) |
+| AI inference via a user-configured remote endpoint (LLM/VLM/ASR) | The only network point; user-run closed loop, no shipped key | [.agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.en.md](../.agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.en.md) |
 
 Exemptions for `node:` builtin references (in-package files confirmed never to enter the browser bundle, e.g. CLI bins) are registered in the `nodeRefExempt` table of [scripts/dep-allowlist.json](../scripts/dep-allowlist.json), part of the dependency-allowlist gate — not duplicated here.
 

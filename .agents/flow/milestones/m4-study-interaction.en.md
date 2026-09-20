@@ -14,13 +14,14 @@ github:
 
 ## Goal
 
-The learning loop while watching videos: sending a message automatically carries the current timestamp, and the agent answers using the transcript and frame content at that timestamp; the interaction settles into notes.
+The study loop while watching video: a question automatically carries the current timestamp, and the agent answers from the transcript and frames at that timestamp; the interaction is written to the source folder's AI-chat-note.md and backfilled into llm-wiki.
 
 ## Acceptance
 
-- Questions automatically carry the current playback timestamp, and answers draw on the transcript and frame content at that timestamp.
-- Interaction content is persisted to the note file in the media's raw-data folder.
+- A question automatically carries the playback timestamp, and the answer is based on the corresponding transcript and frames.
+- The interaction lands in the source folder's AI-chat-note.md and is backfilled into llm-wiki.
 
 ## Issues
 
-To be decomposed — issues are filed through discussion rounds before this milestone starts.
+- [Timestamp-context Q&A](../issues/m4-01-timestamp-qa.en.md)
+- [Interaction note persistence](../issues/m4-02-chat-note.en.md)
