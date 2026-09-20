@@ -62,7 +62,7 @@ export function apply(ctx: Context, config: TreeConfig): () => void {
       } else {
         const kind = document.createElement("span");
         kind.className = "tree-kind";
-        kind.append(icon(node.kind === "video" ? "play" : "doc", 15));
+        kind.append(icon(node.kind === "video" ? "play" : node.kind === "excel" ? "module" : "doc", 15));
         row.append(kind);
       }
       const name = document.createElement("span");
@@ -78,7 +78,7 @@ export function apply(ctx: Context, config: TreeConfig): () => void {
           if (expanded.has(node.path)) expanded.delete(node.path);
           else expanded.add(node.path);
           render();
-        } else if (node.kind === "markdown" || node.kind === "video") {
+        } else if (node.kind === "markdown" || node.kind === "video" || node.kind === "excel") {
           ctx.workspace.openFile(node);
         }
       });
