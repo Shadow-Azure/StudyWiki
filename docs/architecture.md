@@ -12,9 +12,10 @@
 ```text
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
-  bootstrap.ts                     每窗口启动流程：五宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：files/windows/workspace/slots/plugins 五服务类型挂入（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
+  host/context.d.ts                cordis Context 声明合并：files/excel/windows/workspace/slots/plugins 六服务类型挂入（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
+  host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
@@ -30,6 +31,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
   plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 无 root 欢迎态与已开库未选文档的次级空态（→ dom.ts、icons.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
+  plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器 + 样式/合并渲染 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ model.ts、types.ts）
+  plugins/doc-excel/model.ts       doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口
   plugins/doc-markdown/editor.ts   doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂
   plugins/doc-markdown/index.ts    doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 脏标记 + Ctrl+S 保存 + 关窗守卫（file-opened 挂渲染，kind 不符清空）（→ editor.ts、mode.ts、preview.ts、types.ts、dom.ts、icons.ts）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
@@ -71,11 +74,12 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。外置插件——安装（plugin-manager → ctx.plugins.install → install_plugin：查元数据→拉 tarball→sha512→解包校验封闭契约→入插件目录，产品唯一联网动作）；装载（boot 对 ext: 行 → read_plugin_module → blob URL 动态 import（唯一装载缝 src/loader/external.ts）→ 支持集/形状校验 → 与静态表同流程激活；坏行分治跳过、面板点名待清理）；管理（面板改动写清单、本窗即时生效——安装/导入/启停/重载/回退/移除六动作经共享激活函数（guard 门面 + fiber 审计），版本仓兜底，他窗重启跟随清单）。
+数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`（ExcelJS workbook），视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`；Excel 编辑保存/写入——`ctx.excel.write` → 二进制命令 → 原子 Rust 写 → `fs://changed`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager；ext: 行走唯一 blob 装载缝，过形状/版本/guard/审计后激活，坏行分治并面板点名（细节见 [dynamic.md](plugins/dynamic.md)）。
 
 ## 关键决策点
 
-- **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS` / `VIDEO_EXTS`）：单一决策点。
+- **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS` / `VIDEO_EXTS` / `EXCEL_EXTS`）：单一决策点。
+- **xlsx 语义在前端 ExcelJS，Rust 只作字节边界**：`ctx.excel` 持 workbook 并强制 1_000_000 声明维度单元格上限；Rust 只搬运与原子写。
 - **vendored cordis，取契约弃装载器**：静态模块表 + 清单装载，组合是数据；升级 = 手动 diff + [vendor/VENDORED.md](../vendor/VENDORED.md) 登记。
 - **分层纪律**：`src/plugins/` 禁 import `@tauri-apps/*`（`pnpm verify:layering` 校验）；全局状态住 Rust，窗口状态住 Context。
 - **assetProtocol 配置 scope 为空，运行期动态授权**：选中/建窗/启动携带 root 时 Rust `allow_directory`（recursive）注入——视频与图片仍走 asset protocol，但配置面不再预开任意目录。

@@ -6,10 +6,12 @@
 kind: issue
 milestone: m1
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m1-01-excel-viewer.*
   - .agents/notes/proposed/feature/2026-09-20-excel-viewer.*
+  - .agents/flow/issues/m1-03-excel-editing.*
+  - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*
   - .agents/plans/**
   - tests/**
   - src/host/excel.ts
@@ -25,7 +27,7 @@ scope:
   - pnpm-lock.yaml
   - scripts/dep-allowlist.json
 adr:
-  - ../../notes/proposed/feature/2026-09-20-excel-viewer.md
+  - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:
   number: 25
   url: https://github.com/Shadow-Azure/StudyWiki/issues/25

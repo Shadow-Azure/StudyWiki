@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m1-01-excel-viewer.md
-m1-01-excel-viewer.md: fe34db6733eeb97c00a27f504a66ea6b86798a0d
-m1-01-excel-viewer.en.md: fb192ff62787ff6aa8631af46e7facac390f2051
+m1-01-excel-viewer.md: 25c1cf72f13e675b2d3f09a21dd2ed82ffcaeb59
+m1-01-excel-viewer.en.md: c1e617a9c81d2806fd4ed5cb3a67fef29526708d

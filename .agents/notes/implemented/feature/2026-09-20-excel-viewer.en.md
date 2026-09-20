@@ -1,6 +1,6 @@
 # Agent Note: Excel viewer and editable data model
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-09-20-excel-viewer.md)
 

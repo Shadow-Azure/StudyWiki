@@ -88,7 +88,9 @@ function parseMergeRange(merge: string, rowCount: number, columnCount: number): 
   return { top, left, bottom, right };
 }
 
-/** Convert one Excel worksheet and its merges into a framework-independent view model. */
+/** Convert one Excel worksheet and its merges into a framework-independent view model.
+ * @param sheet Structural worksheet source supplied by the Excel host service.
+ * @returns CSS-ready cells, column widths, merges, and dimensions. */
 export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
   const rows: ExcelCell[][] = Array.from({ length: sheet.rowCount }, () =>
     Array.from({ length: sheet.columnCount }, emptyCell),
@@ -164,7 +166,13 @@ export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
   };
 }
 
-/** Return the safe row window for a virtualized worksheet viewport; overscan defaults to 3 rows on each side. */
+/** Return the safe row window for a virtualized worksheet viewport; overscan defaults to 3 rows on each side.
+ * @param scrollTop Current viewport top position in pixels.
+ * @param viewportHeight Visible viewport height in pixels.
+ * @param totalRows Total worksheet rows.
+ * @param rowHeight Fixed row pitch in pixels.
+ * @param overscan Extra rows rendered above and below the window.
+ * @returns Zero-based start row and clamped rendered-row count. */
 export function visibleRowRange(
   scrollTop: number,
   viewportHeight: number,

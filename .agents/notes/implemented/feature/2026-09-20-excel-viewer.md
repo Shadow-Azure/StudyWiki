@@ -1,6 +1,6 @@
 # Agent Note: Excel 查看器与可编辑数据模型
 
-Status: proposed
+Status: implemented
 
 [English](2026-09-20-excel-viewer.en.md) | 中文
 

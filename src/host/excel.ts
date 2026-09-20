@@ -14,7 +14,9 @@ export interface ExcelDeps {
 /** Upper bound on rowCount × columnCount across all worksheets. */
 export const MAX_EXCEL_CELLS = 1_000_000;
 
-/** Parse raw xlsx bytes into an ExcelJS workbook. */
+/** Parse raw xlsx bytes into an ExcelJS workbook.
+ * @param bytes Raw `.xlsx` bytes from the binary files service.
+ * @returns The parsed ExcelJS workbook. */
 export async function parseWorkbook(bytes: Uint8Array): Promise<Workbook> {
   const copy = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(copy).set(bytes);

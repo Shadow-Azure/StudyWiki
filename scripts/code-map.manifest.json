@@ -7,8 +7,8 @@
   "src-tauri/src/plugins.rs": "插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）",
   "src-tauri/src/windows.rs": "窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO",
   "src/boot-error.ts": "启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）",
-  "src/bootstrap.ts": "每窗口启动流程：五宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）",
-  "src/host/context.d.ts": "cordis Context 声明合并：files/windows/workspace/slots/plugins 五服务类型挂入",
+  "src/bootstrap.ts": "每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）",
+  "src/host/context.d.ts": "cordis Context 声明合并：files/excel/windows/workspace/slots/plugins 六服务类型挂入",
   "src/host/emitter.ts": "极简类型化事件发射器（on 返回反订阅）",
   "src/host/files.ts": "文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）",
   "src/host/plugins.ts": "宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）",
@@ -39,5 +39,8 @@
   "src/types.ts": "FileNode —— 前后端共享的唯一形状",
   "src/ui/icons.ts": "内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）",
   "vendor": "vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md",
-  "src/ui/dom.ts": "DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）"
+  "src/ui/dom.ts": "DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）",
+  "src/host/excel.ts": "Excel 服务：ExcelJS workbook 解析/序列化 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）",
+  "src/plugins/doc-excel/index.ts": "doc-excel 插件：活动文件多 sheet 查看器 + 样式/合并渲染 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）",
+  "src/plugins/doc-excel/model.ts": "doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口"
 }
