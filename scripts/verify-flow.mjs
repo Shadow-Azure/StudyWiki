@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import {
   collectRefs,
   loadFlowTree,
+  parseFlowDocument,
   uncoveredFiles,
   validateTree,
 } from "./flow-lib.mjs";
@@ -31,6 +32,22 @@ function deriveRepo() {
 
 function git(args) {
   return execFileSync("git", args, { encoding: "utf8" }).trim();
+}
+
+/**
+ * base 版本的 issue 状态：收口提交把 issue 翻成 done，其自身必须仍能挂
+ * 引用——被引资格按 base 评估。base 无该文件（新 issue 首次提交）返回
+ * undefined，调用方回落到 HEAD 状态。
+ */
+function baseIssueStatus(base, file) {
+  try {
+    const text = execFileSync("git", ["show", `${base}:${file}`], {
+      encoding: "utf8",
+    });
+    return parseFlowDocument(text, file).data.status;
+  } catch {
+    return undefined;
+  }
 }
 
 /** base 树是否已启用流程（无 roadmap 则本 PR 是流程自身的自举，跳过 diff 校验）。 */
@@ -84,8 +101,9 @@ export async function verifyFlowDiff(base) {
       errors.push(`引用的 issue #${n} 在 .agents/flow/issues/ 内不存在（先建 issue 或先跑 pnpm flow:sync 回填）`);
       continue;
     }
-    if (!["ready", "in-progress"].includes(issue.data.status))
-      errors.push(`#${n}（${issue.name}）status 是 ${issue.data.status}——只有 ready / in-progress 的 issue 能挂提交`);
+    const status = baseIssueStatus(base, issue.file) ?? issue.data.status;
+    if (!["ready", "in-progress"].includes(status))
+      errors.push(`#${n}（${issue.name}）在 ${base} 的 status 是 ${status}——只有 ready / in-progress 的 issue 能挂提交`);
     scopes.push(...(Array.isArray(issue.data.scope) ? issue.data.scope : []));
   }
   if (errors.length === 0 && referenced.size > 0) {
