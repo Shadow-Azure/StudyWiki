@@ -8,6 +8,10 @@ milestone: m1
 priority: P0
 status: backlog
 scope:
+  - .agents/notes/proposed/feature/2026-09-20-excel-viewer.*
+  - src/host/excel.ts
+  - src/host/files.ts
+  - src/types.ts
   - src/plugins/doc-excel/**
   - src/loader/table.ts
   - src-tauri/**
@@ -16,7 +20,8 @@ scope:
   - package.json
   - pnpm-lock.yaml
   - scripts/dep-allowlist.json
-adr: []
+adr:
+  - ../../notes/proposed/feature/2026-09-20-excel-viewer.md
 github:
   number: 25
   url: https://github.com/Shadow-Azure/StudyWiki/issues/25
