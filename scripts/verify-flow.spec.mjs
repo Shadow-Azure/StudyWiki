@@ -1,6 +1,11 @@
 // 门禁自测试：verify-flow / flow-lib——yaml flow 解析、流程树状态机、优先级
-// 推进资格、github 编号规则、bootstrap 豁免、glob/提交引用工具。
+// 推进资格、github 编号规则、bootstrap 豁免、glob/提交引用工具、diff 模式
+// 的收口提交语义（被引 issue 资格按 base 评估）。
 
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createGateRunner } from "./spec-fixture.mjs";
 import {
@@ -279,5 +284,75 @@ describe("verifyFlow 端到端", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.errors.join("\n")).toContain("m9");
+  });
+});
+
+// ── verifyFlowDiff 端到端（真实 git 夹具：base/HEAD 两提交）────────────────
+
+describe("verifyFlowDiff 端到端", () => {
+  const dirs = [];
+  afterAll(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  /** 造两提交仓库：base 上 issue 为 baseStatus，HEAD 提交把它翻成 headStatus 并引用 (#7)。 */
+  const repoWithStatusFlip = (baseStatus, headStatus) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "studywiki-flow-diff-"));
+    dirs.push(dir);
+    const write = (files) => {
+      for (const [rel, content] of Object.entries(files)) {
+        const full = path.join(dir, rel);
+        mkdirSync(path.dirname(full), { recursive: true });
+        writeFileSync(full, content);
+      }
+    };
+    const issue = (status) =>
+      ISSUE({ status, number: 7, url: '"https://github.com/x/y/issues/7"', scope: [".agents/flow/**"] });
+    const milestone = (status) => MILESTONE("m0", status);
+    write({
+      ".agents/flow/roadmap.md": ROADMAP(["m0"]),
+      ".agents/flow/milestones/m0-x.md": milestone("active"),
+      ".agents/flow/issues/m0-01-a.md": issue(baseStatus),
+    });
+    const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+    git(["init", "-q"]);
+    git(["add", "."]);
+    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "开工 (#7)"]);
+    write({
+      ".agents/flow/milestones/m0-x.md": milestone(headStatus === "done" ? "done" : "active"),
+      ".agents/flow/issues/m0-01-a.md": issue(headStatus),
+    });
+    git(["add", "."]);
+    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "收口 (#7)"]);
+    return dir;
+  };
+
+  const runDiff = async (dir) => {
+    const prev = process.cwd();
+    const savedTitle = process.env.PR_TITLE;
+    delete process.env.PR_TITLE;
+    process.chdir(dir);
+    try {
+      const gate = await import(
+        // @vite-ignore：绕开 vite 的动态导入分析，走原生 ESM。
+        new URL(`./verify-flow.mjs?fixture=diff-${dirs.length}`, import.meta.url).href
+      );
+      return await gate.verifyFlowDiff("HEAD~1");
+    } finally {
+      process.chdir(prev);
+      if (savedTitle !== undefined) process.env.PR_TITLE = savedTitle;
+    }
+  };
+
+  it("收口提交：base 上 in-progress 的 issue 在 HEAD 翻 done 仍可挂引用", async () => {
+    const result = await runDiff(repoWithStatusFlip("in-progress", "done"));
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("base 上已 done 的 issue 挂引用仍红", async () => {
+    const result = await runDiff(repoWithStatusFlip("done", "done"));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("ready / in-progress");
   });
 });

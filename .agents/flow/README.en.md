@@ -45,7 +45,7 @@ roadmap fence fields: `kind: roadmap`, `milestones` (ordered id list). milestone
 | Check | Where | Coverage |
 |---|---|---|
 | `pnpm verify:flow` | local + CI static lane | every offline rule on this page |
-| `verify-flow --diff <base>` | CI on PR | `(#N)` references in commit and PR titles, referenced issues in ready/in-progress, diff files covered by the referenced issues' scope union (skipped wholly when the base lacks a roadmap: bootstrap PRs are not bound) |
+| `verify-flow --diff <base>` | CI on PR | `(#N)` references in commit and PR titles, referenced issues in ready/in-progress (evaluated at the base, so the closing commit itself may reference its issue), diff files covered by the referenced issues' scope union (skipped wholly when the base lacks a roadmap: bootstrap PRs are not bound) |
 | `verify-flow-online` | CI online lane | two-sided consistency with GitHub: issue exists, milestone membership, state mapping, PR linked to a milestone and a project (see below) |
 | commit-msg hook | local (`pnpm install:hooks`) | commit title carries `(#N)` (reminder-level; exhaustive coverage belongs to CI) |
 

@@ -45,7 +45,7 @@ roadmap 围栏字段：`kind: roadmap`、`milestones`（id 有序列表）。mil
 | 检查 | 位置 | 内容 |
 |---|---|---|
 | `pnpm verify:flow` | 本地 + CI 静态 lane | 本页全部离线规则 |
-| `verify-flow --diff <base>` | CI on PR | commit 与 PR 标题的 `(#N)` 引用、被引 issue 处于 ready/in-progress、diff 文件落在所挂 issue 的 scope 并集内（base 无 roadmap 则整项跳过：自举 PR 不绑人） |
+| `verify-flow --diff <base>` | CI on PR | commit 与 PR 标题含 `(#N)`、被引 issue 在 base 处于 ready/in-progress（收口提交自身可挂）、diff 落在所挂 issue 的 scope 并集（base 无 roadmap 整项跳过：自举不绑人） |
 | `verify-flow-online` | CI 在线 lane | 与 GitHub 双侧一致：issue 存在、milestone 归属、状态映射、PR 关联 milestone 与 project（见下） |
 | commit-msg 钩子 | 本地（`pnpm install:hooks`） | 提交标题含 `(#N)`（提醒级，穷尽覆盖归 CI） |
 
