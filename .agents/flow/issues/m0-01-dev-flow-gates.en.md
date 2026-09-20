@@ -6,7 +6,7 @@ English | [中文](m0-01-dev-flow-gates.md)
 kind: issue
 milestone: m0
 priority: P0
-status: in-progress
+status: done
 scope:
   - scripts/**
   - .agents/flow/**

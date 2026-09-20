@@ -6,7 +6,7 @@
 kind: milestone
 id: m0
 title: 流程基建
-status: active
+status: done
 github:
   number: 1
   url: https://github.com/Shadow-Azure/StudyWiki/milestone/1
