@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m3-04-local-asr-helper.md
+m3-04-local-asr-helper.md: d5601c5fdcbf038cdfdbb4a6d141567e84784a4c
+m3-04-local-asr-helper.en.md: 177c2022375513abc451ce345c491015ac19bde7

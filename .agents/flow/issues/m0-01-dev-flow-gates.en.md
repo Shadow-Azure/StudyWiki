@@ -10,13 +10,14 @@ status: in-progress
 scope:
   - scripts/**
   - .agents/flow/**
-  - .agents/notes/implemented/process/2026-09-19-dev-flow-gates.*
+  - .agents/notes/**
   - .github/**
   - package.json
   - AGENTS.md
   - docs/development.*
   - docs/AGENTS.md
   - docs/i18n/README.*
+  - docs/environment-independence.*
 adr:
   - ../../notes/implemented/process/2026-09-19-dev-flow-gates.md
 github:

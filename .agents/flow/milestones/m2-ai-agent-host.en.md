@@ -14,17 +14,21 @@ github:
 
 ## Goal
 
-Host capabilities for external plugins to plug in an AI agent, plus a basic agent plugin: conversation, context sourcing, and note persistence.
+Host capabilities for external plugins to plug in an AI agent, plus one basic agent plugin: multi-turn conversation, read/grep/write/edit tools, and the llm-wiki compiled knowledge layer (full compounding).
 
 ## Prerequisite decision
 
-How model inference is supplied (local model / external API) is in tension with the environment-independence hard constraint; it must be decided and registered in [environment-independence.md](../../../docs/environment-independence.en.md) before this milestone starts.
+Model supply = a user-configured remote endpoint (including a self-hosted closed loop), settled and registered; see the [AI inference supply ADR](../../notes/proposed/architecture/2026-09-19-ai-inference-supply.en.md).
 
 ## Acceptance
 
-- The agent plugin reaches system capabilities only through host services (layering discipline holds).
-- Basic conversation and note persistence work.
+- The agent plugin reaches system capabilities only through host services.
+- Multi-turn conversation, read/grep/write/edit, and note persistence work.
+- llm-wiki index/log/concepts are maintained automatically through ingest/query/lint.
 
 ## Issues
 
-To be decomposed — issues are filed through discussion rounds before this milestone starts.
+- [Model supply decision and inference service](../issues/m2-01-ai-inference-supply.en.md)
+- [Agent host capabilities](../issues/m2-02-agent-host.en.md)
+- [Basic agent plugin](../issues/m2-03-basic-agent.en.md)
+- [llm-wiki knowledge layer](../issues/m2-04-llm-wiki.en.md)
