@@ -29,6 +29,7 @@ m1 要求 markdown / excel / 视频三格式可读，excel 缺席；且后续诉
 
 ## Consequences
 
+- 流程门禁支持同一 PR 激活 backlog issue：HEAD 已推进为 ready/in-progress/done 时按开工处理；base 已 done 的引用仍拒绝。
 - `exceljs` 进 `dependencies` 并登记 `scripts/dep-allowlist.json`；构建期打包，无 CDN / 运行时加载，`verify:env-independence` / `verify:dep-audit` 必须绿。
 - bundle 体积增加；大表全量 workbook 在前端内存，靠虚拟滚动与单元格上限保护。
 - 宿主服务从五个变六个（files / windows / workspace / slots / plugins / excel），architecture 文档与 code map 同步更新。

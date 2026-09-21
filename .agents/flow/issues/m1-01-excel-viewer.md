@@ -13,11 +13,16 @@ scope:
   - .agents/flow/issues/m1-03-excel-editing.*
   - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*
   - .agents/plans/**
+  - .agents/flow/milestones/m1-prototype-shell.*
   - tests/**
   - src/host/excel.ts
   - src/host/files.ts
   - src/types.ts
+  - src/bootstrap.ts
+  - src/host/context.d.ts
+  - src/styles.css
   - src/plugins/doc-excel/**
+  - src/plugins/view-filetree/**
   - src/loader/table.ts
   - src/ui/icons.ts
   - src-tauri/**
@@ -26,6 +31,8 @@ scope:
   - package.json
   - pnpm-lock.yaml
   - scripts/dep-allowlist.json
+  - scripts/code-map.manifest.json
+  - scripts/verify-flow.mjs
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:

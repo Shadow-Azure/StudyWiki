@@ -29,6 +29,7 @@ M1 requires markdown / excel / video to be readable; excel is missing. The need 
 
 ## Consequences
 
+- The flow gate supports activating a backlog issue within the same PR: when PR HEAD advances it to ready/in-progress/done, the issue is treated as started; references to a base-done issue remain rejected.
 - `exceljs` joins `dependencies` and `scripts/dep-allowlist.json`; bundled at build time, no CDN or runtime loading. `verify:env-independence` / `verify:dep-audit` must stay green.
 - Bundle size grows; large workbooks live fully in frontend memory, protected by virtual scrolling and the cell cap.
 - Host services grow from five to six (files / windows / workspace / slots / plugins / excel); architecture docs and code map update accordingly.
