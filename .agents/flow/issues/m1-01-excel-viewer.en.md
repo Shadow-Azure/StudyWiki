@@ -9,6 +9,7 @@ priority: P0
 status: done
 scope:
   - .agents/flow/issues/m1-01-excel-viewer.*
+  - .agents/flow/README.*
   - .agents/notes/proposed/feature/2026-09-20-excel-viewer.*
   - .agents/flow/issues/m1-03-excel-editing.*
   - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*
@@ -33,6 +34,7 @@ scope:
   - scripts/dep-allowlist.json
   - scripts/code-map.manifest.json
   - scripts/verify-flow.mjs
+  - scripts/verify-flow.spec.mjs
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:
