@@ -14,6 +14,10 @@ export interface ExcelDeps {
 /** Upper bound on rowCount × columnCount across all worksheets. */
 export const MAX_EXCEL_CELLS = 1_000_000;
 
+/** User-facing message for any workbook that reaches ExcelJS but cannot be parsed. */
+const INVALID_EXCEL_MESSAGE =
+  "Excel 文件损坏或不是有效的 .xlsx 文件，请确认来源文件，或另存为 .xlsx 后重试。";
+
 /** Parse raw xlsx bytes into an ExcelJS workbook.
  * @param bytes Raw `.xlsx` bytes from the binary files service.
  * @returns The parsed ExcelJS workbook. */
@@ -37,12 +41,18 @@ export class ExcelService {
 
   /** Read and parse an xlsx workbook; rejects corrupt or over-cap files. */
   async read(path: string): Promise<Workbook> {
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.#files.readBinary(path);
+    } catch (error) {
+      throw new Error(`读取 Excel 失败：${(error as Error).message}`);
+    }
     let workbook: Workbook;
     try {
-      workbook = await this.#parse(await this.#files.readBinary(path));
+      workbook = await this.#parse(bytes);
     } catch (error) {
       if (error instanceof Error && error.message.includes("过大")) throw error;
-      throw new Error(`读取 Excel 失败：${(error as Error).message}`);
+      throw new Error(INVALID_EXCEL_MESSAGE);
     }
     const cells = workbook.worksheets.reduce(
       (sum, ws) => sum + Math.max(1, ws.rowCount) * Math.max(1, ws.columnCount),

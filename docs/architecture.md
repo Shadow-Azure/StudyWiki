@@ -15,7 +15,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
   host/context.d.ts                cordis Context 声明合并：files/excel/windows/workspace/slots/plugins 六服务类型挂入（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
-  host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
+  host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
@@ -29,7 +29,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
-  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 无 root 欢迎态与已开库未选文档的次级空态（→ dom.ts、icons.ts）
+  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器 + 样式/合并渲染 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ model.ts、types.ts）
   plugins/doc-excel/model.ts       doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口
@@ -40,7 +40,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放；file-opened 挂渲染，kind 不符清空）
   plugins/plugin-manager/index.ts  plugin-manager 插件：顶栏入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
   plugins/plugin-manager/model.ts  plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
-  plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
+  plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
   plugins/view-filetree/tree.ts    view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
   preview.ts                       浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归（→ workspace.ts、styles.css、types.ts）
   styles.css                       工作台视觉系统：中性双主题令牌 + 壳/树/拖拽发丝线/按钮/阅读与编辑面/分段模式/暗室/面板全样式（无逻辑）
@@ -65,7 +65,7 @@ export type FileNode = {
   name: string;
   /** Absolute path — used for reads/writes and asset-protocol URLs. */
   path: string;
-  /** Dispatches handling: directories expand; markdown/video/excel open; other lists only. */
+  /** Dispatches handling: directories expand; markdown/video/excel open; other opens the shell unsupported hint. */
   kind: "dir" | "markdown" | "video" | "excel" | "other";
   /** Present only for directories. */
   children?: FileNode[];
@@ -74,7 +74,7 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`（ExcelJS workbook），视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`；Excel 编辑保存/写入——`ctx.excel.write` → 二进制命令 → 原子 Rust 写 → `fs://changed`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager；ext: 行走唯一 blob 装载缝，过形状/版本/guard/审计后激活，坏行分治并面板点名（细节见 [dynamic.md](plugins/dynamic.md)）。
+数据流：树读取——选文件夹（dialog）→ `read_tree` 按扩展名定 kind → view-filetree 渲染侧栏；打开——`workspace.openFile` 按 kind 分派，markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`（ExcelJS workbook），视频走 `files.assetUrl`（asset protocol）喂系统 webview `<video>`，other 由 app-shell 呈现不支持提示；Excel 编辑保存/写入——`ctx.excel.write` → 二进制命令 → 原子 Rust 写 → `fs://changed`；保存——`write_text_file` 落盘广播 `fs://changed`，各窗口树重读；建窗——app-windows → `create_window` 登记注册表、建 WebviewWindow → 新 webview bootstrap（`get_window_state` 领 root → 装载器按清单激活）。外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager；ext: 行走唯一 blob 装载缝，过形状/版本/guard/审计后激活，坏行分治并面板点名（细节见 [dynamic.md](plugins/dynamic.md)）。
 
 ## 关键决策点
 

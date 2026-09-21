@@ -5,6 +5,7 @@ import type { FileNode } from "../src/types";
 
 const dir = (name: string, path: string, children: FileNode[]): FileNode => ({ name, path, kind: "dir", children });
 const md = (name: string): FileNode => ({ name, path: `/x/${name}`, kind: "markdown" });
+const other = (name: string): FileNode => ({ name, path: `/x/${name}`, kind: "other" });
 
 test("filterTree: 点文件按配置剔除（递归）", () => {
   const tree = [dir(".git", "/x/.git", [md("config")]), md("a.md"), dir("Sub", "/x/Sub", [md(".hidden")])];
@@ -39,4 +40,19 @@ test("DOM: 点击文件触发 workspace.openFile；点目录切换展开", async
   const fileBtns = [...document.querySelectorAll<HTMLButtonElement>(".tree-file")];
   fileBtns.find((b) => b.textContent === "a.md")!.click();
   expect(opened.map((f) => f.name)).toEqual(["a.md"]);
+});
+
+test("DOM: other 文件仍进入打开事件以触发主区不支持提示", async () => {
+  const { apply } = await import("../src/plugins/view-filetree");
+  const opened: FileNode[] = [];
+  const files = {
+    readTree: async () => [other("data.csv")],
+    onFsChanged: () => () => {},
+  };
+  const workspace = { root: "/x", events: { on: () => () => {} }, openFile: (f: FileNode) => opened.push(f) };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  apply({ files, workspace, slots } as never, { ignoreDotfiles: true });
+  await new Promise((r) => setTimeout(r, 10));
+  document.querySelector<HTMLButtonElement>(".tree-file")!.click();
+  expect(opened.map((f) => f.kind)).toEqual(["other"]);
 });

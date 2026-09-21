@@ -20,8 +20,8 @@ const SIDEBAR_DEFAULT = 252;
 const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** Shell layout: topbar (seal brand + actions + active filename) + sidebar + main
- * grid and the three slot containers; with no root open the main area renders the
- * welcome state.
+ * grid and the three slot containers; main states cover the no-root welcome,
+ * no-active-file hint, and explicit unsupported hint for other files.
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
  * @returns Teardown removing the root-changed / file-opened subscriptions. */
@@ -140,13 +140,25 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   emptyHint.textContent = "从左侧选择一篇文档，开始阅读。";
   mainEmpty.append(emptyHint);
 
-  const syncEmpty = (): void => {
-    if (ctx.workspace.root && !ctx.workspace.activeFile) viewerHost.before(mainEmpty);
-    else mainEmpty.remove();
+  // other 文件保留在树中并可点击；主区显式解释为什么不渲染，避免静默无响应。
+  const unsupportedFormat = document.createElement("div");
+  unsupportedFormat.className = "main-empty unsupported-format";
+  const unsupportedTitle = document.createElement("p");
+  unsupportedTitle.textContent = "暂不支持预览该格式。";
+  const unsupportedHint = document.createElement("p");
+  unsupportedHint.textContent = "支持 Markdown、xlsx、视频；Excel 兼容格式可另存为 .xlsx 后重试。";
+  unsupportedFormat.append(unsupportedTitle, unsupportedHint);
+
+  const syncMainState = (): void => {
+    mainEmpty.remove();
+    unsupportedFormat.remove();
+    if (!ctx.workspace.root) return;
+    if (!ctx.workspace.activeFile) viewerHost.before(mainEmpty);
+    else if (ctx.workspace.activeFile.kind === "other") viewerHost.before(unsupportedFormat);
   };
   const syncWelcome = (): void => {
     fileTitle.textContent = "";
-    syncEmpty();
+    syncMainState();
     if (ctx.workspace.root) {
       welcome.remove();
     } else {
@@ -156,7 +168,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   const off = ctx.workspace.events.on("root-changed", syncWelcome);
   const offFile = ctx.workspace.events.on("file-opened", () => {
     fileTitle.textContent = ctx.workspace.activeFile?.name ?? "";
-    syncEmpty();
+    syncMainState();
   });
   window.addEventListener("resize", onWindowResize);
   syncWelcome();

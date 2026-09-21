@@ -13,7 +13,7 @@ export const inject = ["files", "workspace", "slots"];
 const rootLabel = (root: string): string => root.split(/[\\/]/).filter(Boolean).pop() ?? root;
 
 /** Sidebar file tree: head row with the root name and manual refresh, expand/collapse
- * directories, click to open documents; the active file row is highlighted
+ * directories, click to open documents (other opens the shell unsupported hint); the active file row is highlighted
  * (aria-current) and re-rendered on file-opened.
  * @param ctx Host context (files/workspace/slots injected).
  * @param config Tree config (dotfile filtering).
@@ -78,7 +78,7 @@ export function apply(ctx: Context, config: TreeConfig): () => void {
           if (expanded.has(node.path)) expanded.delete(node.path);
           else expanded.add(node.path);
           render();
-        } else if (node.kind === "markdown" || node.kind === "video" || node.kind === "excel") {
+        } else {
           ctx.workspace.openFile(node);
         }
       });

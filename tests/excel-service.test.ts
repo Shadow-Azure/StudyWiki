@@ -37,6 +37,19 @@ test("excel: 超过单元格上限拒绝读取", async () => {
   expect(MAX_EXCEL_CELLS).toBe(1_000_000);
 });
 
+test("excel: 解析失败映射为稳定的用户文案", async () => {
+  const files = {
+    readBinary: async () => new TextEncoder().encode("not a zip archive"),
+    writeBinary: vi.fn(),
+  };
+  const excel = new ExcelService(files);
+  const error = await excel.read("/lib/corrupt.xlsx").catch((reason: unknown) => reason);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe(
+    "Excel 文件损坏或不是有效的 .xlsx 文件，请确认来源文件，或另存为 .xlsx 后重试。",
+  );
+  expect((error as Error).message).not.toMatch(/jszip|https?:\/\//i);
+});
 
 test("excel: write 产出可被 ExcelJS 解析回读的工作簿", async () => {
   const source = new Workbook();

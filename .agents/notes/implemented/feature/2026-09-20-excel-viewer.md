@@ -13,12 +13,12 @@ m1 要求 markdown / excel / 视频三格式可读，excel 缺席；且后续诉
 - 架构采用「前端 ExcelJS 数据模型 + Rust 字节边界」：ExcelJS workbook 是唯一 xlsx 数据模型（解析、编辑、序列化都在前端）；Rust 不理解 xlsx，只做字节读写、路径根域校验与原子落盘。
 - 新增第 6 个宿主服务 `ctx.excel`（独立于 `ctx.files`）：`read(path) → Workbook`、`write(path, workbook) → void`。表格语义独立成服务，guard 白名单、AI 工具面、测试边界干净；人与 AI 共用同一契约，无特例。
 - `ctx.files` 二进制读写走 Tauri 2 raw IPC：body 是 `Uint8Array`，路径经 `x-studywiki-path` header 传 UTF-8 percent 编码；`ctx.excel` 在其上封装 ExcelJS。分层保持「格式语义归前端、系统触达归宿主」。
-- 格式范围仅 `.xlsx`；csv / 老式 .xls 未来若要再立独立 issue，不混入多 sheet 契约。
+- 格式范围仅 `.xlsx`；csv / 老式 .xls / .xlsm 列为 `other` 并保留在文件树，点击交给 shell 主区提示不支持预览，未来支持要另立独立 issue，不混入多 sheet 契约。
 - Rust `EXCEL_EXTS = ["xlsx"]` 分派，`FileNode.kind` 增加 `"excel"`（TS/Rust 同形，type-equiv 围栏同步）。
 - 查看器（本期 m1-01）：sheet 切换、虚拟滚动、样式渲染（字体、加粗斜体、填充色、边框、对齐、常见数字/日期格式子集、合并单元格、列宽）、空 sheet 空态；`ctx.excel.write` 服务面本期落地（契约完整），但页面编辑 UI 不做。
 - 编辑（新 issue）：单元格值编辑、样式工具条（字体/颜色/合并）、脏标记与关窗守卫、保存走 `ctx.excel.write` → Rust 原子写 → `fs://changed` 广播。
 - 保真边界 A+B：数据级 + 样式级编辑，写回保留大部分样式/合并/公式；图表、透视表等复杂对象不承诺无损（学习资料场景内容为王）。
-- 错误处理：损坏文件 / 非 zip → 查看器内错误面板（不白屏）；超大文件设单元格数上限（约 100 万），超限提示拒绝打开；编辑期写失败保持脏状态并提示，不丢输入。
+- 错误处理：解析失败由服务层收敛为「文件损坏或不是有效 .xlsx，请确认来源或另存」的稳定文案，查看器内错误面板展示且不透出依赖原文；超大文件设单元格数上限（约 100 万），超限提示拒绝打开；编辑期写失败保持脏状态并提示，不丢输入。
 
 ## Alternatives considered
 
