@@ -6,7 +6,7 @@ English | [中文](m1-03-excel-editing.md)
 kind: issue
 milestone: m1
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - src/plugins/doc-excel/**
   - src/styles.css

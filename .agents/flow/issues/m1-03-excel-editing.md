@@ -6,7 +6,7 @@
 kind: issue
 milestone: m1
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - src/plugins/doc-excel/**
   - src/styles.css
