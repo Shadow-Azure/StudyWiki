@@ -36,6 +36,10 @@ scope:
   - scripts/code-map.manifest.json
   - scripts/verify-flow.mjs
   - scripts/verify-flow.spec.mjs
+  - scripts/verify-dep-audit.*
+  - scripts/__fixtures__/**
+  - scripts/gen-plugin-template.spec.mjs
+  - plans/**
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:
