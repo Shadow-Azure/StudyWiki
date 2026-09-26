@@ -24,6 +24,7 @@ scope:
   - src/styles.css
   - src/plugins/doc-excel/**
   - src/plugins/view-filetree/**
+  - src/plugins/app-shell/**
   - src/loader/table.ts
   - src/ui/icons.ts
   - src-tauri/**
