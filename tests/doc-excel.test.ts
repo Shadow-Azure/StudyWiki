@@ -34,8 +34,9 @@ function harness(wb: unknown = workbook()) {
     events: { on: (_k: string, fn: (f: unknown) => void) => { opened = (f: unknown) => { workspace.activeFile = f; fn(f); }; return () => {}; } },
   };
   const excel = { read: vi.fn(async () => wb) };
+  const windows = { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) };
   const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
-  apply({ excel, workspace, slots } as never, {});
+  apply({ excel, workspace, windows, slots } as never, {});
   return { opened, excel };
 }
 
@@ -58,7 +59,8 @@ test("DOM：非 excel 清空；读取失败显示错误面板", async () => {
   const failing = { read: vi.fn(async () => { throw new Error("bad zip"); }) };
   let open!: (f: unknown) => void;
   const workspace = { activeFile: null, events: { on: (_k: string, fn: (f: unknown) => void) => { open = fn; return () => {}; } } };
-  apply({ excel: failing, workspace, slots: { register: (_s: string, r: (el: HTMLElement) => void) => { r(document.body); return () => {}; } } } as never, {});
+  const windows = { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) };
+  apply({ excel: failing, workspace, windows, slots: { register: (_s: string, r: (el: HTMLElement) => void) => { r(document.body); return () => {}; } } } as never, {});
   await open({ name: "bad.xlsx", path: "/x/bad.xlsx", kind: "excel" });
   await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("读取失败"));
 });
@@ -147,7 +149,7 @@ test("DOM：迟到的 Excel 读取不能覆盖后打开的文档", async () => {
     activeFile: null as unknown,
     events: { on: (_k: string, fn: (f: unknown) => void) => { opened = fn; return () => {}; } },
   };
-  apply({ excel: { read }, workspace, slots: { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } } } as never, {});
+  apply({ excel: { read }, workspace, windows: { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) }, slots: { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } } } as never, {});
 
   opened({ name: "old.xlsx", path: "/x/old.xlsx", kind: "excel" });
   await vi.waitFor(() => expect(read).toHaveBeenCalledWith("/x/old.xlsx"));

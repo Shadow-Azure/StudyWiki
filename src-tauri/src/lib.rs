@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
-mod plugins;
-mod windows;
+pub mod plugins;
+pub mod windows;
 
 /// 递归树节点：`kind` 由扩展名分派（单一决策点），目录递归展开。
 #[derive(Serialize)]
@@ -222,8 +222,8 @@ fn read_binary_file(
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
 /// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
 #[tauri::command]
-fn write_binary_file(
-    app: tauri::AppHandle,
+fn write_binary_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
     request: Request<'_>,
 ) -> Result<(), String> {
@@ -252,9 +252,9 @@ fn read_text_file(
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
+/// 装配发布运行的完整 Tauri builder。
+pub fn app_builder() -> tauri::Builder<tauri::Wry> {
+    tauri::Builder::<tauri::Wry>::new()
         .plugin(tauri_plugin_dialog::init())
         .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
         .on_window_event(|window, event| {
@@ -287,6 +287,21 @@ pub fn run() {
             plugins::install_plugin,
             plugins::import_plugin
         ])
+}
+
+/// Raw binary IPC 测试装配：同一 read/write 命令实现经 MockRuntime 的真实 IPC resolver。
+pub fn raw_binary_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
+        .invoke_handler(tauri::generate_handler![
+            read_binary_file,
+            write_binary_file
+        ])
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    app_builder()
         .run(tauri::generate_context!())
         .expect("error while running StudyWiki");
 }

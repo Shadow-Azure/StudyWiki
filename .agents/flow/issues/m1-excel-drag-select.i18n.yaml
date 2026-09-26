@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m1-excel-drag-select.md
+m1-excel-drag-select.md: 6d9200977a0c0b61d96dc9dd07a0e3eafbe39dca
+m1-excel-drag-select.en.md: 30a959fea6575d0a81c2b807954f6101a3e3bd51

@@ -6,13 +6,25 @@
 kind: issue
 milestone: m1
 priority: P0
-status: backlog
+status: done
 scope:
   - src/plugins/doc-excel/**
   - src/styles.css
   - tests/**
   - docs/architecture.*
   - docs/commands.*
+  - src-tauri/**
+  - scripts/code-map.manifest.json
+  - scripts/flow-lib.mjs
+  - scripts/flow-sync.mjs
+  - scripts/flow-sync.spec.mjs
+  - scripts/verify-flow.spec.mjs
+  - .agents/flow/README.*
+  - .agents/notes/implemented/process/2026-09-19-dev-flow-gates.*
+  - src/ui/icons.ts
+  - .agents/flow/issues/m1-03-excel-editing.*
+  - .agents/flow/issues/m1-excel-drag-select.*
+  - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:

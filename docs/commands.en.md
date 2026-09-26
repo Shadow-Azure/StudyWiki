@@ -29,7 +29,7 @@ fn read_binary_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegi
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
 /// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
 #[tauri::command]
-fn write_binary_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<(), String>;
+fn write_binary_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<(), String>;
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
