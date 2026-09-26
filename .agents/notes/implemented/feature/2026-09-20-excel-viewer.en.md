@@ -31,7 +31,7 @@ M1 requires markdown / excel / video to be readable; excel is missing. The need 
 
 - The flow gate supports activating a backlog issue within the same PR: when PR HEAD advances it to ready/in-progress/done, the issue is treated as started; references to a base-done issue remain rejected.
 - `exceljs` joins `dependencies` and `scripts/dep-allowlist.json`; bundled at build time, no CDN or runtime loading. `verify:env-independence` / `verify:dep-audit` must stay green.
-- Bundle size grows; large workbooks live fully in frontend memory, protected by virtual scrolling and the cell cap.
+- Bundle size grows; large workbooks live fully in frontend memory, protected by virtual scrolling and the cell cap. The cap is checked after ExcelJS parsing and accumulates declared dimensions (rowCount × columnCount) per sheet — it protects rendering and model residency, not the parse-time memory peak; a near-empty file with formatting traces in far cells counts too.
 - Host services grow from five to six (files / windows / workspace / slots / plugins / excel); architecture docs and code map update accordingly.
 - m1-01 delivers the viewer plus the complete read/write service surface; editing gets its own issue (page editing and style toolbar). m1-02 reading polish depends on the viewer existing first.
 - AI integration (m2) only needs `ctx.excel` on the guard whitelist; its read/write path is identical to the human one.

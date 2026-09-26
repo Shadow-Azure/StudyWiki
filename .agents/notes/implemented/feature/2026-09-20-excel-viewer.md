@@ -31,7 +31,7 @@ m1 要求 markdown / excel / 视频三格式可读，excel 缺席；且后续诉
 
 - 流程门禁支持同一 PR 激活 backlog issue：HEAD 已推进为 ready/in-progress/done 时按开工处理；base 已 done 的引用仍拒绝。
 - `exceljs` 进 `dependencies` 并登记 `scripts/dep-allowlist.json`；构建期打包，无 CDN / 运行时加载，`verify:env-independence` / `verify:dep-audit` 必须绿。
-- bundle 体积增加；大表全量 workbook 在前端内存，靠虚拟滚动与单元格上限保护。
+- bundle 体积增加；大表全量 workbook 在前端内存，靠虚拟滚动与单元格上限保护。上限在 ExcelJS 解析完成后按各 sheet 声明维度（rowCount × columnCount）累计——保护渲染与模型驻留，不覆盖解析内存峰值；远端留过格式痕迹的近空文件同样计入。
 - 宿主服务从五个变六个（files / windows / workspace / slots / plugins / excel），architecture 文档与 code map 同步更新。
 - m1-01 交付查看器 + 完整读写服务面；编辑另立 issue（含页面编辑与样式工具），m1-02 阅读体验统一依赖查看器先存在。
 - AI 接入（m2）只需把 `ctx.excel` 加入 guard 白名单，读写路径与人完全一致。

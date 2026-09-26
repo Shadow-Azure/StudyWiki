@@ -39,7 +39,8 @@ export class ExcelService {
     this.#parse = deps.parseWorkbook ?? parseWorkbook;
   }
 
-  /** Read and parse an xlsx workbook; rejects corrupt or over-cap files. */
+  /** Read and parse an xlsx workbook; rejects corrupt files and workbooks whose
+   * declared dimensions (rowCount × columnCount per sheet) exceed the cell cap. */
   async read(path: string): Promise<Workbook> {
     let bytes: Uint8Array;
     try {
@@ -51,6 +52,10 @@ export class ExcelService {
     try {
       workbook = await this.#parse(bytes);
     } catch (error) {
+      // Reserved passthrough: a future streaming parser may reject oversize workbooks before a
+      // full parse; its "过大" error must surface as-is instead of being swallowed by the
+      // corrupt-file message below. Production parseWorkbook never throws that prefix today —
+      // the cap check below runs after parsing (contract noted at the throw site).
       if (error instanceof Error && error.message.includes("过大")) throw error;
       throw new Error(INVALID_EXCEL_MESSAGE);
     }
@@ -58,8 +63,10 @@ export class ExcelService {
       (sum, ws) => sum + Math.max(1, ws.rowCount) * Math.max(1, ws.columnCount),
       0,
     );
+    // The "过大" prefix is a contract: the parse-seam catch above passes it through untouched.
+    // If this message ever changes wording, update that branch in the same commit.
     if (cells > MAX_EXCEL_CELLS)
-      throw new Error(`Excel 过大：${cells} 个单元格超过上限 ${MAX_EXCEL_CELLS}`);
+      throw new Error(`Excel 过大：按声明维度累计 ${cells} 个单元格，超过上限 ${MAX_EXCEL_CELLS}`);
     return workbook;
   }
 
