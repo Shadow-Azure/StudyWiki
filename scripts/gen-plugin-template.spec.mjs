@@ -35,6 +35,7 @@ test("renderTemplate：渲染字节钉死（契约漂移即红）", () => {
   expect(files["scripts/check.mjs"]).toContain("npm pack");
 });
 
+// 两次真实 npm pack 子进程在 CI 冷缓存下可超 vitest 默认 5s 预算，单测放宽到 30s。
 test("check.mjs：好发布面过、三文件发布面拒（真实 npm pack --dry-run）", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "sw-plugin-check-"));
   try {
@@ -55,4 +56,4 @@ test("check.mjs：好发布面过、三文件发布面拒（真实 npm pack --dr
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 30000);
