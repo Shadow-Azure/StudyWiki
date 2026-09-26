@@ -13,6 +13,11 @@ scope:
   - tests/**
   - docs/architecture.*
   - docs/commands.*
+  - src-tauri/**
+  - scripts/code-map.manifest.json
+  - .agents/flow/issues/m1-03-excel-editing.*
+  - .agents/flow/issues/m1-excel-drag-select.*
+  - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:
