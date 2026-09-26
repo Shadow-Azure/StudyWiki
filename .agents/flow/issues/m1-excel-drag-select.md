@@ -14,8 +14,8 @@ scope:
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:
-  number: null
-  url: null
+  number: 42
+  url: https://github.com/Shadow-Azure/StudyWiki/issues/42
 ```
 
 ## 背景
