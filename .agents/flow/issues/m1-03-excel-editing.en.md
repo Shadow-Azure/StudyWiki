@@ -16,7 +16,10 @@ scope:
   - src-tauri/**
   - scripts/code-map.manifest.json
   - scripts/flow-lib.mjs
+  - scripts/flow-sync.mjs
+  - scripts/flow-sync.spec.mjs
   - scripts/verify-flow.spec.mjs
+  - .agents/flow/README.*
   - .agents/notes/implemented/process/2026-09-19-dev-flow-gates.*
   - src/ui/icons.ts
   - .agents/flow/issues/m1-03-excel-editing.*

@@ -16,7 +16,7 @@ Ad-hoc development has no flow constraints: requirements scattered across conver
 - Priority progression: same tier is serial across milestones; unlimited parallelism within a tier; when the highest not-finished tier has exactly 1 issue left not done, the next tier unlocks. The rules gate in-progress / done eligibility; historically done issues from an already-cleared higher tier are not retroactively re-evaluated against a later lower tier.
 - No exemption lane: even mechanical fixes reference an issue.
 - Three enforcement layers: `verify-flow` (offline state machine, in doc-quick/doc-sync/release), `verify-flow --diff <base>` (CI on PR: commit/PR title references + referenced-issue status (evaluated at the base — a closing commit flips its issue to done and must still be allowed to reference it, otherwise no issue could ever be closed via PR) + scope coverage; skipped when the base has no roadmap — PRs predating the flow are not bound), `verify-flow-online` (CI online lane: two-sided consistency with GitHub, verifies without modifying). The local commit-msg hook is reminder-level.
-- Companion tooling: `pnpm flow:sync` (the only entry point writing the flow tree to GitHub; backfills numbers and re-records pairing records), `pnpm flow:new-issue` (trio scaffolding).
+- Companion tooling: `pnpm flow:sync` (the only entry point writing the flow tree to GitHub: creates objects, backfills numbers, synchronizes status mappings, and re-records pairing records; remote objects are never deleted), `pnpm flow:new-issue` (trio scaffolding).
 - Flow documents join the bilingual trio corpus; roadmap / README / milestones carry word budgets, issues do not (working files grow with discussion; budgets constrain resident docs).
 
 ## Alternatives considered

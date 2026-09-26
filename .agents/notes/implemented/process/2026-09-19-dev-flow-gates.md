@@ -16,7 +16,7 @@ Status: implemented
 - 优先级推进：跨 milestone 同档串行；档内并行不限；最高未清档仅剩 1 个未 done 时下一档解锁。规则约束 in-progress / done 资格；已清更高档的历史 done issue 不按后续低档的当前最高档反向重评。
 - 无豁免通道：机械修复同样挂 issue。
 - 门禁分三层：`verify-flow`（离线状态机，进 doc-quick/doc-sync/release）、`verify-flow --diff <base>`（CI on PR：commit/PR 标题引用 + 被引 issue 状态（按 base 评估——收口提交把 issue 翻成 done，其自身必须仍能挂引用，否则 issue 永远无法经 PR 关闭）+ scope 覆盖；base 无 roadmap 时跳过，流程自举前的 PR 不绑人）、`verify-flow-online`（CI 在线 lane：与 GitHub 双侧一致，只校验不修改）。本地 commit-msg 钩子是提醒级。
-- 配套工具：`pnpm flow:sync`（流程树 → GitHub 的唯一写入口，回填编号并重录配对记录）、`pnpm flow:new-issue`（三件套脚手架）。
+- 配套工具：`pnpm flow:sync`（流程树 → GitHub 的唯一写入口：建单、回填编号、同步状态映射并重录配对记录；不删除远端对象）、`pnpm flow:new-issue`（三件套脚手架）。
 - flow 语料纳入双语三件套；roadmap / README / milestones 登记词数预算，issue 不登记（工作文件随讨论膨胀，预算是常驻文档的约束）。
 
 ## Alternatives considered
