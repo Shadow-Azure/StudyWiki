@@ -19,7 +19,7 @@ m1 要求 markdown / excel / 视频三格式可读，excel 缺席；且后续诉
 - 编辑（m1-03 已落地）：单元格值内联编辑、样式工具条（加粗/斜体/字体色/填充色/合并）、单击 + Shift 单击矩形选区、脏标记与关窗守卫，保存走 `ctx.excel.write` → Rust 原子写 → `fs://changed` 广播。
 - 编辑输入采用电子表格惯例但收窄：十进制样式（含科学计数法）自动转 number，空白清空，其余保持文本；前导半角 `'` 强制文本，用于保留 `007`、学号、身份证号等长数字。`0x10` / `0b101` 不数值化，与 Excel/WPS 一致。
 - 拖拽框选拆至 #42：虚拟滚动下目标行未挂载，需要边缘自动滚动与索引追踪；本 issue 只交付单击 + Shift 单击，契约可增量。
-- raw binary IPC 补 in-process 集成测试：read/write 两条命令经 Tauri MockRuntime 的真实 IPC resolver（`InvokeRequest` + raw body/path header）；macOS WebviewWindow 必须主线程创建，该测试 crate 使用 `harness = false`。
+- raw binary IPC 补 in-process 集成测试：read/write 两条命令经 Tauri MockRuntime 的真实 IPC resolver（`InvokeRequest` + raw body/path header）；macOS WebviewWindow 必须主线程创建，该测试 crate 使用 `harness = false`。Windows CI 中该 MockRuntime integration 可执行文件稳定以 `STATUS_ENTRYPOINT_NOT_FOUND` 拒载，故 Windows 运行显式 skip driver，真实 resolver 用例保留在 macOS/Linux CI。
 - 保真边界 A+B：数据级 + 样式级编辑，写回保留大部分样式/合并/公式；图表、透视表等复杂对象不承诺无损（学习资料场景内容为王）。
 - 错误处理：解析失败由服务层收敛为「文件损坏或不是有效 .xlsx，请确认来源或另存」的稳定文案，查看器内错误面板展示且不透出依赖原文；超大文件设单元格数上限（约 100 万），超限提示拒绝打开；编辑期写失败保持脏状态并提示，不丢输入。
 
