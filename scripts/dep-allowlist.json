@@ -11,6 +11,7 @@
     "@codemirror/lang-markdown",
     "@lezer/highlight",
     "codemirror",
+    "exceljs",
     "zod"
   ],
   "nodeRefExempt": {

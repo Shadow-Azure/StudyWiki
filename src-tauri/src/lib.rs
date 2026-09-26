@@ -1,6 +1,10 @@
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
 mod plugins;
@@ -18,11 +22,15 @@ pub struct FileNode {
 
 const MARKDOWN_EXTS: &[&str] = &["md", "markdown"];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "m4v", "mkv"];
+const EXCEL_EXTS: &[&str] = &["xlsx"];
+static ATOMIC_WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn kind_for_ext(ext: &str) -> Option<&'static str> {
     let ext = ext.to_ascii_lowercase();
     if MARKDOWN_EXTS.contains(&ext.as_str()) {
         Some("markdown")
+    } else if EXCEL_EXTS.contains(&ext.as_str()) {
+        Some("excel")
     } else if VIDEO_EXTS.contains(&ext.as_str()) {
         Some("video")
     } else {
@@ -76,6 +84,32 @@ fn std_write(path: &Path, contents: &str) -> Result<(), String> {
     fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| format!("路径没有文件名：{}", path.display()))?;
+    let seq = ATOMIC_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = path.with_file_name(format!(
+        ".{name}.studywiki-{}-{seq}-{nanos}.tmp",
+        std::process::id()
+    ));
+    fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "rename {} -> {}: {e}",
+            tmp.display(),
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 /// 命令面根域校验（单一决策点）：路径须落在某个已授权 root 之内。
 /// 词法 starts_with（路径组件级），与 assetProtocol 的 allow_directory 授权
 /// 同源；含 `..` 组件直接拒（前缀组件可恰匹配 root 而 OS 解析后落在 root 外，
@@ -104,6 +138,45 @@ fn ensure_authorized(
     path_authorized(&state.lock().unwrap(), path)
 }
 
+const PATH_HEADER: &str = "x-studywiki-path";
+
+/// 纯 UTF-8 percent 解码：HTTP header 只能携带 ASCII，前端先 `encodeURIComponent` 非 ASCII。
+fn decode_path_header(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let hex = bytes
+            .get(index + 1..index + 3)
+            .ok_or_else(|| "路径 header 的 percent 序列不完整".to_string())?;
+        let high = (hex[0] as char)
+            .to_digit(16)
+            .ok_or_else(|| "路径 header 含非法 percent 序列".to_string())?;
+        let low = (hex[1] as char)
+            .to_digit(16)
+            .ok_or_else(|| "路径 header 含非法 percent 序列".to_string())?;
+        decoded.push((high * 16 + low) as u8);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| "路径 header 不是有效 UTF-8".to_string())
+}
+
+/// 读取并解码 raw IPC 请求上的路径 header；缺失、非字符串或坏编码在授权前失败。
+fn request_path(request: &Request<'_>) -> Result<String, String> {
+    let encoded = request
+        .headers()
+        .get(PATH_HEADER)
+        .ok_or_else(|| format!("缺少 {PATH_HEADER} header"))?
+        .to_str()
+        .map_err(|_| format!("{PATH_HEADER} header 不是 ASCII 字符串"))?;
+    decode_path_header(encoded)
+}
+
 /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
 /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
 /// 命令面与 assetProtocol 运行期授权同源收口）。
@@ -128,6 +201,41 @@ fn write_text_file(
 ) -> Result<(), String> {
     ensure_authorized(&state, &path)?;
     std_write(Path::new(&path), &contents)?;
+    app.emit("fs://changed", &path)
+        .map_err(|e| format!("emit: {e}"))
+}
+
+/// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
+/// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；授权与 FS 访问前先校验。
+#[tauri::command]
+fn read_binary_file(
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    request: Request<'_>,
+) -> Result<Response, String> {
+    let path = request_path(&request)?;
+    ensure_authorized(&state, &path)?;
+    fs::read(&path)
+        .map(Response::new)
+        .map_err(|e| format!("read {path}: {e}"))
+}
+
+/// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
+/// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
+#[tauri::command]
+fn write_binary_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    request: Request<'_>,
+) -> Result<(), String> {
+    let path = request_path(&request)?;
+    ensure_authorized(&state, &path)?;
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes,
+        InvokeBody::Json(_) => {
+            return Err("write_binary_file 需要 Tauri raw IPC bytes，而不是 JSON".to_string())
+        }
+    };
+    atomic_write(Path::new(&path), bytes)?;
     app.emit("fs://changed", &path)
         .map_err(|e| format!("emit: {e}"))
 }
@@ -163,6 +271,8 @@ pub fn run() {
             read_tree,
             read_text_file,
             write_text_file,
+            read_binary_file,
+            write_binary_file,
             windows::create_window,
             windows::get_window_state,
             windows::set_window_root,
@@ -228,6 +338,31 @@ mod tests {
         assert_eq!(kind_for_ext("txt"), None);
     }
 
+    #[test]
+    fn classifies_excel_extensions() {
+        assert_eq!(kind_for_ext("xlsx"), Some("excel"));
+        assert_eq!(kind_for_ext("XLSX"), Some("excel"));
+        assert_eq!(kind_for_ext("xls"), None);
+        assert_eq!(kind_for_ext("csv"), None);
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_and_leaves_no_temp() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("sw-atomic-{}-{}.xlsx", std::process::id(), line!()));
+        std::fs::write(&path, b"old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&format!(".{}", path.file_name().unwrap().to_string_lossy())))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn fixture_tree() -> std::path::PathBuf {
         // 两个测试并行跑：目录名带上线程 id，避免互删对方的 fixture。
         let dir = std::env::temp_dir().join(format!(
@@ -269,6 +404,26 @@ mod tests {
             assert!(tree[2].children.is_none());
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_utf8_percent_encoded_path_headers() {
+        assert_eq!(
+            decode_path_header("/lib/root/a.xlsx").as_deref(),
+            Ok("/lib/root/a.xlsx")
+        );
+        assert_eq!(
+            decode_path_header("/%E5%BA%93/%E7%B0%BF.xlsx").as_deref(),
+            Ok("/库/簿.xlsx")
+        );
+        assert_eq!(
+            decode_path_header("/lib/root/sub%2Fx.xlsx").as_deref(),
+            Ok("/lib/root/sub/x.xlsx")
+        );
+        assert!(decode_path_header("/lib/%").is_err());
+        assert!(decode_path_header("/lib/%2").is_err());
+        assert!(decode_path_header("/lib/%zz").is_err());
+        assert!(decode_path_header("/lib/%FF").is_err());
     }
 
     #[test]

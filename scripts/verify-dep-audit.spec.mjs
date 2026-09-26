@@ -40,3 +40,20 @@ test("nodeRefExempt 按包内相对路径豁免：命中文件放行，同表下
   expect(r.errors.some((e) => e.includes("sample/other.js") && e.includes("node:path"))).toBe(true); // 非豁免命中仍红（防退化成包级豁免）
   expect(r.errors.some((e) => e.includes("sneaky") && e.includes("未登记"))).toBe(true); // 白名单检查不受影响
 });
+
+test("裸内建引用：无 browser 字段即红（require/from 两种形态都点名）", () => {
+  const r = auditDependencies({ dependencies: { plain: "1.0.0" } }, ["plain"], fx("bare/node_modules"));
+  expect(r.errors.some((e) => e.includes("plain/index.js") && e.includes('require("fs")'))).toBe(true);
+  expect(r.errors.some((e) => e.includes("plain/index.js") && e.includes('from "util"'))).toBe(true);
+});
+
+test("裸内建引用：browser string 改道包——node 入口跳过，browser 入口自身仍红", () => {
+  const r = auditDependencies({ dependencies: { redirected: "1.0.0" } }, ["redirected"], fx("bare/node_modules"));
+  expect(r.errors.some((e) => e.includes("redirected/node.js"))).toBe(false); // 改道包的 node 入口不进产物
+  expect(r.errors.some((e) => e.includes("redirected/browser.js") && e.includes('require("os")'))).toBe(true); // 入口自身会进产物
+});
+
+test("裸内建引用：browser object 映射整包豁免", () => {
+  const r = auditDependencies({ dependencies: { mapped: "1.0.0" } }, ["mapped"], fx("bare/node_modules"));
+  expect(r.errors).toEqual([]);
+});

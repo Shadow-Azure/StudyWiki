@@ -3,6 +3,7 @@ import * as appShell from "../plugins/app-shell";
 import * as viewFiletree from "../plugins/view-filetree";
 import * as docMarkdown from "../plugins/doc-markdown";
 import * as docVideo from "../plugins/doc-video";
+import * as docExcel from "../plugins/doc-excel";
 import * as appWindows from "../plugins/app-windows";
 import * as pluginManager from "../plugins/plugin-manager";
 
@@ -24,6 +25,7 @@ Object.assign(MODULE_TABLE, {
   "view-filetree": { plugin: viewFiletree as PluginModule, defaults: { ignoreDotfiles: true } },
   "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
   "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
+  "doc-excel": { plugin: docExcel as PluginModule, defaults: {} },
   "app-windows": { plugin: appWindows as PluginModule, defaults: {} },
   "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
 });

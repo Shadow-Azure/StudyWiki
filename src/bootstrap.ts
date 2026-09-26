@@ -3,7 +3,8 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { FilesService } from "./host/files";
+import { FilesService, type FilesInvokeArgs, type FilesInvokeOptions } from "./host/files";
+import { ExcelService } from "./host/excel";
 import { WindowsService, defaultWindowsDeps } from "./host/windows";
 import { WorkspaceService } from "./host/workspace";
 import { SlotsService } from "./host/slots";
@@ -15,7 +16,7 @@ import { MODULE_TABLE, type ModuleTable } from "./loader/table";
 
 /** Injected environment; defaults bind real Tauri APIs (tests fake these). */
 export interface BootstrapEnv {
-  invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+  invoke: (cmd: string, args?: FilesInvokeArgs, options?: FilesInvokeOptions) => Promise<unknown>;
   listen: (event: string, cb: (e: { payload: unknown }) => void) => Promise<() => void>;
   openDialog: () => Promise<string | null>;
   assetUrl: (path: string) => string;
@@ -47,6 +48,7 @@ export const defaultEnv: BootstrapEnv = {
 export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context> {
   const ctx = new Context();
   const files = new FilesService({ invoke: env.invoke, listen: env.listen, openDialog: env.openDialog, assetUrl: env.assetUrl });
+  const excel = new ExcelService(files);
   const windows = new WindowsService({
     invoke: env.invoke,
     currentLabel: env.currentLabel,
@@ -61,6 +63,7 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
   });
   ctx.reflect.provide("files", files);
+  ctx.reflect.provide("excel", excel);
   ctx.reflect.provide("windows", windows);
   ctx.reflect.provide("workspace", workspace);
   ctx.reflect.provide("slots", slots);

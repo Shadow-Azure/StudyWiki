@@ -5,7 +5,8 @@
 // --diff <base> 模式（CI on PR）：在离线校验之上追加——base 树无 roadmap 时
 // 跳过（流程自举前的 PR 不绑人）；每个 commit 标题与 PR 标题（PR_TITLE 环境
 // 变量，CI 必传）须挂 (#N) 引用；引用的 issue 须在树内且处于 ready/
-// in-progress；diff 触及的文件须落在所挂 issue 的 scope 并集内。无豁免通道。
+// in-progress；若本 PR 把 backlog issue 推进为 ready/in-progress/done，
+// 则视为开工激活；diff 触及的文件须落在所挂 issue 的 scope 并集内。无豁免通道。
 
 import { execFileSync } from "node:child_process";
 import {
@@ -35,9 +36,10 @@ function git(args) {
 }
 
 /**
- * base 版本的 issue 状态：收口提交把 issue 翻成 done，其自身必须仍能挂
- * 引用——被引资格按 base 评估。base 无该文件（新 issue 首次提交）返回
- * undefined，调用方回落到 HEAD 状态。
+ * PR 内引用 issue 的有效状态：优先按 base 评估，避免引用已在 main 上 done
+ * 的 issue。base 为 backlog 且 HEAD 已推进为 ready/in-progress/done 时视为
+ * 本 PR 完成开工激活。base 无该文件（新 issue 首次提交）返回 undefined，
+ * 调用方回落到 HEAD 状态。
  */
 function baseIssueStatus(base, file) {
   try {
@@ -101,9 +103,12 @@ export async function verifyFlowDiff(base) {
       errors.push(`引用的 issue #${n} 在 .agents/flow/issues/ 内不存在（先建 issue 或先跑 pnpm flow:sync 回填）`);
       continue;
     }
-    const status = baseIssueStatus(base, issue.file) ?? issue.data.status;
-    if (!["ready", "in-progress"].includes(status))
-      errors.push(`#${n}（${issue.name}）在 ${base} 的 status 是 ${status}——只有 ready / in-progress 的 issue 能挂提交`);
+    const baseStatus = baseIssueStatus(base, issue.file);
+    const headStatus = issue.data.status;
+    const activated = baseStatus === "backlog" && ["ready", "in-progress", "done"].includes(headStatus);
+    const status = baseStatus ?? headStatus;
+    if (!activated && !["ready", "in-progress"].includes(status))
+      errors.push(`#${n}（${issue.name}）在 ${base} 的 status 是 ${status}——只有 ready / in-progress 的 issue 能挂提交；本 PR 内从 backlog 激活除外`);
     scopes.push(...(Array.isArray(issue.data.scope) ? issue.data.scope : []));
   }
   if (errors.length === 0 && referenced.size > 0) {

@@ -4,8 +4,8 @@ export type FileNode = {
   name: string;
   /** Absolute path — used for reads/writes and asset-protocol URLs. */
   path: string;
-  /** Dispatches handling: directories expand; markdown/video open; other lists only. */
-  kind: "dir" | "markdown" | "video" | "other";
+  /** Dispatches handling: directories expand; markdown/video/excel open; other opens the shell unsupported hint. */
+  kind: "dir" | "markdown" | "video" | "excel" | "other";
   /** Present only for directories. */
   children?: FileNode[];
 };

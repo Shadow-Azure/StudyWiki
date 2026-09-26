@@ -797,3 +797,140 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   overflow: auto;
 }
 .boot-error p { color: var(--ink-2); font-size: 13px; }
+
+/* ============ Excel 表纸 ============ */
+
+.excel-loading {
+  padding: 28px 32px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.excel-viewer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 100%;
+  background: var(--paper);
+}
+
+.excel-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  min-height: 38px;
+  padding: 4px 10px 0;
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.excel-tab {
+  height: 27px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.excel-tab:hover { background: var(--wash); color: var(--ink); }
+.excel-tab[aria-pressed="true"] {
+  background: var(--azurite-wash);
+  color: var(--azurite-deep);
+  font-weight: 600;
+}
+.excel-tab:focus-visible { outline-offset: -2px; }
+
+.excel-scroll {
+  position: relative;
+  overflow: auto;
+  background: var(--paper);
+  outline: none;
+}
+.excel-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--azurite-wash); }
+
+.excel-top-spacer,
+.excel-bottom-spacer {
+  width: 100%;
+  min-height: 0;
+}
+
+.excel-header-row,
+.excel-grid {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+}
+
+.excel-header-row {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 28px;
+  background: color-mix(in srgb, var(--chrome) 74%, var(--paper));
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+  color: var(--ink-2);
+  user-select: none;
+}
+
+.excel-header-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-right: 1px solid var(--hairline-soft);
+}
+
+.excel-grid { grid-auto-rows: 0; }
+
+.excel-row { display: contents; }
+
+.excel-cell {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0 7px;
+  overflow: hidden;
+  background-clip: padding-box;
+  border-right: 1px solid var(--hairline-soft);
+  border-bottom: 1px solid var(--hairline-soft);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.excel-cell:nth-child(1),
+.excel-cell:first-of-type { border-left: 1px solid var(--hairline-soft); }
+.excel-cell:hover { background-color: color-mix(in srgb, var(--ink) 3%, transparent); }
+.excel-border-top { border-top: 1px solid var(--ink-3); }
+.excel-border-right { border-right: 1px solid var(--ink-3); }
+.excel-border-bottom { border-bottom: 1px solid var(--ink-3); }
+.excel-border-left { border-left: 1px solid var(--ink-3); }
+
+.excel-empty {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 32px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.tree-file.kind-excel .tree-kind { color: var(--azurite); }
+
+@media (prefers-reduced-motion: reduce) {
+  .excel-tab { transition: none; }
+}

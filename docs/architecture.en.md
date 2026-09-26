@@ -12,9 +12,10 @@ Multi-window Tauri 2 desktop app: one Rust shell for the whole app, one frontend
 ```text
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
-  bootstrap.ts                     每窗口启动流程：五宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：files/windows/workspace/slots/plugins 五服务类型挂入（→ files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
+  host/context.d.ts                cordis Context 声明合并：files/excel/windows/workspace/slots/plugins 六服务类型挂入（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
+  host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
@@ -28,8 +29,10 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
-  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 无 root 欢迎态与已开库未选文档的次级空态（→ dom.ts、icons.ts）
+  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
+  plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器 + 样式/合并渲染 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ model.ts、types.ts）
+  plugins/doc-excel/model.ts       doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口
   plugins/doc-markdown/editor.ts   doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂
   plugins/doc-markdown/index.ts    doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 脏标记 + Ctrl+S 保存 + 关窗守卫（file-opened 挂渲染，kind 不符清空）（→ editor.ts、mode.ts、preview.ts、types.ts、dom.ts、icons.ts）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
@@ -37,7 +40,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放；file-opened 挂渲染，kind 不符清空）
   plugins/plugin-manager/index.ts  plugin-manager 插件：顶栏入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
   plugins/plugin-manager/model.ts  plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
-  plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
+  plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
   plugins/view-filetree/tree.ts    view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
   preview.ts                       浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归（→ workspace.ts、styles.css、types.ts）
   styles.css                       工作台视觉系统：中性双主题令牌 + 壳/树/拖拽发丝线/按钮/阅读与编辑面/分段模式/暗室/面板全样式（无逻辑）
@@ -62,8 +65,8 @@ export type FileNode = {
   name: string;
   /** Absolute path — used for reads/writes and asset-protocol URLs. */
   path: string;
-  /** Dispatches handling: directories expand; markdown/video open; other lists only. */
-  kind: "dir" | "markdown" | "video" | "other";
+  /** Dispatches handling: directories expand; markdown/video/excel open; other opens the shell unsupported hint. */
+  kind: "dir" | "markdown" | "video" | "excel" | "other";
   /** Present only for directories. */
   children?: FileNode[];
 };
@@ -71,11 +74,12 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder (dialog) → `read_tree` assigns kind by extension → view-filetree renders the sidebar; opening — `workspace.openFile` dispatches by kind, markdown goes through `read_text_file` + markdown-it, video through `files.assetUrl` (asset protocol) into the system webview `<video>`; saving — `write_text_file` broadcasts `fs://changed` on landing, every window's tree re-reads; window creation — app-windows → `create_window` registers the table entry and creates the WebviewWindow → the new webview bootstraps (`get_window_state` fetches the root → the loader activates per the manifest). External plugins — install (plugin-manager → ctx.plugins.install → install_plugin: fetch metadata → pull the tarball → sha512 → unpack and validate the closed contract → place into the plugin directory, the product's only networked action); loading (boot sees an `ext:` row → read_plugin_module → dynamic import of a blob URL (the sole loading seam, src/loader/external.ts) → support-set/shape validation → activated through the same flow as the static table; bad rows are skipped in isolation and named as needs-cleanup in the panel); management (panel changes write the manifest and take effect in this window immediately — install / import / enable-disable / reload / rollback / remove, all six through the shared activation function (guard facade + fiber audit), the version store backs them up, and other windows follow the manifest at their next start).
+Data flows: tree reading — pick a folder (dialog) → `read_tree` assigns kind by extension → view-filetree renders the sidebar; opening — `workspace.openFile` dispatches by kind, markdown goes through `read_text_file` + markdown-it, excel through `ctx.excel.read` (an ExcelJS workbook), and video through `files.assetUrl` (asset protocol) into the system webview `<video>`, while app-shell renders the unsupported hint for other; Excel editing save/write — `ctx.excel.write` → binary command → atomic Rust write → `fs://changed`; saving — `write_text_file` broadcasts `fs://changed` on landing, every window's tree re-reads; window creation — app-windows → `create_window` registers the table entry and creates the WebviewWindow → the new webview bootstraps (`get_window_state` fetches the root → the loader activates per the manifest). External plugins — install/import/toggle/reload/rollback/remove through plugin-manager; `ext:` rows use the sole blob loading seam and activate after shape/version/guard/audit, with bad rows isolated and named (details in [dynamic.en.md](plugins/dynamic.en.md)).
 
 ## Key decision points
 
-- **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS` / `VIDEO_EXTS`): a single decision point.
+- **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS` / `VIDEO_EXTS` / `EXCEL_EXTS`): a single decision point.
+- **xlsx semantics live in frontend ExcelJS; Rust stays a byte boundary**: `ctx.excel` owns the workbook and enforces the 1,000,000 declared-dimension cell cap; Rust only moves bytes and writes atomically.
 - **Vendored cordis, take the contract drop the loader**: a static module table + manifest loading, composition is data; upgrades = manual diff + registration in [vendor/VENDORED.md](../vendor/VENDORED.md).
 - **Layering**: `src/plugins/` must not import `@tauri-apps/*` (checked by `pnpm verify:layering`); global state lives in Rust, window state in the Context.
 - **assetProtocol's configured scope is empty, runtime dynamic authorization**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory` (recursive) — video and images keep using the asset protocol, but the configured surface no longer pre-opens arbitrary directories.

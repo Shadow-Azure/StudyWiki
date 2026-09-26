@@ -1,6 +1,6 @@
 // 门禁自测试：verify-flow / flow-lib——yaml flow 解析、流程树状态机、优先级
 // 推进资格、github 编号规则、bootstrap 豁免、glob/提交引用工具、diff 模式
-// 的收口提交语义（被引 issue 资格按 base 评估）。
+// 的收口与同 PR 激活语义（被引 issue 资格优先按 base 评估）。
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -320,7 +320,7 @@ describe("verifyFlowDiff 端到端", () => {
     git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "开工 (#7)"]);
     write({
       ".agents/flow/milestones/m0-x.md": milestone(headStatus === "done" ? "done" : "active"),
-      ".agents/flow/issues/m0-01-a.md": issue(headStatus),
+      ".agents/flow/issues/m0-01-a.md": issue(headStatus) + (headStatus === baseStatus ? "\nReview note.\n" : ""),
     });
     git(["add", "."]);
     git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "收口 (#7)"]);
@@ -348,6 +348,18 @@ describe("verifyFlowDiff 端到端", () => {
     const result = await runDiff(repoWithStatusFlip("in-progress", "done"));
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it("同一 PR 激活：base backlog 在 HEAD 推进 done 可挂引用", async () => {
+    const result = await runDiff(repoWithStatusFlip("backlog", "done"));
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("同一 PR 未激活：base backlog 在 HEAD 仍 backlog 仍红", async () => {
+    const result = await runDiff(repoWithStatusFlip("backlog", "backlog"));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("backlog 激活除外");
   });
 
   it("base 上已 done 的 issue 挂引用仍红", async () => {

@@ -4,12 +4,30 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { createEmitter } from "./emitter";
 import type { FileNode } from "../types";
 
+/** Arguments accepted by Tauri 2 raw/JSON invoke; limited to what the files commands use. */
+export type FilesInvokeArgs = Record<string, unknown> | Uint8Array;
+
+/** Tauri raw-invoke options relevant to the files service. */
+export interface FilesInvokeOptions {
+  headers: Record<string, string>;
+}
+
 /** Tauri bindings this service wraps; injectable so tests fake exactly one seam. */
 export interface FilesDeps {
-  invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+  invoke: (cmd: string, args?: FilesInvokeArgs, options?: FilesInvokeOptions) => Promise<unknown>;
   listen: (event: string, cb: (e: { payload: unknown }) => void) => Promise<() => void>;
   openDialog: () => Promise<string | null>;
   assetUrl: (path: string) => string;
+}
+
+/** Accept Tauri raw bytes while preserving numeric-array mocks for test compatibility. */
+function normalizeRawBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return new Uint8Array(value);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value) && value.every((byte) => typeof byte === "number" && Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+    return Uint8Array.from(value as number[]);
+  }
+  throw new TypeError("Tauri IPC response is not raw bytes");
 }
 
 /** Real Tauri bindings (the only sanctioned import site for these). */
@@ -55,6 +73,21 @@ export class FilesService {
   /** Whole-file write; Rust broadcasts the change (including back to us). */
   writeText(path: string, contents: string): Promise<void> {
     return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
+  }
+
+  /** Whole-file binary read — the Excel service's byte source. */
+  async readBinary(path: string): Promise<Uint8Array> {
+    const bytes = await this.#deps.invoke("read_binary_file", new Uint8Array(0), {
+      headers: { "x-studywiki-path": encodeURIComponent(path) },
+    });
+    return normalizeRawBytes(bytes);
+  }
+
+  /** Whole-file binary write; Rust writes atomically and broadcasts the change. */
+  writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+    return this.#deps.invoke("write_binary_file", bytes, {
+      headers: { "x-studywiki-path": encodeURIComponent(path) },
+    }) as Promise<void>;
   }
 
   /** System folder picker; null when cancelled. */
