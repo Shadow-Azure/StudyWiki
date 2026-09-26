@@ -205,6 +205,19 @@ describe("优先级推进资格", () => {
     ).toEqual([]);
   });
 
+  it("历史更高档 done 不因低档开放而失效", () => {
+    expect(
+      eligibilityErrors(
+        [
+          issue("m0-01-a", { status: "done", github: { number: 1, url: null } }),
+          issue("m0-02-b", { priority: "P1", status: "backlog", github: { number: 2, url: null } }),
+          issue("m0-03-c", { priority: "P2", status: "backlog", github: { number: 3, url: null } }),
+        ],
+        ["m0", "m1"],
+      ),
+    ).toEqual([]);
+  });
+
   it("退档解锁：最高未清档仅剩 1 个时下一档可动，剩 2 个则锁", () => {
     const one = eligibilityErrors(
       [

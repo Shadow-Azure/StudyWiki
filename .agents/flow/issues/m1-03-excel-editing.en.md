@@ -6,7 +6,7 @@ English | [中文](m1-03-excel-editing.md)
 kind: issue
 milestone: m1
 priority: P0
-status: in-progress
+status: done
 scope:
   - src/plugins/doc-excel/**
   - src/styles.css
@@ -15,6 +15,10 @@ scope:
   - docs/commands.*
   - src-tauri/**
   - scripts/code-map.manifest.json
+  - scripts/flow-lib.mjs
+  - scripts/verify-flow.spec.mjs
+  - .agents/notes/implemented/process/2026-09-19-dev-flow-gates.*
+  - src/ui/icons.ts
   - .agents/flow/issues/m1-03-excel-editing.*
   - .agents/flow/issues/m1-excel-drag-select.*
   - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*

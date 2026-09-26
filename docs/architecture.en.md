@@ -31,7 +31,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
   plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
-  plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器 + 样式/合并渲染 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ model.ts、types.ts）
+  plugins/doc-excel/editing.ts     doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
+  plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存/关窗守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、icons.ts）
   plugins/doc-excel/model.ts       doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口
   plugins/doc-markdown/editor.ts   doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂
   plugins/doc-markdown/index.ts    doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 脏标记 + Ctrl+S 保存 + 关窗守卫（file-opened 挂渲染，kind 不符清空）（→ editor.ts、mode.ts、preview.ts、types.ts、dom.ts、icons.ts）
@@ -48,7 +49,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   ui/dom.ts                        DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）（→ icons.ts）
   ui/icons.ts                      内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）
 src-tauri/                         Rust 壳
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ 窗口/插件命令注册 + 窗口事件接线（→ plugins.rs、windows.rs）
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ plugins.rs、windows.rs）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
   windows.rs                       窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO

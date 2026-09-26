@@ -344,6 +344,9 @@ export function eligibilityErrors(issues, order) {
     const topRemaining = siblings.filter(
       (s) => s.data.priority === top && s.data.status !== "done",
     ).length;
+    // 已清更高档的历史 active issue 不重新评估：否则某档全部 done、里程碑进入
+    // 低档后，先前合法关闭的 P0 会被“当前最高档是 P1”反向判死。
+    if (PRIORITIES.indexOf(priority) < PRIORITIES.indexOf(top)) continue;
     if (priority === top) continue;
     const next = PRIORITIES[PRIORITIES.indexOf(top) + 1];
     if (next && priority === next && topRemaining === 1) continue;
