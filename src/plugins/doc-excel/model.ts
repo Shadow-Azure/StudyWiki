@@ -126,11 +126,17 @@ function formatDate(value: unknown, numFmt: string): string | undefined {
     }
     const token = (/^(yyyy|yy|mm|dd|hh|ss)/.exec(numFmt.slice(index)) ?? /^(y|m|d|h|s)/.exec(numFmt.slice(index)))?.[0];
     if (token) {
-      const component = token.startsWith("y") ? "year"
+      let component = token.startsWith("y") ? "year"
         : token.startsWith("d") ? "day"
         : token.startsWith("h") ? "hour"
         : token.startsWith("s") ? "second"
         : afterHour ? "minute" : "month";
+      // Excel semantics: mm adjacent to ss means minutes (mm:ss = 分:秒), even without a leading hour.
+      if (component === "month") {
+        let cursor = index + token.length;
+        while (cursor < numFmt.length && numFmt[cursor] !== '"' && !"ydmhs".includes(numFmt[cursor])) cursor += 1;
+        if (numFmt[cursor] === "s") component = "minute";
+      }
       if (component === "hour") afterHour = true;
       else if (component !== "minute") afterHour = false;
       output += datePart(value, component, token.length === 2, hasAmPm);

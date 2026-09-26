@@ -43,8 +43,12 @@ test("模型：支持常见数字、百分比、货币与日期格式", () => {
       1: { value: { formula: "A1+A2", result: 42 }, numFmt: "0.00", text: "raw" },
       2: { value: 1234.5, numFmt: `0.00 "items";;\\?`, text: "raw" },
     },
-    5: { 1: { value: date, numFmt: "h:mm AM/PM", text: "raw" } },
-  }, { rowCount: 5, columnCount: 2 }));
+    5: {
+      1: { value: date, numFmt: "h:mm AM/PM", text: "raw" },
+      2: { value: date, numFmt: "hh:mm:ss", text: "raw" },
+      3: { value: date, numFmt: "mm:ss", text: "raw" },
+    },
+  }, { rowCount: 5, columnCount: 3 }));
 
   expect(model.rows[0][0].text).toBe("2025-09-20");
   expect(model.rows[0][1].text).toBe("9/20/25");
@@ -55,6 +59,9 @@ test("模型：支持常见数字、百分比、货币与日期格式", () => {
   expect(model.rows[3][0].text).toBe("42.00");
   expect(model.rows[3][1].text).toBe("raw");
   expect(model.rows[4][0].text).toBe("3:07 PM");
+  expect(model.rows[4][1].text).toBe("15:07:09");
+  // Excel 语义：紧邻秒的 mm 是分钟（mm:ss = 分:秒），不是月份。
+  expect(model.rows[4][2].text).toBe("07:09");
 });
 
 test("模型：合并范围一次归一进模型", () => {
