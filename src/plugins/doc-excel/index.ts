@@ -251,7 +251,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     }
   };
 
-  const startEdit = (row: number, column: number): void => {
+  const startEdit = (cellEl: HTMLElement, row: number, column: number): void => {
     const ws = worksheet();
     const sheetModel = model();
     if (!ws || !sheetModel || editing) return;
@@ -260,8 +260,6 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     );
     const targetRow = merge?.top ?? row;
     const targetColumn = merge?.left ?? column;
-    const cellEl = scroll?.querySelector<HTMLElement>(`[data-address="${columnAddress(targetColumn + 1)}${targetRow + 1}"]`);
-    if (!cellEl) return;
     const cell = ws.getCell(targetRow + 1, targetColumn + 1);
     editing = { row: targetRow, column: targetColumn };
 
@@ -324,7 +322,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       cell.addEventListener("dblclick", () => {
         if (editing) return;
         select(row, column, false);
-        startEdit(row, column);
+        startEdit(cell, row, column);
       });
     };
 

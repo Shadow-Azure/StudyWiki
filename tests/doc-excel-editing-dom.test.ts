@@ -179,3 +179,25 @@ test("合并覆盖格点击选中整段，双击编辑 anchor；关闭守卫读�
   expect(wb.getWorksheet("S")!.getCell("A1").value).toBe("075");
   expect(c.guardShould()).toBe(true);
 });
+
+test("长合并 anchor 滚出视口后，双击可见片段仍可编辑并写回 anchor", async () => {
+  const wb = workbook();
+  wb.getWorksheet("S")!.mergeCells("A1:A200");
+  const c = makeCtx(wb);
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+
+  const scroller = document.querySelector<HTMLElement>(".excel-scroll")!;
+  scroller.scrollTop = 28 * 20;
+  scroller.dispatchEvent(new Event("scroll"));
+  const segment = document.querySelector<HTMLElement>(".excel-grid > .excel-cell");
+  expect(segment).toBeTruthy();
+  expect(segment.dataset.address).not.toBe("A1");
+
+  segment.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  const input = document.querySelector<HTMLInputElement>(".excel-cell-editor")!;
+  input.value = "42";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await vi.waitFor(() => expect(document.querySelector(".excel-cell-editor")).toBeNull());
+  expect(wb.getWorksheet("S")!.getCell("A1").value).toBe(42);
+});
