@@ -25,6 +25,7 @@ scope:
   - .agents/flow/issues/m1-03-excel-editing.*
   - .agents/flow/issues/m1-excel-drag-select.*
   - .agents/notes/implemented/feature/2026-09-20-excel-viewer.*
+  - plans/**
 adr:
   - ../../notes/implemented/feature/2026-09-20-excel-viewer.md
 github:
