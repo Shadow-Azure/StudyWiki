@@ -11,6 +11,7 @@ export function errorBanner(parent: HTMLElement, message: string, onDismiss: () 
   parent.querySelector(".doc-error")?.remove();
   const bar = document.createElement("div");
   bar.className = "doc-error";
+  bar.setAttribute("role", "alert");
   const msg = document.createElement("span");
   msg.textContent = message;
   const dismiss = labelButton("close", "", { className: "", ariaLabel: "关闭错误提示" });
@@ -28,6 +29,8 @@ export function errorBanner(parent: HTMLElement, message: string, onDismiss: () 
 export function loadingHint(): HTMLElement {
   const el = document.createElement("div");
   el.className = "viewer-loading";
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
   el.textContent = "加载中…";
   return el;
 }

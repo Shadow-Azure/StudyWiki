@@ -88,6 +88,9 @@ test("DOM：非 excel 清空；读取失败显示错误面板", async () => {
   apply({ excel: failing, workspace, windows, slots: { register: (_s: string, r: (el: HTMLElement) => void) => { r(document.body); return () => {}; } } } as never, {});
   await open({ name: "bad.xlsx", path: "/x/bad.xlsx", kind: "excel" });
   await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("读取失败"));
+  expect(document.querySelector(".viewer-loading")).toBeNull();
+  (document.querySelector(".doc-error button") as HTMLButtonElement).click();
+  expect(document.querySelector(".viewer-loading")).toBeNull();
 });
 
 function mergeWorkbook() {

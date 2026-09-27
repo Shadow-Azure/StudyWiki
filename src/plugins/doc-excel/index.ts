@@ -123,6 +123,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   let selectionAnchor: CellAddress | null = null;
   let editing: { row: number; column: number } | null = null;
   let dirtyState = false;
+  let editSeq = 0;
   let saving = false;
   let offSave: (() => void) | null = null;
   let offSwitchGuard: (() => void) | null = null;
@@ -137,10 +138,16 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     selectionAnchor = null;
     editing = null;
     dirtyState = false;
+    editSeq = 0;
+  };
+
+  const markDirty = (): void => {
+    dirtyState = true;
+    editSeq += 1;
   };
 
   const ownsActiveExcel = (): boolean =>
-    ctx.workspace.activeFile?.kind === "excel" && current?.kind === "excel";
+    ctx.workspace.activeFile?.path === current?.path && current?.kind === "excel";
 
   const dirty = (): boolean => ownsActiveExcel() && dirtyState;
 
@@ -157,11 +164,13 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   const save = async (): Promise<void> => {
     if (saving || !current || current.kind !== "excel" || !workbook || !dirtyState) return;
     saving = true;
+    const savedOpenSeq = openSeq;
+    const savedEditSeq = editSeq;
     try {
       await ctx.excel.write(current.path, workbook);
       host?.querySelector(".doc-error")?.remove();
       error = null;
-      dirtyState = false;
+      if (openSeq === savedOpenSeq && editSeq === savedEditSeq) dirtyState = false;
       paintChrome();
     } catch (e) {
       error = `保存失败：${e instanceof Error ? e.message : String(e)}`;
@@ -185,7 +194,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     }
     setCellValue(ws, editing.row, editing.column, text);
     editing = null;
-    dirtyState = true;
+    markDirty();
     rebuildModel();
     render();
   };
@@ -367,7 +376,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       const ws = worksheet();
       if (!ws || !selection) return;
       toggleFontFlag(ws, selection, "bold", { row: selection.top, column: selection.left });
-      dirtyState = true;
+      markDirty();
       rebuildModel();
       render();
     });
@@ -376,7 +385,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       const ws = worksheet();
       if (!ws || !selection) return;
       toggleFontFlag(ws, selection, "italic", { row: selection.top, column: selection.left });
-      dirtyState = true;
+      markDirty();
       rebuildModel();
       render();
     });
@@ -401,7 +410,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       const ws = worksheet();
       if (!ws || !selection) return;
       apply(ws, selection);
-      dirtyState = true;
+      markDirty();
       rebuildModel();
       render();
     };
@@ -416,7 +425,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       if (!ws || !selection) return;
       const range = selection;
       mergeRange(ws, range);
-      dirtyState = true;
+      markDirty();
       rebuildModel();
       selection = clickSelection(models[sheetIndex]?.merges ?? [], range.top, range.left);
       selectionAnchor = { row: selection.top, column: selection.left };
@@ -427,7 +436,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       const ws = worksheet();
       if (!ws || !selection) return;
       unmergeRange(ws, selection);
-      dirtyState = true;
+      markDirty();
       rebuildModel();
       render();
     });
@@ -454,7 +463,10 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     }
 
     host.hidden = false;
-    if (error) errorBanner(host, error, () => { error = null; });
+    if (error) {
+      errorBanner(host, error, () => { error = null; });
+      return;
+    }
     if (loading || !workbook) {
       host.append(loadingHint());
       return;
@@ -587,7 +599,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     }
   };
 
-  offSave = bindSaveShortcut(() => ctx.workspace.activeFile?.kind === "excel", () => void save());
+  offSave = bindSaveShortcut(ownsActiveExcel, () => void save());
   offSwitchGuard = ctx.workspace.guardSwitch(
     dirty,
     () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),

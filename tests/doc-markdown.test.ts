@@ -2,6 +2,7 @@
 import { expect, test, vi } from "vitest";
 import { renderMarkdown } from "../src/plugins/doc-markdown/preview";
 import { apply } from "../src/plugins/doc-markdown";
+import { WorkspaceService } from "../src/host/workspace";
 import type { FileNode } from "../src/types";
 
 test("renderMarkdown: 标题成 h1；内嵌 HTML 被转义不执行", () => {
@@ -203,6 +204,135 @@ test("DOM: 干净 markdown 不触发关窗守卫", async () => {
   const teardown = apply({ files, windows, workspace, slots } as never, {});
   await opened(md);
   expect(guardShould()).toBe(false);
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: 迟到的 markdown 读取不能覆盖后打开的文档", async () => {
+  document.body.replaceChildren();
+  const md = (name: string): FileNode => ({ name, path: `/x/${name}`, kind: "markdown" });
+  const deferred = new Map<string, (text: string) => void>();
+  const files = {
+    readText: (path: string) => new Promise<string>((resolve) => { deferred.set(path, resolve); }),
+    writeText: vi.fn(),
+  };
+  let opened: (f: FileNode | null) => Promise<void> = async () => {};
+  const windows = { confirmDialog: async () => true, guardClose: async () => () => {} };
+  const workspace = {
+    activeFile: null as FileNode | null,
+    events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  const slow = opened(md("slow.md"));
+  workspace.activeFile = md("fast.md");
+  const fast = opened(workspace.activeFile);
+  deferred.get("/x/fast.md")!("# fast");
+  await fast;
+  deferred.get("/x/slow.md")!("# slow");
+  await slow;
+  expect(document.querySelector(".markdown-body h1")?.textContent).toBe("fast");
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: markdown 保存期间继续编辑保持脏状态并可重试", async () => {
+  document.body.replaceChildren();
+  const md: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  let releaseWrite!: () => void;
+  const writes: string[] = [];
+  const files = {
+    readText: async () => "body",
+    writeText: async (_p: string, text: string) => {
+      writes.push(text);
+      if (writes.length === 1) await new Promise<void>((resolve) => { releaseWrite = resolve; });
+    },
+  };
+  let opened: (f: FileNode | null) => Promise<void> = async () => {};
+  const windows = { confirmDialog: async () => true, guardClose: async () => () => {} };
+  const workspace = {
+    activeFile: md,
+    events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const factory = (parent: HTMLElement, _initial: string, onChange: (t: string) => void) => {
+    const dom = document.createElement("div");
+    dom.className = "fake-editor";
+    (dom as HTMLElement & { __fire: (t: string) => void }).__fire = (t) => onChange(t);
+    parent.append(dom);
+    return { dom, getText: () => dom.textContent ?? "", destroy: () => dom.remove() };
+  };
+  const teardown = apply({ files, windows, workspace, slots } as never, {}, factory as never);
+  await opened(md);
+  ([...document.querySelectorAll<HTMLButtonElement>(".mode-group button")].find((b) => b.textContent === "编辑"))!.click();
+  const editor = document.querySelector(".fake-editor") as HTMLElement & { __fire: (t: string) => void };
+  editor.__fire("body2");
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(writes).toEqual(["body2"]));
+  editor.__fire("body3");
+  releaseWrite();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(true);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(writes).toEqual(["body2", "body3"]));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(false);
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: teardown 后迟到的关窗守卫注册也被释放", async () => {
+  let resolveRegistration!: (off: () => void) => void;
+  let registeredOff: (() => void) | null = null;
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  const windows = {
+    confirmDialog: async () => true,
+    guardClose: () => new Promise((resolve) => {
+      resolveRegistration = (off) => { registeredOff = off; resolve(off); };
+    }) as Promise<() => void>,
+  };
+  const workspace = {
+    activeFile: null as FileNode | null,
+    events: { on: () => () => {} },
+    guardSwitch: () => () => {},
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  teardown();
+  resolveRegistration(() => { registeredOff = null; });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(registeredOff).toBeNull(); // resolved disposer itself was drained and invoked
+});
+
+test("DOM: markdown 脏状态接入真实切换守卫", async () => {
+  document.body.replaceChildren();
+  const md: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  const other: FileNode = { name: "v.mp4", path: "/x/v.mp4", kind: "video" };
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  const confirmDialog = vi.fn(async () => false);
+  const windows = { confirmDialog, guardClose: async () => () => {} };
+  const workspace = new WorkspaceService();
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const factory = (parent: HTMLElement, _initial: string, onChange: (t: string) => void) => {
+    const dom = document.createElement("div");
+    dom.className = "fake-editor";
+    (dom as HTMLElement & { __fire: (t: string) => void }).__fire = (t) => onChange(t);
+    parent.append(dom);
+    return { dom, getText: () => dom.textContent ?? "", destroy: () => dom.remove() };
+  };
+  const teardown = apply({ files, windows, workspace: workspace.facade, slots } as never, {}, factory as never);
+  await workspace.openFile(md);
+  ([...document.querySelectorAll<HTMLButtonElement>(".mode-group button")].find((b) => b.textContent === "编辑"))!.click();
+  (document.querySelector(".fake-editor") as HTMLElement & { __fire: (t: string) => void }).__fire("body2");
+  await expect(workspace.openFile(other)).resolves.toBe(false);
+  expect(workspace.activeFile).toBe(md);
+  expect(document.querySelector(".fake-editor")).not.toBeNull();
+  confirmDialog.mockResolvedValue(true);
+  await expect(workspace.openFile(other)).resolves.toBe(true);
+  expect(workspace.activeFile).toBe(other);
+  expect(document.querySelector(".fake-editor")).toBeNull();
   teardown();
   document.body.replaceChildren();
 });

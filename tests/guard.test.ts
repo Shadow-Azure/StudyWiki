@@ -172,3 +172,45 @@ test("模块形状原样透传（name/inject 不变，apply 被包装）", () =>
   expect(wrapped.inject).toBe(src.inject);
   expect(wrapped.apply).not.toBe(src.apply);
 });
+
+test("门面：workspace 仅暴露插件安全面，拒绝换根私有缝", () => {
+  const workspace = {
+    root: "/x",
+    activeFile: null,
+    events: { on: () => () => {} },
+    openFile: async () => true,
+    guardSwitch: () => () => {},
+    setRoot: async () => true,
+    forceSetRoot: () => {},
+  };
+  const mod = guardExternalModule({
+    name: "ext-demo",
+    inject: ["workspace"],
+    apply: (ctx: any) => {
+      expect(ctx.workspace.root).toBe("/x");
+      expect(() => ctx.workspace.setRoot("/evil")).toThrow(/workspace.*setRoot/);
+      expect(() => ctx.workspace.forceSetRoot("/evil")).toThrow(/workspace.*forceSetRoot/);
+      return () => {};
+    },
+  });
+  (mod.apply as any)({ workspace }, {});
+});
+
+test("门面：windows 拒绝绑定工作区与绕行授权的私有成员", () => {
+  const windows = {
+    create: async () => "new",
+    bindWorkspace: () => {},
+    setRoot: async () => {},
+  };
+  const mod = guardExternalModule({
+    name: "ext-demo",
+    inject: ["windows"],
+    apply: (ctx: any) => {
+      expect(typeof ctx.windows.create).toBe("function");
+      expect(() => ctx.windows.bindWorkspace({})).toThrow(/windows.*bindWorkspace/);
+      expect(() => ctx.windows.setRoot("main", "/evil")).toThrow(/windows.*setRoot/);
+      return () => {};
+    },
+  });
+  (mod.apply as any)({ windows }, {});
+});

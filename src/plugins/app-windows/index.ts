@@ -21,7 +21,7 @@ export function apply(ctx: Context): () => void {
     openBtn.addEventListener("click", async () => {
       const root = await ctx.files.pickFolder();
       // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。
-      if (root) await ctx.windows.changeRoot(ctx.workspace, root);
+      if (root) await ctx.windows.changeRoot(root);
     });
     el.append(newBtn, openBtn);
   });

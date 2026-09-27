@@ -85,3 +85,29 @@ test("DOM: video 快捷键 Space/左右；输入控件不抢键", async () => {
   off();
   document.body.replaceChildren();
 });
+
+test("DOM: 旧 video 的迟到 error 不污染下一个视频", async () => {
+  const { off, open } = mountVideo();
+  await open({ name: "bad.mp4", path: "/x/bad.mp4", kind: "video" });
+  const oldVideo = document.querySelector<HTMLVideoElement>("video")!;
+  await open({ name: "good.mp4", path: "/x/good.mp4", kind: "video" });
+  oldVideo.dispatchEvent(new Event("error"));
+  expect(document.querySelector(".doc-error")).toBeNull();
+  off();
+  document.body.replaceChildren();
+});
+
+test("DOM: 分隔条已处理的左右键不触发视频 seek", async () => {
+  const { off, open } = mountVideo();
+  await open({ name: "v.mp4", path: "/x/v.mp4", kind: "video" });
+  const video = document.querySelector<HTMLVideoElement>("video")!;
+  video.currentTime = 12;
+  const separator = document.createElement("div");
+  separator.setAttribute("role", "separator");
+  separator.addEventListener("keydown", (event) => event.preventDefault());
+  document.body.append(separator);
+  separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  expect(video.currentTime).toBe(12);
+  off();
+  document.body.replaceChildren();
+});

@@ -14,6 +14,7 @@ test("viewer: errorBanner 替换旧条并可关闭", () => {
   const bar = errorBanner(host, "读取失败：EIO", onDismiss);
   expect(host.querySelectorAll(".doc-error")).toHaveLength(1);
   expect(bar.textContent).toContain("读取失败：EIO");
+  expect(bar.getAttribute("role")).toBe("alert");
   expect(bar.querySelector("button")?.getAttribute("aria-label")).toBe("关闭错误提示");
   (bar.querySelector("button") as HTMLButtonElement).click();
   expect(onDismiss).toHaveBeenCalledTimes(1);
@@ -23,6 +24,8 @@ test("viewer: loadingHint 渲染共享加载态", () => {
   const el = loadingHint();
   expect(el.className).toBe("viewer-loading");
   expect(el.textContent).toBe("加载中…");
+  expect(el.getAttribute("role")).toBe("status");
+  expect(el.getAttribute("aria-live")).toBe("polite");
 });
 
 test("viewer: paintTitle 统一文件名与脏标规则", () => {

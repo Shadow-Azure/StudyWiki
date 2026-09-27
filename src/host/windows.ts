@@ -22,6 +22,7 @@ export const defaultWindowsDeps: WindowsDeps = {
 /** Window-scoped service: window identity, creation, close guarding. */
 export class WindowsService {
   readonly #deps: WindowsDeps;
+  #workspace: WorkspaceService | null = null;
 
   constructor(deps: WindowsDeps = defaultWindowsDeps) {
     this.#deps = deps;
@@ -49,16 +50,21 @@ export class WindowsService {
     await this.#deps.invoke("set_window_root", { label, root });
   }
 
+  /** Bind this window-scoped service to its private workspace controller.
+   * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+  bindWorkspace(workspace: WorkspaceService): void {
+    this.#workspace = workspace;
+  }
+
   /** Full root change in one call: Rust-side grant + registry upsert first
    * (fail-closed), then the workspace switch. Every root change goes through
    * here — topbar button, welcome-state button, boot re-grant — so the
    * grant-before-switch ordering is structural, not conventional. Passing
    * null clears the frontend only (no Rust call).
    * @returns True when the root changed; false when a workspace switch guard rejected it. */
-  async changeRoot(
-    workspace: Pick<WorkspaceService, "confirmSwitch" | "forceSetRoot">,
-    root: string | null,
-  ): Promise<boolean> {
+  async changeRoot(root: string | null): Promise<boolean> {
+    if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+    const workspace = this.#workspace;
     if (!(await workspace.confirmSwitch())) return false;
     if (root !== null) await this.setRoot(this.currentLabel(), root);
     workspace.forceSetRoot(root);

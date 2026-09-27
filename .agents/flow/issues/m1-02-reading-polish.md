@@ -9,13 +9,17 @@ priority: P1
 status: in-progress
 scope:
   - src/plugins/app-shell/**
+  - src/plugins/app-windows/**
   - src/plugins/view-filetree/**
   - src/plugins/doc-markdown/**
   - src/plugins/doc-video/**
   - src/plugins/doc-excel/**
   - src/styles.css
   - src/ui/**
+  - src/bootstrap.ts
+  - src/host/context.d.ts
   - src/host/workspace.ts
+  - src/loader/guard.ts
   - src/host/windows.ts
   - tests/**
   - docs/architecture.*
@@ -43,6 +47,6 @@ github:
 ## 验收
 
 - 三格式在同一窗口内切换一致，未打开文档与已开库未选文档的空态明确。
-- 脏文档切换 / 换库会被守卫拦下，确认后才继续；同路径重开不重复确认。
+- 脏文档切换 / 换库会被守卫拦下，确认后才继续；同路径重开不重复确认且不静默重载。
 - markdown / excel 的 `Mod-S` 全局可用，视频支持 Space 与左右方向键；加载与错误态三格式共享同一视觉套件。
 - `pnpm test`、`pnpm build`、`pnpm verify:layering`、`pnpm verify:env-independence` 绿。

@@ -13,18 +13,18 @@ Multi-window Tauri 2 desktop app: one Rust shell for the whole app, one frontend
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
   bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：files/excel/windows/workspace/slots/plugins 六服务类型挂入（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  host/context.d.ts                cordis Context 声明合并：六个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
-  host/windows.ts                  窗口服务：label/建窗/root 查询/守卫先行的换根单路 changeRoot/确认框/关闭守卫（deps 可注入）（→ workspace.ts）
-  host/workspace.ts                窗口 scope 工作区状态机：root/activeFile + root-changed/file-opened 事件流 + 文件/换根切换守卫（→ emitter.ts、types.ts）
+  host/windows.ts                  窗口服务：label/建窗/root 查询/绑定内部工作区的守卫先行换根/确认框/关闭守卫（deps 可注入）（→ workspace.ts）
+  host/workspace.ts                窗口 scope 工作区状态机：root/activeFile + 事件流 + 切换守卫与插件 facade（→ emitter.ts、types.ts）
   loader/activate.ts               外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
   loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ activate.ts、manifest.ts、table.ts、types.ts）
   loader/external.ts               外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
-  loader/guard.ts                  外置插件 guard 门面：inject 白名单 Proxy（只包外置；收窄服务面非语言能力，非沙箱）（→ types.ts）
+  loader/guard.ts                  外置插件 guard 门面：inject 白名单 Proxy + 关键宿主服务成员白名单（非沙箱）（→ types.ts）
   loader/manifest.ts               插件清单装载：缺失时从模块表生成默认并写回 + 存量迁移（表新增内置行合并落盘），损坏 fail-loud（→ table.ts）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
@@ -32,10 +32,10 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts     doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
-  plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）
+  plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存重试/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）
   plugins/doc-excel/model.ts       doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口
   plugins/doc-markdown/editor.ts   doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂
-  plugins/doc-markdown/index.ts    doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 加载/错误态 + 脏标记 + 全局 Mod-S 保存 + 关窗/切换守卫（file-opened 挂渲染，kind 不符清空）（→ editor.ts、mode.ts、preview.ts、types.ts、dom.ts、viewer.ts）
+  plugins/doc-markdown/index.ts    doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 加载/错误态 + 乱序读取防护 + 脏标记/保存重试 + 全局 Mod-S + 关窗/切换守卫（file-opened 挂渲染，kind 不符清空）（→ editor.ts、mode.ts、preview.ts、types.ts、dom.ts、viewer.ts）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts  doc-markdown 纯函数：markdown-it 渲染（html:false，内嵌 HTML 转义）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）（→ viewer.ts）
@@ -82,7 +82,7 @@ Data flows: tree reading — pick a folder → `read_tree` assigns kind → view
 
 - **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS` / `VIDEO_EXTS` / `EXCEL_EXTS`): a single decision point.
 - **xlsx semantics live in frontend ExcelJS; Rust stays a byte boundary**: `ctx.excel` owns the workbook and enforces the 1,000,000 declared-dimension cell cap; Rust only moves bytes and writes atomically.
-- **Switch guards live in `WorkspaceService`; confirmation closures belong to viewers**: file and root switches share them, same-path reopening does not ask, and `changeRoot` confirms before Rust authorization so rejection preserves the previous state.
+- **Switch guards live in host `WorkspaceService`; Context exposes only `WorkspaceFacade`**: file/root switches share guards, dirty same-path reopen is a no-op, and windows binds the internal controller before Rust authorization.
 - **Vendored cordis, take the contract drop the loader**: a static module table + manifest loading, composition is data; upgrades = manual diff + registration in [vendor/VENDORED.md](../vendor/VENDORED.md).
 - **Layering**: `src/plugins/` must not import `@tauri-apps/*` (checked by `pnpm verify:layering`); global state lives in Rust, window state in the Context.
 - **assetProtocol's configured scope is empty, runtime dynamic authorization**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory` (recursive) — video and images keep using the asset protocol, but the configured surface no longer pre-opens arbitrary directories.

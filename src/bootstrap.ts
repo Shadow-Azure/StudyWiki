@@ -56,6 +56,7 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     confirmDialog: env.confirmDialog ?? defaultWindowsDeps.confirmDialog,
   });
   const workspace = new WorkspaceService();
+  windows.bindWorkspace(workspace);
   const slots = new SlotsService();
   const plugins = new PluginsService({
     invoke: env.invoke,
@@ -65,13 +66,13 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
   ctx.reflect.provide("files", files);
   ctx.reflect.provide("excel", excel);
   ctx.reflect.provide("windows", windows);
-  ctx.reflect.provide("workspace", workspace);
+  ctx.reflect.provide("workspace", workspace.facade);
   ctx.reflect.provide("slots", slots);
   ctx.reflect.provide("plugins", plugins);
   await files.start();
   // 持久 root 启动即重授权（配置 scope 已收空，运行期动态注入是唯一通道）。
   const root = await windows.fetchRoot(windows.currentLabel());
-  await windows.changeRoot(workspace, root);
+  await windows.changeRoot(root);
   // 注入行叠加在静态表上（同 id 覆盖）：测试补探针行时，默认清单仍含全部内置插件。
   const table: ModuleTable = { ...MODULE_TABLE, ...env.table };
   const manifest = await loadManifest(

@@ -9,13 +9,17 @@ priority: P1
 status: in-progress
 scope:
   - src/plugins/app-shell/**
+  - src/plugins/app-windows/**
   - src/plugins/view-filetree/**
   - src/plugins/doc-markdown/**
   - src/plugins/doc-video/**
   - src/plugins/doc-excel/**
   - src/styles.css
   - src/ui/**
+  - src/bootstrap.ts
+  - src/host/context.d.ts
   - src/host/workspace.ts
+  - src/loader/guard.ts
   - src/host/windows.ts
   - tests/**
   - docs/architecture.*
@@ -43,6 +47,6 @@ The three format viewers each work, but switching, empty states, shortcuts, and 
 ## Acceptance
 
 - Switching across the three formats is consistent in one window, and empty states for "no document opened" and "library opened but none selected" are clear.
-- Dirty documents guard file and root switches; switching continues only after confirmation. Reopening the same path does not ask twice.
+- Dirty documents guard file and root switches; switching continues only after confirmation. Reopening the same path neither asks twice nor silently reloads.
 - `Mod-S` works globally for markdown / excel, and video supports Space plus left/right arrows; all three formats share one loading/error visual kit.
 - `pnpm test`, `pnpm build`, `pnpm verify:layering`, and `pnpm verify:env-independence` are green.

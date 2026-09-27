@@ -130,7 +130,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   btn.addEventListener("click", async () => {
     const root = await ctx.files.pickFolder();
     // 换根单路：授权+登记成功才切前端工作区（scope 收空后漏授权即视频 403）。
-    if (root) await ctx.windows.changeRoot(ctx.workspace, root);
+    if (root) await ctx.windows.changeRoot(root);
   });
   welcome.append(welcomeSeal, welcomeTitle, hint, btn);
 

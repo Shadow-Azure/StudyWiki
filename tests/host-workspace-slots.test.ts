@@ -89,3 +89,17 @@ test("slots: 按注册顺序渲染、反订阅移除、mount 重绑清容器", (
   off();
   expect(container.querySelectorAll(".slot").length).toBe(1);
 });
+
+test("workspace: 同路径脏文档重开为无提示 no-op", async () => {
+  const ws = new WorkspaceService();
+  const a = md("a.md");
+  await ws.openFile(a);
+  let opened = 0;
+  const offEvent = ws.events.on("file-opened", () => { opened += 1; });
+  const offGuard = ws.guardSwitch(() => true, () => Promise.resolve(false));
+  await expect(ws.openFile(a)).resolves.toBe(true);
+  expect(ws.activeFile).toBe(a);
+  expect(opened).toBe(0);
+  offGuard();
+  offEvent();
+});

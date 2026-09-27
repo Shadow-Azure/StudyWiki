@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import { createEmitter } from "../src/host/emitter";
 import { FilesService } from "../src/host/files";
 import { WindowsService } from "../src/host/windows";
+import { WorkspaceService } from "../src/host/workspace";
 
 test("emitter: 订阅/触发/退订", () => {
   const e = createEmitter<{ ch: number }>();
@@ -85,22 +86,38 @@ test("windows: setRoot 透传 label+root（注册表更新 + asset 授权的命�
 test("windows: changeRoot 非 null 先授权登记再切工作区；null 只清前端", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
   const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
-  const workspace = { confirmSwitch: vi.fn().mockResolvedValue(true), forceSetRoot: vi.fn() };
-  await expect(win.changeRoot(workspace, "/picked")).resolves.toBe(true);
+  const workspace = new WorkspaceService();
+  const forceSetRoot = vi.spyOn(workspace, "forceSetRoot");
+  win.bindWorkspace(workspace);
+  await expect(win.changeRoot("/picked")).resolves.toBe(true);
   expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
-  expect(workspace.forceSetRoot).toHaveBeenCalledWith("/picked");
+  expect(workspace.root).toBe("/picked");
   // 顺序不变式：守卫确认 + 授权登记成功才切前端（fail-closed，防欢迎态漏授权复发）。
-  expect(invoke.mock.invocationCallOrder[0]).toBeLessThan(workspace.forceSetRoot.mock.invocationCallOrder[0]);
-  await expect(win.changeRoot(workspace, null)).resolves.toBe(true);
-  expect(workspace.forceSetRoot).toHaveBeenLastCalledWith(null);
+  expect(invoke.mock.invocationCallOrder[0]).toBeLessThan(forceSetRoot.mock.invocationCallOrder[0]);
+  await expect(win.changeRoot(null)).resolves.toBe(true);
+  expect(workspace.root).toBeNull();
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 
 test("windows: changeRoot 在工作区守卫拒绝时不授权登记", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
   const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
-  const workspace = { confirmSwitch: vi.fn().mockResolvedValue(false), forceSetRoot: vi.fn() };
-  await expect(win.changeRoot(workspace, "/picked")).resolves.toBe(false);
+  const workspace = new WorkspaceService();
+  const forceSetRoot = vi.spyOn(workspace, "forceSetRoot");
+  workspace.guardSwitch(() => true, () => Promise.resolve(false));
+  win.bindWorkspace(workspace);
+  await expect(win.changeRoot("/picked")).resolves.toBe(false);
   expect(invoke).not.toHaveBeenCalled();
-  expect(workspace.forceSetRoot).not.toHaveBeenCalled();
+  expect(forceSetRoot).not.toHaveBeenCalled();
+  expect(workspace.root).toBeNull();
+});
+
+test("windows: bootstrap 绑定内部工作区后 changeRoot 走守卫与授权切根", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const workspace = new WorkspaceService();
+  win.bindWorkspace(workspace);
+  await expect(win.changeRoot("/picked")).resolves.toBe(true);
+  expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
+  expect(workspace.root).toBe("/picked");
 });

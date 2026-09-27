@@ -13,12 +13,44 @@ interface SwitchGuard {
   confirmDiscard(): Promise<boolean>;
 }
 
+/** Plugin-facing workspace surface: reads, events, guarded opens, and guard registration.
+ * Root mutation stays on the host controller and is reachable only through WindowsService. */
+export interface WorkspaceFacade {
+  /** The opened folder, or null in welcome state. */
+  readonly root: string | null;
+  /** The currently open document, if any. */
+  readonly activeFile: FileNode | null;
+  /** Root and active-file change events. */
+  readonly events: Emitter<WorkspaceEvents>;
+  /** Make `file` active after consulting switch guards.
+   * @returns True when opened (or already active); false when rejected. */
+  openFile(file: FileNode): Promise<boolean>;
+  /** Register a guard consulted before file/root switches.
+   * @param isDirty Returns true when this guard owns unsaved work.
+   * @param confirmDiscard Resolves true to discard the unsaved work.
+   * @returns Disposer removing the guard. */
+  guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void;
+}
+
 /** Window-scoped workspace state: which root is open, which file is active. */
 export class WorkspaceService {
+  readonly facade: WorkspaceFacade;
   #root: string | null = null;
   #activeFile: FileNode | null = null;
   readonly #switchGuards = new Set<SwitchGuard>();
   readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+  constructor() {
+    const service = this;
+    this.facade = Object.freeze({
+      get root() { return service.root; },
+      get activeFile() { return service.activeFile; },
+      get events() { return service.events; },
+      openFile: (file: FileNode) => service.openFile(file),
+      guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+        service.guardSwitch(isDirty, confirmDiscard),
+    });
+  }
 
   /** The opened folder, or null in welcome state. */
   get root(): string | null {
@@ -74,7 +106,10 @@ export class WorkspaceService {
   /** Make `file` the active document; viewers subscribe to file-opened.
    * @returns True when the file opened; false when a guard rejected the switch. */
   async openFile(file: FileNode): Promise<boolean> {
-    if (file.path !== this.#activeFile?.path && !(await this.confirmSwitch())) return false;
+    if (file.path === this.#activeFile?.path) {
+      // Reopening the active dirty document is a no-op: no repeated prompt and no silent reload.
+      if ([...this.#switchGuards].some((guard) => guard.isDirty())) return true;
+    } else if (!(await this.confirmSwitch())) return false;
     this.#activeFile = file;
     this.events.emit("file-opened", file);
     return true;

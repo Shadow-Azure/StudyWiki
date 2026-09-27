@@ -30,21 +30,27 @@ export function apply(
   let offSave: (() => void) | null = null;
   let error: string | null = null;
   let loading = false;
+  let openSeq = 0;
+  let saving = false;
+  let disposed = false;
 
   const save = async (): Promise<void> => {
-    if (!current || !isDirty(state)) return;
+    if (saving || !current || !isDirty(state)) return;
+    saving = true;
+    const savedText = state.text;
     try {
-      await ctx.files.writeText(current.path, state.text);
+      await ctx.files.writeText(current.path, savedText);
+      host?.querySelector(".doc-error")?.remove();
+      error = null;
+      if (state.text === savedText) state = markSaved(state);
+      paintChrome();
     } catch (e) {
       error = `保存失败：${(e as Error).message}`;
       if (host) errorBanner(host, error, () => { error = null; });
-      return;
+    } finally {
+      saving = false;
     }
-    host?.querySelector(".doc-error")?.remove();
-    error = null;
-    state = markSaved(state);
-    paintChrome();
-  };
+  }
 
   const paintChrome = (): void => {
     const dirty = current?.kind === "markdown" && isDirty(state);
@@ -112,6 +118,7 @@ export function apply(
   };
 
   const open = async (file: FileNode | null): Promise<void> => {
+    const seq = ++openSeq;
     if (file?.kind === "markdown") {
       current = file;
       state = openDoc("");
@@ -122,12 +129,14 @@ export function apply(
       try {
         text = await ctx.files.readText(file.path);
       } catch (e) {
+        if (seq !== openSeq) return;
         loading = false;
         state = openDoc(""); // 清空正文：读失败不得停留在上一个文档的内容上
         error = `读取失败：${(e as Error).message}`;
         render();
         return;
       }
+      if (seq !== openSeq) return;
       loading = false;
       state = openDoc(text);
       error = null;
@@ -141,17 +150,21 @@ export function apply(
   };
 
   const ownsActiveMarkdown = (): boolean =>
-    ctx.workspace.activeFile?.kind === "markdown" && current?.kind === "markdown";
+    ctx.workspace.activeFile?.path === current?.path && current?.kind === "markdown";
 
-  void ctx.windows.guardClose(
+  const offGuardPromise = ctx.windows.guardClose(
     () => ownsActiveMarkdown() && isDirty(state),
     () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并关闭？`),
-  ).then((off) => { offGuard = off; });
+  );
+  void offGuardPromise.then((off) => {
+    if (disposed) off();
+    else offGuard = off;
+  });
   offSwitchGuard = ctx.workspace.guardSwitch(
     () => ownsActiveMarkdown() && isDirty(state),
     () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
   );
-  offSave = bindSaveShortcut(() => ctx.workspace.activeFile?.kind === "markdown", () => void save());
+  offSave = bindSaveShortcut(ownsActiveMarkdown, () => void save());
 
   const offFile = ctx.workspace.events.on("file-opened", (f) => void open(f));
   const offSlot = ctx.slots.register("main.viewer", (el) => {
@@ -159,5 +172,11 @@ export function apply(
     render();
     void open(ctx.workspace.activeFile);
   });
-  return () => { offFile(); offSlot(); offGuard?.(); offSwitchGuard?.(); offSave?.(); editor?.destroy(); };
+  return () => {
+    disposed = true;
+    openSeq += 1;
+    offFile(); offSlot(); offGuard?.();
+    void offGuardPromise.then((off) => off());
+    offSwitchGuard?.(); offSave?.(); editor?.destroy();
+  };
 }

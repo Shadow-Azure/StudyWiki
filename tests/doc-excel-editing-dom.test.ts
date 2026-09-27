@@ -3,6 +3,7 @@ import { Workbook } from "exceljs";
 import { beforeEach, expect, test, vi } from "vitest";
 import { ExcelService, parseWorkbook } from "../src/host/excel";
 import { apply } from "../src/plugins/doc-excel";
+import { WorkspaceService } from "../src/host/workspace";
 import type { FileNode } from "../src/types";
 
 function workbook(): Workbook {
@@ -261,4 +262,55 @@ test("并发保存去重：保存进行中后续 Ctrl+S 被忽略，写入不交
   await vi.waitFor(() => expect(c.guardShould()).toBe(false));
   expect(c.excel.write).toHaveBeenCalledTimes(1);
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(false);
+});
+
+test("DOM：excel 保存期间继续编辑保持脏状态并可重试", async () => {
+  let releaseFirst!: () => void;
+  let writes = 0;
+  const c = makeCtx(workbook(), async () => {
+    writes += 1;
+    if (writes === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+  });
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+  dblClickCell("A1");
+  let input = editor();
+  input.value = "41";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(c.writes).toHaveLength(1));
+  dblClickCell("B1");
+  input = editor();
+  input.value = "42";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  releaseFirst();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(c.guardShould()).toBe(true);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(c.writes).toHaveLength(2));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(c.guardShould()).toBe(false);
+});
+
+test("DOM：excel 脏状态接入真实切换守卫", async () => {
+  const c = makeCtx(workbook());
+  const workspace = new WorkspaceService();
+  (c.ctx as { workspace: unknown }).workspace = workspace.facade;
+  const confirmDialog = vi.fn(async () => false);
+  (c.ctx as { windows: unknown }).windows = {
+    confirmDialog,
+    guardClose: async () => () => {},
+  };
+  apply(c.ctx, {});
+  await workspace.openFile(c.file);
+  dblClickCell("A1");
+  const input = editor();
+  input.value = "41";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const other: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  await expect(workspace.openFile(other)).resolves.toBe(false);
+  expect(workspace.activeFile).toBe(c.file);
+  confirmDialog.mockResolvedValue(true);
+  await expect(workspace.openFile(other)).resolves.toBe(true);
+  expect(workspace.activeFile).toBe(other);
 });
