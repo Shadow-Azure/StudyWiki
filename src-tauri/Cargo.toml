@@ -23,6 +23,13 @@ tar = "0.4"
 sha2 = "0.10"
 base64 = "0.22"
 
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+[[test]]
+name = "raw_ipc"
+harness = false
+
 [profile.release]
 # Smaller, self-contained binaries: no dynamic deps on the host toolchain.
 strip = true

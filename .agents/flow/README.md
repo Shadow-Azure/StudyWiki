@@ -51,7 +51,7 @@ roadmap 围栏字段：`kind: roadmap`、`milestones`（id 有序列表）。mil
 
 ## GitHub 同步
 
-`pnpm flow:sync` 是把流程树写到 GitHub 的唯一入口（建 milestone / issue、回填 number/url、重录配对记录）；CI 在线 lane 只校验不修改。需要本机 gh 已登录。
+`pnpm flow:sync` 是把流程树写到 GitHub 的唯一入口（建单、回填、状态映射、重录；不删远端）；CI 在线 lane 只校验不修改。需要 gh 已登录。
 
 issue / milestone / 状态映射用 `GITHUB_TOKEN` 可校验；**PR 的 project 关联**要读用户级 Projects v2，app token 恒见空列表：配 `FLOW_TOKEN`（PAT，`project` scope）则 CI 强校验，否则降级为提醒，由本地 `pnpm verify:flow-online` 把关。
 

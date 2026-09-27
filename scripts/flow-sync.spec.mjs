@@ -59,8 +59,8 @@ describe("runSync", () => {
     ],
   });
 
-  const io = (tree) => {
-    const calls = { milestones: [], issues: [], backfilled: [] };
+  const io = (tree, remoteStates = { milestones: { 9: "open" }, issues: { 3: "OPEN" } }) => {
+    const calls = { milestones: [], issues: [], backfilled: [], stateUpdates: [] };
     let next = 10;
     return {
       calls,
@@ -75,6 +75,20 @@ describe("runSync", () => {
       backfill(file, number) {
         calls.backfilled.push([file, number]);
       },
+      readMilestoneState(m) {
+        return remoteStates.milestones[m.data.github.number] ?? "open";
+      },
+      updateMilestoneState(m, state) {
+        calls.stateUpdates.push(["milestone", m.data.github.number, state]);
+        remoteStates.milestones[m.data.github.number] = state;
+      },
+      readIssueState(issue) {
+        return remoteStates.issues[issue.data.github.number] ?? "OPEN";
+      },
+      updateIssueState(issue, state) {
+        calls.stateUpdates.push(["issue", issue.data.github.number, state]);
+        remoteStates.issues[issue.data.github.number] = state;
+      },
       tree,
     };
   };
@@ -83,7 +97,7 @@ describe("runSync", () => {
     const tree = fresh();
     const fake = io(tree);
     const created = await runSync(tree, fake);
-    expect(created).toEqual({ milestones: 1, issues: 1 });
+    expect(created).toEqual({ milestones: 1, issues: 1, stateUpdates: 0 });
     expect(fake.calls.issues).toEqual([["a", "m0"]]);
     expect(fake.calls.backfilled).toEqual([
       ["m0.md", 1],
@@ -91,6 +105,16 @@ describe("runSync", () => {
     ]);
     expect(tree.milestones[0].data.github.number).toBe(1);
     expect(tree.issues[0].data.github.url).toBe("https://github.com/o/r/issues/11");
+  });
+
+  it("已有编号的 done issue 会被同步为 CLOSED，状态一致的对象不再 PATCH", async () => {
+    const tree = fresh();
+    tree.issues[1].data.status = "done";
+    const fake = io(tree);
+    const result = await runSync(tree, fake);
+    expect(result).toEqual({ milestones: 1, issues: 1, stateUpdates: 1 });
+    expect(fake.calls.stateUpdates).toEqual([["issue", 3, "CLOSED"]]);
+    expect(fake.remoteStates ?? undefined).toBeUndefined();
   });
 
   it("所属 milestone 不在树上时拒绝开工", async () => {

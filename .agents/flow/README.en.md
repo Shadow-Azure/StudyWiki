@@ -51,7 +51,7 @@ roadmap fence fields: `kind: roadmap`, `milestones` (ordered id list). milestone
 
 ## GitHub sync
 
-`pnpm flow:sync` is the only entry point that writes the flow tree to GitHub (creates milestones / issues, backfills number/url, re-records pairing records); the CI online lane verifies without modifying. Requires a logged-in local gh.
+`pnpm flow:sync` is the only entry point that writes the flow tree to GitHub (create, backfill, map status, re-record; never delete remotely); the CI online lane verifies without modifying. Requires a logged-in gh.
 
 Issues / milestones / state mapping check out with `GITHUB_TOKEN`; **a PR's project link** needs user-level Projects v2, where an app token only ever sees an empty list: with `FLOW_TOKEN` (a PAT carrying `project`) CI enforces it, otherwise it drops to a reminder and the local `pnpm verify:flow-online` enforces it.
 
