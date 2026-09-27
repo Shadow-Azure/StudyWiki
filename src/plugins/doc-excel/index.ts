@@ -15,6 +15,7 @@ import {
   setFontColor,
   toggleFontFlag,
   unmergeRange,
+  type CellAddress,
   type CellRange,
 } from "./editing";
 import { createSheetModel, visibleRowRange, type ExcelMerge, type ExcelSheetModel, type SheetSource } from "./model";
@@ -119,6 +120,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   let firstRow = 0;
   let scroll: HTMLDivElement | null = null;
   let selection: CellRange | null = null;
+  let selectionAnchor: CellAddress | null = null;
   let editing: { row: number; column: number } | null = null;
   let dirtyState = false;
   let toolbarState: ToolbarState | null = null;
@@ -129,6 +131,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     sheetIndex = -1;
     firstRow = 0;
     selection = null;
+    selectionAnchor = null;
     editing = null;
     dirtyState = false;
   };
@@ -222,10 +225,12 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   const select = (row: number, column: number, extend: boolean): void => {
     const sheetModel = model();
     if (!sheetModel) return;
-    const next = extend && selection
-      ? normalizeRange({ row: selection.top, column: selection.left }, { row, column })
-      : clickSelection(sheetModel.merges, row, column);
-    selection = next;
+    if (extend && selection && selectionAnchor) {
+      selection = normalizeRange(selectionAnchor, { row, column });
+    } else {
+      selection = clickSelection(sheetModel.merges, row, column);
+      selectionAnchor = { row: selection.top, column: selection.left };
+    }
     paintSelection();
     updateToolbar();
   };
@@ -418,6 +423,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       dirtyState = true;
       rebuildModel();
       selection = clickSelection(models[sheetIndex]?.merges ?? [], range.top, range.left);
+      selectionAnchor = { row: selection.top, column: selection.left };
       render();
     });
     const unmergeBtn = labelButton("unmerge", "取消合并", { className: "btn btn-ghost excel-tool" });
@@ -482,6 +488,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
         sheetIndex = index;
         firstRow = 0;
         selection = null;
+        selectionAnchor = null;
         editing = null;
         render();
       });
@@ -581,6 +588,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       sheetIndex = models.length > 0 ? 0 : -1;
       firstRow = 0;
       selection = null;
+      selectionAnchor = null;
       editing = null;
       render();
     } catch (e) {

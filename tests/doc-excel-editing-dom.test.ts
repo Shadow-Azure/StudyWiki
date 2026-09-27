@@ -201,3 +201,25 @@ test("长合并 anchor 滚出视口后，双击可见片段仍可编辑并写回
   await vi.waitFor(() => expect(document.querySelector(".excel-cell-editor")).toBeNull());
   expect(wb.getWorksheet("S")!.getCell("A1").value).toBe(42);
 });
+
+test("Shift 扩选保持原始锚点：方向反转后再扩选不漂移", async () => {
+  const wb = new Workbook();
+  const ws = wb.addWorksheet("S");
+  for (const address of ["A1", "B1", "C1", "A2", "B2", "C2", "A3", "B3", "C3", "A4", "B4", "C4"]) {
+    ws.getCell(address).value = address;
+  }
+  const c = makeCtx(wb);
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+
+  clickCell("B3");
+  clickCell("A1", true);
+  let selected = [...document.querySelectorAll<HTMLElement>("[data-selected]")]
+    .map((el) => el.dataset.address).sort();
+  expect(selected).toEqual(["A1", "A2", "A3", "B1", "B2", "B3"]);
+
+  clickCell("C4", true);
+  selected = [...document.querySelectorAll<HTMLElement>("[data-selected]")]
+    .map((el) => el.dataset.address).sort();
+  expect(selected).toEqual(["B3", "B4", "C3", "C4"]);
+});
