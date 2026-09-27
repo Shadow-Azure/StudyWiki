@@ -123,6 +123,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   let selectionAnchor: CellAddress | null = null;
   let editing: { row: number; column: number } | null = null;
   let dirtyState = false;
+  let saving = false;
   let toolbarState: ToolbarState | null = null;
 
   const clearDocument = (): void => {
@@ -162,7 +163,8 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   };
 
   const save = async (): Promise<void> => {
-    if (!current || current.kind !== "excel" || !workbook || !dirtyState) return;
+    if (saving || !current || current.kind !== "excel" || !workbook || !dirtyState) return;
+    saving = true;
     try {
       await ctx.excel.write(current.path, workbook);
       host?.querySelector(".doc-error")?.remove();
@@ -172,6 +174,8 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     } catch (e) {
       error = `保存失败：${e instanceof Error ? e.message : String(e)}`;
       if (host) errorBanner(host);
+    } finally {
+      saving = false;
     }
   };
 

@@ -223,3 +223,28 @@ test("Shift 扩选保持原始锚点：方向反转后再扩选不漂移", async
     .map((el) => el.dataset.address).sort();
   expect(selected).toEqual(["B3", "B4", "C3", "C4"]);
 });
+
+test("并发保存去重：保存进行中后续 Ctrl+S 被忽略，写入不交错", async () => {
+  const wb = workbook();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const c = makeCtx(wb, async () => { await gate; });
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+
+  dblClickCell("A1");
+  editor().value = "42";
+  editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await vi.waitFor(() => expect(c.guardShould()).toBe(true));
+
+  const viewer = document.querySelector<HTMLElement>(".excel-viewer")!;
+  viewer.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }));
+  viewer.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }));
+  expect(c.excel.write).toHaveBeenCalledTimes(1);
+
+  release();
+  await gate;
+  await vi.waitFor(() => expect(c.guardShould()).toBe(false));
+  expect(c.excel.write).toHaveBeenCalledTimes(1);
+  expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(false);
+});
