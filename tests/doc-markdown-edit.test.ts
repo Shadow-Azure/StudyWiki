@@ -27,6 +27,7 @@ function makeCtx() {
   const workspace = {
     activeFile: null as FileNode | null,
     events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   const guardClose = vi.fn(async () => () => {});
   const windows = { confirmDialog: vi.fn(async () => true), guardClose };
@@ -52,7 +53,7 @@ test("DOM: 编辑模式挂载编辑器工厂、onChange 记脏、保存写回", 
   const modes = [...document.querySelectorAll<HTMLButtonElement>(".mode-group button")];
   expect(modes.map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["预览", "true"], ["编辑", "false"]]);
   expect(document.querySelector(".save-btn")?.textContent).toBe("保存");
-  expect(document.querySelector(".save-btn")?.getAttribute("aria-keyshortcuts")).toBe("Control+S");
+  expect(document.querySelector(".save-btn")?.getAttribute("aria-keyshortcuts")).toBe("Control+S Meta+S");
   modes[1]!.click(); // 切到编辑（打开落在预览模式，蓝本用例缺这一步，null.__fire 拒析）
   (document.querySelector(".fake-editor") as HTMLElement & { __fire: (t: string) => void }).__fire("body2");
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(true);

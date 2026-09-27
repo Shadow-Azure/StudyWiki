@@ -1,8 +1,8 @@
 import type { Context } from "cordis";
 import type { Workbook } from "exceljs";
 import type { FileNode } from "../../types";
-import { icon } from "../../ui/icons";
 import { labelButton } from "../../ui/dom";
+import { bindSaveShortcut, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
 import {
   clickSelection,
   columnAddress,
@@ -124,6 +124,8 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   let editing: { row: number; column: number } | null = null;
   let dirtyState = false;
   let saving = false;
+  let offSave: (() => void) | null = null;
+  let offSwitchGuard: (() => void) | null = null;
   let toolbarState: ToolbarState | null = null;
 
   const clearDocument = (): void => {
@@ -137,7 +139,10 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     dirtyState = false;
   };
 
-  const dirty = (): boolean => current?.kind === "excel" && dirtyState;
+  const ownsActiveExcel = (): boolean =>
+    ctx.workspace.activeFile?.kind === "excel" && current?.kind === "excel";
+
+  const dirty = (): boolean => ownsActiveExcel() && dirtyState;
 
   const model = (): ExcelSheetModel | null => models[sheetIndex] ?? null;
 
@@ -146,20 +151,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   const paintChrome = (): void => {
     const isDirty = dirty();
     host?.querySelector(".save-btn")?.classList.toggle("dirty", isDirty);
-    document.title = isDirty && current ? `● ${current.name}` : current?.name ?? "StudyWiki";
-  };
-
-  const errorBanner = (parent: HTMLElement): HTMLElement => {
-    parent.querySelector(".doc-error")?.remove();
-    const bar = document.createElement("div");
-    bar.className = "doc-error";
-    const message = document.createElement("span");
-    message.textContent = error ?? "";
-    const dismiss = labelButton("close", "", { className: "", ariaLabel: "关闭错误提示" });
-    dismiss.addEventListener("click", () => { error = null; bar.remove(); });
-    bar.append(icon("alert", 15), message, dismiss);
-    parent.prepend(bar);
-    return bar;
+    if (current?.kind === "excel") paintTitle(current, isDirty);
   };
 
   const save = async (): Promise<void> => {
@@ -173,7 +165,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
       paintChrome();
     } catch (e) {
       error = `保存失败：${e instanceof Error ? e.message : String(e)}`;
-      if (host) errorBanner(host);
+      if (host) errorBanner(host, error, () => { error = null; });
     } finally {
       saving = false;
     }
@@ -441,7 +433,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     });
 
     const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
-    saveBtn.setAttribute("aria-keyshortcuts", "Control+S");
+    saveBtn.setAttribute("aria-keyshortcuts", "Control+S Meta+S");
     saveBtn.addEventListener("click", () => void save());
 
     bar.append(boldBtn, italicBtn, textColor, fillColor, mergeBtn, unmergeBtn, saveBtn);
@@ -462,23 +454,14 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     }
 
     host.hidden = false;
-    if (error) errorBanner(host);
+    if (error) errorBanner(host, error, () => { error = null; });
     if (loading || !workbook) {
-      const loadingRow = document.createElement("div");
-      loadingRow.className = "excel-loading";
-      loadingRow.textContent = "加载中…";
-      host.append(loadingRow);
+      host.append(loadingHint());
       return;
     }
 
     const viewer = document.createElement("div");
     viewer.className = "excel-viewer";
-    viewer.addEventListener("keydown", (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        void save();
-      }
-    });
     const tabs = document.createElement("div");
     tabs.className = "excel-tabs";
     models.forEach((sheetModel, index) => {
@@ -604,6 +587,12 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     }
   };
 
+  offSave = bindSaveShortcut(() => ctx.workspace.activeFile?.kind === "excel", () => void save());
+  offSwitchGuard = ctx.workspace.guardSwitch(
+    dirty,
+    () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
+  );
+
   const offFile = ctx.workspace.events.on("file-opened", (file) => void open(file));
   const offSlot = ctx.slots.register("main.viewer", (el) => {
     host = el;
@@ -611,7 +600,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     void open(ctx.workspace.activeFile);
   });
   const offGuardPromise = ctx.windows.guardClose(
-    () => dirty(),
+    dirty,
     () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并关闭？`),
   );
   let offGuard: (() => void) | null = null;
@@ -622,6 +611,8 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     host = null;
     offFile();
     offSlot();
+    offSave?.();
+    offSwitchGuard?.();
     offGuard?.();
     // guardClose promise may resolve after teardown; always drain it.
     void offGuardPromise.then((off) => off());

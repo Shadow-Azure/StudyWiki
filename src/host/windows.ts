@@ -53,10 +53,16 @@ export class WindowsService {
    * (fail-closed), then the workspace switch. Every root change goes through
    * here — topbar button, welcome-state button, boot re-grant — so the
    * grant-before-switch ordering is structural, not conventional. Passing
-   * null clears the frontend only (no Rust call). */
-  async changeRoot(workspace: Pick<WorkspaceService, "setRoot">, root: string | null): Promise<void> {
+   * null clears the frontend only (no Rust call).
+   * @returns True when the root changed; false when a workspace switch guard rejected it. */
+  async changeRoot(
+    workspace: Pick<WorkspaceService, "confirmSwitch" | "forceSetRoot">,
+    root: string | null,
+  ): Promise<boolean> {
+    if (!(await workspace.confirmSwitch())) return false;
     if (root !== null) await this.setRoot(this.currentLabel(), root);
-    workspace.setRoot(root);
+    workspace.forceSetRoot(root);
+    return true;
   }
 
   /** Native confirm dialog (close-guard prompt); true = proceed. */

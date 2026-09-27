@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { renderMarkdown } from "../src/plugins/doc-markdown/preview";
 import { apply } from "../src/plugins/doc-markdown";
 import type { FileNode } from "../src/types";
@@ -17,6 +17,7 @@ test("DOM: file-opened(kind=markdown) 渲染预览；kind 不符清空", async (
   const workspace = {
     activeFile: null as FileNode | null,
     events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
   apply({ files, windows, workspace, slots } as never, {});
@@ -35,6 +36,7 @@ test("DOM: 读失败渲染错误占位，不停留旧文档内容", async () => 
   const workspace = {
     activeFile: null as FileNode | null,
     events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
   apply({ files, windows, workspace, slots } as never, {});
@@ -57,6 +59,7 @@ test("DOM: 写失败置可清除错误条（编辑器不卸载），成功后清
   const workspace = {
     activeFile: null as FileNode | null,
     events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
   const factory = (parent: HTMLElement, _initial: string, onChange: (t: string) => void, onSave: () => void) => {
@@ -91,4 +94,115 @@ test("DOM: 写失败置可清除错误条（编辑器不卸载），成功后清
   await new Promise((r) => setTimeout(r, 0));
   (document.querySelector(".doc-error button") as HTMLButtonElement).click(); // × 可清除
   expect(document.querySelector(".doc-error")).toBeNull();
+});
+
+test("DOM: markdown 读取期间显示共享加载态", async () => {
+  const md: FileNode = { name: "slow.md", path: "/x/slow.md", kind: "markdown" };
+  let resolveRead!: (text: string) => void;
+  const files = { readText: () => new Promise<string>((resolve) => { resolveRead = resolve; }), writeText: vi.fn() };
+  let opened: (f: FileNode | null) => Promise<void> = async () => {};
+  const windows = { confirmDialog: async () => true, guardClose: async () => () => {} };
+  const workspace = {
+    activeFile: null as FileNode | null,
+    events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: vi.fn(() => () => {}),
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  const pending = opened(md);
+  expect(document.querySelector(".viewer-loading")?.textContent).toBe("加载中…");
+  resolveRead("# slow");
+  await pending;
+  expect(document.querySelector(".viewer-loading")).toBeNull();
+  expect(document.querySelector(".markdown-body h1")?.textContent).toBe("slow");
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: markdown 预览模式响应全局 Mod-S 并标注快捷键", async () => {
+  const md: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  let opened: (f: FileNode | null) => Promise<void> = async () => {};
+  const windows = { confirmDialog: async () => true, guardClose: async () => () => {} };
+  const workspace = {
+    activeFile: md,
+    events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: vi.fn(() => () => {}),
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const factory = (parent: HTMLElement, _initial: string, onChange: (t: string) => void) => {
+    const dom = document.createElement("div");
+    dom.className = "fake-editor";
+    (dom as HTMLElement & { __fire: (t: string) => void }).__fire = (t) => onChange(t);
+    parent.append(dom);
+    return { dom, getText: () => dom.textContent ?? "", destroy: () => dom.remove() };
+  };
+  const teardown = apply({ files, windows, workspace, slots } as never, {}, factory as never);
+  await opened(md);
+  ([...document.querySelectorAll<HTMLButtonElement>(".mode-group button")].find((b) => b.textContent === "编辑"))!.click();
+  (document.querySelector(".fake-editor") as HTMLElement & { __fire: (t: string) => void }).__fire("body2");
+  ([...document.querySelectorAll<HTMLButtonElement>(".mode-group button")].find((b) => b.textContent === "预览"))!.click();
+  expect(document.querySelector(".save-btn")?.getAttribute("aria-keyshortcuts")).toBe("Control+S Meta+S");
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(files.writeText).toHaveBeenCalledWith("/x/a.md", "body2");
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: markdown 注册切换守卫", async () => {
+  const md: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  const windows = { confirmDialog: async () => true, guardClose: async () => () => {} };
+  const guardSwitch = vi.fn(() => () => {});
+  const workspace = {
+    activeFile: null as FileNode | null,
+    events: { on: () => () => {} },
+    guardSwitch,
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  expect(guardSwitch).toHaveBeenCalledTimes(1);
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: markdown 切出时不覆盖 shell 标题基线", async () => {
+  document.title = "Custom Wiki";
+  let opened: (f: FileNode | null) => Promise<void> = async () => {};
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  const windows = { confirmDialog: async () => true, guardClose: async () => () => {} };
+  const workspace = {
+    activeFile: null as FileNode | null,
+    events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  await opened(null);
+  expect(document.title).toBe("Custom Wiki");
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: 干净 markdown 不触发关窗守卫", async () => {
+  const md: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  let guardShould: () => boolean = () => false;
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  const windows = {
+    confirmDialog: async () => true,
+    guardClose: async (should: () => boolean) => { guardShould = should; return () => {}; },
+  };
+  let opened: (f: FileNode | null) => Promise<void> = async () => {};
+  const workspace = {
+    activeFile: md,
+    events: { on: (_k: string, fn: (f: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: () => () => {},
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  await opened(md);
+  expect(guardShould()).toBe(false);
+  teardown();
+  document.body.replaceChildren();
 });

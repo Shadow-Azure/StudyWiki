@@ -32,6 +32,7 @@ function harness(wb: unknown = workbook()) {
   const workspace = {
     activeFile: null as unknown,
     events: { on: (_k: string, fn: (f: unknown) => void) => { opened = (f: unknown) => { workspace.activeFile = f; fn(f); }; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   const excel = { read: vi.fn(async () => wb) };
   const windows = { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) };
@@ -39,6 +40,30 @@ function harness(wb: unknown = workbook()) {
   apply({ excel, workspace, windows, slots } as never, {});
   return { opened, excel };
 }
+
+test("DOM：excel 读取期间使用共享加载态并注册切换守卫", async () => {
+  document.body.replaceChildren();
+  let resolveRead!: (wb: unknown) => void;
+  const excel = { read: vi.fn(() => new Promise((resolve) => { resolveRead = resolve; })), write: vi.fn() };
+  let opened!: (file: unknown) => void;
+  const workspace = {
+    activeFile: null as unknown,
+    events: { on: (_k: string, fn: (file: unknown) => void) => { opened = fn; return () => {}; } },
+    guardSwitch: vi.fn(() => () => {}),
+  };
+  const windows = { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ excel, workspace, windows, slots } as never, {});
+  expect(workspace.guardSwitch).toHaveBeenCalledTimes(1);
+  const pending = opened({ name: "slow.xlsx", path: "/x/slow.xlsx", kind: "excel" });
+  expect(document.querySelector(".viewer-loading")?.textContent).toBe("加载中…");
+  expect(document.querySelector(".excel-loading")).toBeNull();
+  resolveRead(workbook());
+  await pending;
+  expect(document.querySelector(".viewer-loading")).toBeNull();
+  teardown();
+  document.body.replaceChildren();
+});
 
 test("DOM：渲染 sheet 页签、样式与单元格；可切换 sheet", async () => {
   const { opened } = harness();
@@ -58,7 +83,7 @@ test("DOM：非 excel 清空；读取失败显示错误面板", async () => {
   expect(document.querySelector(".excel-viewer")).toBeNull();
   const failing = { read: vi.fn(async () => { throw new Error("bad zip"); }) };
   let open!: (f: unknown) => void;
-  const workspace = { activeFile: null, events: { on: (_k: string, fn: (f: unknown) => void) => { open = fn; return () => {}; } } };
+  const workspace = { activeFile: null, events: { on: (_k: string, fn: (f: unknown) => void) => { open = fn; return () => {}; } }, guardSwitch: () => () => {} };
   const windows = { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) };
   apply({ excel: failing, workspace, windows, slots: { register: (_s: string, r: (el: HTMLElement) => void) => { r(document.body); return () => {}; } } } as never, {});
   await open({ name: "bad.xlsx", path: "/x/bad.xlsx", kind: "excel" });
@@ -147,7 +172,8 @@ test("DOM：迟到的 Excel 读取不能覆盖后打开的文档", async () => {
   let opened!: (file: unknown) => void;
   const workspace = {
     activeFile: null as unknown,
-    events: { on: (_k: string, fn: (f: unknown) => void) => { opened = fn; return () => {}; } },
+    events: { on: (_k: string, fn: (f: unknown) => void) => { opened = (file) => { workspace.activeFile = file; fn(file); }; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   apply({ excel: { read }, workspace, windows: { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) }, slots: { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } } } as never, {});
 
@@ -180,4 +206,26 @@ test("DOM：完全位于窗口下方的合并不产生片段或几何膨胀", as
   expect(document.querySelectorAll(".excel-row")).toHaveLength(16);
   expect((Number.parseFloat(topSpacer?.style.height ?? "0") +
     Number.parseFloat(bottomSpacer?.style.height ?? "0")) / 28 + 16 + 1).toBe(81);
+});
+
+test("DOM：excel 切出时不覆盖 shell 标题基线", async () => {
+  document.body.replaceChildren();
+  document.title = "Custom Wiki";
+  let open!: (file: unknown) => void;
+  const workspace = {
+    activeFile: null,
+    events: { on: (_k: string, fn: (file: unknown) => void) => { open = fn; return () => {}; } },
+    guardSwitch: () => () => {},
+  };
+  const windows = { confirmDialog: vi.fn(async () => true), guardClose: vi.fn(async () => () => {}) };
+  const teardown = apply({
+    excel: { read: vi.fn(), write: vi.fn() },
+    workspace,
+    windows,
+    slots: { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } },
+  } as never, {});
+  await open(null);
+  expect(document.title).toBe("Custom Wiki");
+  teardown();
+  document.body.replaceChildren();
 });

@@ -36,7 +36,8 @@ function makeCtx(wb: Workbook, write: ((path: string, workbook: Workbook) => Pro
   let opened!: (file: FileNode | null) => void;
   const workspace = {
     activeFile: null as FileNode | null,
-    events: { on: (_k: string, fn: (file: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    events: { on: (_k: string, fn: (file: FileNode | null) => void) => { opened = (file) => { workspace.activeFile = file; fn(file); }; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   let guardShould: () => boolean = () => false;
   let guardConfirm: () => Promise<boolean> = async () => true;
@@ -52,6 +53,19 @@ function makeCtx(wb: Workbook, write: ((path: string, workbook: Workbook) => Pro
     opened: () => opened, ctx: { excel, workspace, windows, slots } as never,
   };
 }
+
+test("DOM：excel 脏工作簿响应全局 Mod-S 保存", async () => {
+  const c = makeCtx(workbook());
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+  dblClickCell("A1");
+  const input = editor();
+  input.value = "009";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(c.writes).toHaveLength(1));
+  expect(c.writes[0][0]).toBe(c.file.path);
+});
 
 function button(text: string): HTMLButtonElement {
   const found = [...document.querySelectorAll<HTMLButtonElement>(".excel-toolbar button")].find((b) => b.textContent === text);

@@ -1,0 +1,33 @@
+# Agent Note: Reading polish and switch guards
+
+Status: implemented
+
+English | [中文](2026-09-27-reading-polish.md)
+
+## Problem
+
+After m1-01 and m1-03 the three viewers work individually, but the experience is not one system: markdown / excel silently discard dirty state when switching files; video failures show a black stage; loading, errors, titles, and saving each follow local rules; visual rhythm also diverges. The prototype goal is comfortable reading in one window, so unification must happen in the host state machine and shared UI contract rather than per-viewer patches.
+
+## Decision
+
+- Switch guards belong to host `WorkspaceService`: `guardSwitch(isDirty, confirmDiscard)` lets each registrant claim unsaved work, while the viewer supplies the confirm-dialog closure. `openFile` and `setRoot` become `async → boolean`; any rejection keeps the previous state, and reopening the same path passes without asking again.
+- Root changes still go through the single `WindowsService.changeRoot` path, now ordered “guard confirmation → Rust authorization/registration → frontend root switch.” A rejected guard never issues Rust authorization, preserving fail-closed. The host-internal `confirmSwitch` + `forceSetRoot` seam avoids double confirmation without exposing an unauthorized frontend switch to plugins.
+- Markdown and excel each register a switch guard only when the active kind is theirs and the document is dirty. A plugin therefore cannot use stale `current` state to block unrelated switches after moving away; close and switch guards share the same confirmation semantics.
+- Add `src/ui/viewer.ts` as the shared viewer kit: error banner, loading state, window-title rule, and Mod-S binding. Markdown / excel / video all use it; app-shell owns the title baseline while a dirty document plugin overrides it, preventing registration order from clearing another viewer's title.
+- Saving becomes a window-level `Mod-S` binding active only for its owning viewer. Events inside CodeMirror `.cm-content` remain owned by its keymap to avoid double saves. Video gains Space play/pause and left/right ±5 seconds; input, button, and editor targets keep their keys.
+- Video shows the shared loading state until `canplay` and the shared error banner on `error`; markdown loading is added, and excel's private loading class joins the shared style. Toolbar height, padding, and dark-stage whitespace are aligned without introducing a UI framework.
+
+## Alternatives considered
+
+- Let every viewer intercept in its own file-opened handler: workspace state has already changed, so plugins can only patch afterward and cannot reliably restore activeFile or tree highlighting. Rejected.
+- Centralize dirty state in the host: that requires another cross-plugin document-state service and lifts markdown / excel dirty details (text diff versus workbook state) into the wrong boundary. Rejected.
+- Replace confirmation with autosave: fewer dialogs, but switching would turn half-finished work into a save, and write failures still need a decision; unsuitable for study notes. Rejected.
+- Let the last-registered viewer own the title: it depends on static module order and regresses whenever a viewer is added. Rejected in favor of a shell baseline plus dirty-viewer override.
+
+## Consequences
+
+- `openFile` / `setRoot` are asynchronous boolean APIs; callers may ignore the result, but timing tests must await it. Same-path reopening is defined by path.
+- Root switching, file switching, and window closing — all data-losing exits — are guarded; the plugin owning dirty state generates confirmation text, so workspace does not depend on the window service.
+- `src/ui/viewer.ts` is the home for shared viewer visual/key primitives; new viewers should reuse error, loading, title, and save handling instead of copying local implementations.
+- Video errors report load failure without exposing webview/codec internals; environment independence gains no runtime dependency.
+- m1-02 acceptance is enforced by workspace guard tests, three viewer DOM tests, build, and the layering/environment gates.

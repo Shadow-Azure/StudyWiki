@@ -1,6 +1,7 @@
 import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
 import { icon } from "../../ui/icons";
+import { paintTitle } from "../../ui/viewer";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-shell";
@@ -158,6 +159,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   };
   const syncWelcome = (): void => {
     fileTitle.textContent = "";
+    paintTitle(ctx.workspace.activeFile, false, config.title);
     syncMainState();
     if (ctx.workspace.root) {
       welcome.remove();
@@ -166,8 +168,9 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     }
   };
   const off = ctx.workspace.events.on("root-changed", syncWelcome);
-  const offFile = ctx.workspace.events.on("file-opened", () => {
-    fileTitle.textContent = ctx.workspace.activeFile?.name ?? "";
+  const offFile = ctx.workspace.events.on("file-opened", (file) => {
+    fileTitle.textContent = file?.name ?? "";
+    paintTitle(file, false, config.title);
     syncMainState();
   });
   window.addEventListener("resize", onWindowResize);
