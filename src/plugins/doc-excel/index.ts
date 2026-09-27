@@ -465,7 +465,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
     host.hidden = false;
     if (error) {
       errorBanner(host, error, () => { error = null; });
-      return;
+      if (!workbook) return;
     }
     if (loading || !workbook) {
       host.append(loadingHint());

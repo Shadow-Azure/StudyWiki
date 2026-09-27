@@ -146,6 +146,28 @@ test("Esc 不落值，Ctrl+S 保存，失败保持脏并显示错误", async () 
   expect(c.guardConfirm()).toBeInstanceOf(Promise);
 });
 
+test("保存失败后触发 render 仍保留表格；关闭横幅后错误清除", async () => {
+  const wb = workbook();
+  const c = makeCtx(wb, async () => { throw new Error("disk full"); });
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+
+  dblClickCell("B1");
+  editor().value = "changed";
+  editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  button("保存").click();
+  await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败"));
+
+  clickCell("A1");
+  button("加粗").click();
+  expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败");
+  expect(document.querySelector(".excel-viewer")).not.toBeNull();
+
+  document.querySelector<HTMLButtonElement>(".doc-error button")!.click();
+  expect(document.querySelector(".doc-error")).toBeNull();
+  expect(document.querySelector(".excel-viewer")).not.toBeNull();
+});
+
 test("工具条：选区加粗/斜体/颜色，Shift 扩选；合并与取消合并", async () => {
   const wb = workbook();
   const c = makeCtx(wb);
