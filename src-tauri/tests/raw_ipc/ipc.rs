@@ -142,7 +142,6 @@ pub fn raw_ipc_write_rejects_json_body_and_unauthorized_paths() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-
 fn json_response(response: InvokeResponseBody) -> serde_json::Value {
     match response {
         InvokeResponseBody::Json(raw) => {

@@ -21,8 +21,11 @@ scope:
   - src/host/workspace.ts
   - src/loader/guard.ts
   - src/host/windows.ts
+  - src-tauri/src/**
+  - src-tauri/tests/**
   - tests/**
   - docs/architecture.*
+  - docs/commands.*
   - scripts/code-map.manifest.json
   - .agents/notes/implemented/feature/2026-09-27-reading-polish.*
   - .agents/flow/issues/m1-02-reading-polish.*
