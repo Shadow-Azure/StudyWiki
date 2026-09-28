@@ -79,14 +79,14 @@ test("windows: fetchRoot 对 null 状态安全；confirmDialog 透传", async ()
 
 test("windows: setRoot 透传 label+root（注册表更新 + asset 授权的命令面）", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
-  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
   await win.setRoot("main", "/picked");
   expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
 });
 
 test("windows: changeRoot 非 null 先授权登记再切工作区；null 只清前端", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
-  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
   const workspace = new WorkspaceService();
   const forceSetRoot = vi.spyOn(workspace, "forceSetRoot");
   win.bindWorkspace(workspace);
@@ -102,7 +102,7 @@ test("windows: changeRoot 非 null 先授权登记再切工作区；null 只清�
 
 test("windows: changeRoot 在工作区守卫拒绝时不授权登记", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
-  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
   const workspace = new WorkspaceService();
   const forceSetRoot = vi.spyOn(workspace, "forceSetRoot");
   workspace.guardSwitch(() => true, () => Promise.resolve(false));
@@ -115,7 +115,7 @@ test("windows: changeRoot 在工作区守卫拒绝时不授权登记", async () 
 
 test("windows: changeRoot 授权登记失败时 fail-closed 不切前端", async () => {
   const invoke = vi.fn().mockRejectedValue(new Error("grant denied"));
-  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
   const workspace = new WorkspaceService();
   await workspace.setRoot("/old");
   const md: FileNode = { name: "a.md", path: "/old/a.md", kind: "markdown" };
@@ -128,36 +128,46 @@ test("windows: changeRoot 授权登记失败时 fail-closed 不切前端", async
   expect(workspace.activeFile).toBe(md);
 });
 
-test("windows: guardClose 三分支（干净放行 / 脏且取消拦关 / 脏且确认放行）", async () => {
-  let handler!: (e: { preventDefault(): void }) => Promise<void> | void;
-  const onCloseRequested = vi.fn((cb: (e: { preventDefault(): void }) => Promise<void> | void) => {
+test("windows: guardClose 同步拦关，确认后经 destroy 关窗、取消不关（真实 Tauri 时序）", async () => {
+  let handler!: (e: { preventDefault(): void }) => void;
+  const onCloseRequested = vi.fn((cb: (e: { preventDefault(): void }) => void) => {
     handler = cb;
     return Promise.resolve(() => {});
   });
   const confirmDialog = vi.fn(async () => false);
-  const win = new WindowsService({ invoke: vi.fn(), currentLabel: () => "main", onCloseRequested, confirmDialog });
+  const destroy = vi.fn(async () => {});
+  const win = new WindowsService({ invoke: vi.fn(), currentLabel: () => "main", onCloseRequested, confirmDialog, destroy });
   let dirty = false;
   await win.guardClose(() => dirty, () => win.confirmDialog("放弃修改？"));
 
+  // 干净：同步放行——不 preventDefault，也不发起确认/destroy。
   const clean = { preventDefault: vi.fn() };
-  await handler(clean);
+  handler(clean);
   expect(clean.preventDefault).not.toHaveBeenCalled();
+  expect(confirmDialog).not.toHaveBeenCalled();
+  expect(destroy).not.toHaveBeenCalled();
 
+  // 脏 + 取消：preventDefault 必须发生在任何 await 之前；不 destroy。
   dirty = true;
   const cancelled = { preventDefault: vi.fn() };
-  await handler(cancelled);
-  expect(confirmDialog).toHaveBeenCalledWith("放弃修改？");
+  handler(cancelled);
   expect(cancelled.preventDefault).toHaveBeenCalledTimes(1);
+  expect(confirmDialog).toHaveBeenCalledWith("放弃修改？");
+  await new Promise((r) => setTimeout(r, 0));
+  expect(destroy).not.toHaveBeenCalled();
 
+  // 脏 + 确认：仍同步拦下，确认 resolve 后经 destroy 关窗。
   confirmDialog.mockResolvedValue(true);
   const confirmed = { preventDefault: vi.fn() };
-  await handler(confirmed);
-  expect(confirmed.preventDefault).not.toHaveBeenCalled();
+  handler(confirmed);
+  expect(confirmed.preventDefault).toHaveBeenCalledTimes(1);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(destroy).toHaveBeenCalledTimes(1);
 });
 
 test("windows: bootstrap 绑定内部工作区后 changeRoot 走守卫与授权切根", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
-  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
   const workspace = new WorkspaceService();
   win.bindWorkspace(workspace);
   await expect(win.changeRoot("/picked")).resolves.toBe(true);

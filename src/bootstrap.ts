@@ -54,6 +54,7 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     currentLabel: env.currentLabel,
     onCloseRequested: env.onCloseRequested,
     confirmDialog: env.confirmDialog ?? defaultWindowsDeps.confirmDialog,
+    destroy: defaultWindowsDeps.destroy,
   });
   const workspace = new WorkspaceService();
   windows.bindWorkspace(workspace);

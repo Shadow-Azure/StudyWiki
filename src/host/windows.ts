@@ -9,6 +9,7 @@ export interface WindowsDeps {
   currentLabel: () => string;
   onCloseRequested: (cb: (e: { preventDefault(): void }) => void) => Promise<() => void>;
   confirmDialog: (message: string) => Promise<boolean>;
+  destroy: () => Promise<void>;
 }
 
 /** Real Tauri bindings. */
@@ -17,6 +18,7 @@ export const defaultWindowsDeps: WindowsDeps = {
   currentLabel: () => getCurrentWebviewWindow().label,
   onCloseRequested: (cb) => getCurrentWebviewWindow().onCloseRequested(cb),
   confirmDialog: (message) => confirm(message, { title: "StudyWiki" }),
+  destroy: () => getCurrentWebviewWindow().destroy(),
 };
 
 /** Window-scoped service: window identity, creation, close guarding. */
@@ -76,11 +78,16 @@ export class WindowsService {
     return this.#deps.confirmDialog(message);
   }
 
-  /** Intercept close while `isDirty()` holds; `confirmDiscard` resolves true
-   * to close anyway (discarding), false to cancel the close. */
+  /** Intercept close synchronously while `isDirty()` holds, then ask;
+   * a confirmed discard closes through the injected destroy seam. Tauri only
+   * honors CloseRequestedEvent.preventDefault during the synchronous phase. */
   async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
-    return this.#deps.onCloseRequested(async (e) => {
-      if (isDirty() && !(await confirmDiscard())) e.preventDefault();
+    return this.#deps.onCloseRequested((e) => {
+      if (!isDirty()) return;
+      e.preventDefault();
+      void confirmDiscard().then((confirmed) => {
+        if (confirmed) void this.#deps.destroy();
+      });
     });
   }
 }

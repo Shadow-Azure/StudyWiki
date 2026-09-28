@@ -34,7 +34,7 @@ test("DOM: 打开文件夹过真实 changeRoot 链，守卫拒绝保持原 root 
   document.body.replaceChildren();
   const invoke = vi.fn(async () => null);
   const confirmDialog = vi.fn(async () => false);
-  const windows = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog });
+  const windows = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog, destroy: vi.fn() });
   const workspace = new WorkspaceService();
   await workspace.setRoot("/old");
   const md: FileNode = { name: "a.md", path: "/old/a.md", kind: "markdown" };
