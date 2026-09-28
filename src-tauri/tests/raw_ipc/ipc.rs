@@ -145,7 +145,7 @@ pub fn raw_ipc_write_rejects_json_body_and_unauthorized_paths() {
 fn json_response(response: InvokeResponseBody) -> serde_json::Value {
     match response {
         InvokeResponseBody::Json(raw) => {
-            serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::Value::String(raw))
+            serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw))
         }
         other => panic!("expected JSON response: {other:?}"),
     }
