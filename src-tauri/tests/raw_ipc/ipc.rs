@@ -141,3 +141,123 @@ pub fn raw_ipc_write_rejects_json_body_and_unauthorized_paths() {
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
+
+fn json_response(response: InvokeResponseBody) -> serde_json::Value {
+    match response {
+        InvokeResponseBody::Json(raw) => {
+            serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::Value::String(raw))
+        }
+        other => panic!("expected JSON response: {other:?}"),
+    }
+}
+
+pub fn raw_ipc_window_state_authorizes_text_reads() {
+    let dir = fixture();
+    fs::write(dir.join("note.md"), "hello").unwrap();
+    let root = dir.to_string_lossy().into_owned();
+    let note = dir.join("note.md").to_string_lossy().into_owned();
+
+    let app = raw_binary_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .expect("build mock app");
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("build mock webview");
+
+    let initial = get_ipc_response(
+        &webview,
+        request(
+            "get_window_state",
+            InvokeBody::Json(serde_json::json!({ "label": "main" })),
+            None,
+        ),
+    )
+    .expect("initial state command succeeds");
+    assert_eq!(json_response(initial), serde_json::json!(null));
+
+    let granted = get_ipc_response(
+        &webview,
+        request(
+            "set_window_root",
+            InvokeBody::Json(serde_json::json!({ "label": "main", "root": root.clone() })),
+            None,
+        ),
+    )
+    .expect("set root command succeeds");
+    assert!(matches!(granted, InvokeResponseBody::Json(_)));
+
+    let state = get_ipc_response(
+        &webview,
+        request(
+            "get_window_state",
+            InvokeBody::Json(serde_json::json!({ "label": "main" })),
+            None,
+        ),
+    )
+    .expect("state command succeeds");
+    assert_eq!(json_response(state), serde_json::json!(root));
+
+    let read = get_ipc_response(
+        &webview,
+        request(
+            "read_text_file",
+            InvokeBody::Json(serde_json::json!({ "path": note.clone() })),
+            None,
+        ),
+    )
+    .expect("authorized text read succeeds");
+    assert_eq!(json_response(read), serde_json::json!("hello"));
+
+    let unauthorized = get_ipc_response(
+        &webview,
+        request(
+            "read_text_file",
+            InvokeBody::Json(serde_json::json!({ "path": "/outside/note.md" })),
+            None,
+        ),
+    )
+    .expect_err("outside root must be rejected");
+    assert!(
+        unauthorized.to_string().contains("先打开文件夹"),
+        "unexpected error: {unauthorized}"
+    );
+
+    let cleared = get_ipc_response(
+        &webview,
+        request(
+            "set_window_root",
+            InvokeBody::Json(serde_json::json!({ "label": "main", "root": null })),
+            None,
+        ),
+    )
+    .expect("clear root command succeeds");
+    assert!(matches!(cleared, InvokeResponseBody::Json(_)));
+
+    let after_clear = get_ipc_response(
+        &webview,
+        request(
+            "get_window_state",
+            InvokeBody::Json(serde_json::json!({ "label": "main" })),
+            None,
+        ),
+    )
+    .expect("state after clear succeeds");
+    assert_eq!(json_response(after_clear), serde_json::json!(null));
+
+    let revoked = get_ipc_response(
+        &webview,
+        request(
+            "read_text_file",
+            InvokeBody::Json(serde_json::json!({ "path": note })),
+            None,
+        ),
+    )
+    .expect_err("cleared root must revoke text reads");
+    assert!(
+        revoked.to_string().contains("先打开文件夹"),
+        "unexpected error: {revoked}"
+    );
+
+    fs::remove_dir_all(&dir).unwrap();
+}
