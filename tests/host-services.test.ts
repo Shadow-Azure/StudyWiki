@@ -3,6 +3,7 @@ import { createEmitter } from "../src/host/emitter";
 import { FilesService } from "../src/host/files";
 import { WindowsService } from "../src/host/windows";
 import { WorkspaceService } from "../src/host/workspace";
+import type { FileNode } from "../src/types";
 
 test("emitter: 订阅/触发/退订", () => {
   const e = createEmitter<{ ch: number }>();
@@ -110,6 +111,48 @@ test("windows: changeRoot 在工作区守卫拒绝时不授权登记", async () 
   expect(invoke).not.toHaveBeenCalled();
   expect(forceSetRoot).not.toHaveBeenCalled();
   expect(workspace.root).toBeNull();
+});
+
+test("windows: changeRoot 授权登记失败时 fail-closed 不切前端", async () => {
+  const invoke = vi.fn().mockRejectedValue(new Error("grant denied"));
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn() });
+  const workspace = new WorkspaceService();
+  await workspace.setRoot("/old");
+  const md: FileNode = { name: "a.md", path: "/old/a.md", kind: "markdown" };
+  await workspace.openFile(md);
+  const forceSetRoot = vi.spyOn(workspace, "forceSetRoot");
+  win.bindWorkspace(workspace);
+  await expect(win.changeRoot("/new")).rejects.toThrow("grant denied");
+  expect(forceSetRoot).not.toHaveBeenCalled();
+  expect(workspace.root).toBe("/old");
+  expect(workspace.activeFile).toBe(md);
+});
+
+test("windows: guardClose 三分支（干净放行 / 脏且取消拦关 / 脏且确认放行）", async () => {
+  let handler!: (e: { preventDefault(): void }) => Promise<void> | void;
+  const onCloseRequested = vi.fn((cb: (e: { preventDefault(): void }) => Promise<void> | void) => {
+    handler = cb;
+    return Promise.resolve(() => {});
+  });
+  const confirmDialog = vi.fn(async () => false);
+  const win = new WindowsService({ invoke: vi.fn(), currentLabel: () => "main", onCloseRequested, confirmDialog });
+  let dirty = false;
+  await win.guardClose(() => dirty, () => win.confirmDialog("放弃修改？"));
+
+  const clean = { preventDefault: vi.fn() };
+  await handler(clean);
+  expect(clean.preventDefault).not.toHaveBeenCalled();
+
+  dirty = true;
+  const cancelled = { preventDefault: vi.fn() };
+  await handler(cancelled);
+  expect(confirmDialog).toHaveBeenCalledWith("放弃修改？");
+  expect(cancelled.preventDefault).toHaveBeenCalledTimes(1);
+
+  confirmDialog.mockResolvedValue(true);
+  const confirmed = { preventDefault: vi.fn() };
+  await handler(confirmed);
+  expect(confirmed.preventDefault).not.toHaveBeenCalled();
 });
 
 test("windows: bootstrap 绑定内部工作区后 changeRoot 走守卫与授权切根", async () => {

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { Context } from "cordis";
 import { guardExternalModule } from "../src/loader/guard";
 import type { PluginModule } from "../src/loader/types";
@@ -232,4 +232,28 @@ test("门面：windows 拒绝绑定工作区与绕行授权的私有成员", () 
     },
   });
   (mod.apply as any)({ windows }, {});
+});
+
+test("门面：workspace 放行面的 openFile Promise 与 events.on 可用", async () => {
+  const offEvent = vi.fn();
+  const workspace = {
+    root: "/x",
+    activeFile: null,
+    events: { on: vi.fn(() => offEvent) },
+    openFile: vi.fn(async () => true),
+    guardSwitch: () => () => {},
+  };
+  const mod = guardExternalModule({
+    name: "ext-demo",
+    inject: ["workspace"],
+    apply: async (ctx: any) => {
+      await expect(ctx.workspace.openFile({ path: "/x/a.md" })).resolves.toBe(true);
+      const off = ctx.workspace.events.on("file-opened", () => {});
+      off();
+    },
+  });
+  await (mod.apply as any)({ workspace }, {});
+  expect(workspace.openFile).toHaveBeenCalledWith({ path: "/x/a.md" });
+  expect(workspace.events.on).toHaveBeenCalledWith("file-opened", expect.any(Function));
+  expect(offEvent).toHaveBeenCalled();
 });
