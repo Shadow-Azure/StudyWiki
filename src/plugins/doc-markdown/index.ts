@@ -32,7 +32,6 @@ export function apply(
   let loading = false;
   let openSeq = 0;
   let saving = false;
-  let disposed = false;
 
   const save = async (): Promise<void> => {
     if (saving || !current || !isDirty(state)) return;
@@ -50,7 +49,7 @@ export function apply(
     } finally {
       saving = false;
     }
-  }
+  };
 
   const paintChrome = (): void => {
     const dirty = current?.kind === "markdown" && isDirty(state);
@@ -156,10 +155,7 @@ export function apply(
     () => ownsActiveMarkdown() && isDirty(state),
     () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并关闭？`),
   );
-  void offGuardPromise.then((off) => {
-    if (disposed) off();
-    else offGuard = off;
-  });
+  void offGuardPromise.then((off) => { offGuard = off; });
   offSwitchGuard = ctx.workspace.guardSwitch(
     () => ownsActiveMarkdown() && isDirty(state),
     () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
@@ -173,7 +169,6 @@ export function apply(
     void open(ctx.workspace.activeFile);
   });
   return () => {
-    disposed = true;
     openSeq += 1;
     offFile(); offSlot(); offGuard?.();
     void offGuardPromise.then((off) => off());
