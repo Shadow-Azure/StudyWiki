@@ -1,7 +1,7 @@
 import type { Context } from "cordis";
 import type { FileNode } from "../../types";
 import { labelButton } from "../../ui/dom";
-import { bindSaveShortcut, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+import { bindSaveShortcut, confirmDiscardDialog, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
 import { renderMarkdown } from "./preview";
 import { editText, isDirty, markSaved, openDoc, toggleMode, type DocState } from "./mode";
 import { createCodeMirror, type EditorFactory, type EditorHandle } from "./editor";
@@ -153,7 +153,7 @@ export function apply(
 
   const offGuardPromise = ctx.windows.guardClose(
     () => ownsActiveMarkdown() && isDirty(state),
-    () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并关闭？`),
+    () => confirmDiscardDialog(current?.name ?? "文档", "关闭"),
   );
   void offGuardPromise.then((off) => { offGuard = off; });
   offSwitchGuard = ctx.workspace.guardSwitch(

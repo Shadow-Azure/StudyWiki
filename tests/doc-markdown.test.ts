@@ -2,7 +2,12 @@
 import { expect, test, vi } from "vitest";
 import { renderMarkdown } from "../src/plugins/doc-markdown/preview";
 import { apply } from "../src/plugins/doc-markdown";
+vi.mock("../src/ui/viewer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/ui/viewer")>();
+  return { ...actual, confirmDiscardDialog: vi.fn(async () => true) };
+});
 import { WorkspaceService } from "../src/host/workspace";
+import { confirmDiscardDialog } from "../src/ui/viewer";
 import type { FileNode } from "../src/types";
 
 test("renderMarkdown: 标题成 h1；内嵌 HTML 被转义不执行", () => {
@@ -333,6 +338,31 @@ test("DOM: markdown 脏状态接入真实切换守卫", async () => {
   await expect(workspace.openFile(other)).resolves.toBe(true);
   expect(workspace.activeFile).toBe(other);
   expect(document.querySelector(".fake-editor")).toBeNull();
+  teardown();
+  document.body.replaceChildren();
+});
+
+test("DOM: 关窗守卫使用应用内自绘确认框", async () => {
+  const mocked = vi.mocked(confirmDiscardDialog);
+  mocked.mockClear();
+  let closeConfirm!: () => Promise<boolean>;
+  const files = { readText: async () => "body", writeText: vi.fn() };
+  const windows = {
+    confirmDialog: vi.fn(async () => true),
+    guardClose: async (_should: () => boolean, confirm: () => Promise<boolean>) => {
+      closeConfirm = confirm;
+      return () => {};
+    },
+  };
+  const workspace = {
+    activeFile: null as FileNode | null,
+    events: { on: () => () => {} },
+    guardSwitch: () => () => {},
+  };
+  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const teardown = apply({ files, windows, workspace, slots } as never, {});
+  await expect(closeConfirm()).resolves.toBe(true);
+  expect(mocked).toHaveBeenCalledWith("文档", "关闭");
   teardown();
   document.body.replaceChildren();
 });

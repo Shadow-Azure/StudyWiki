@@ -2,7 +2,7 @@ import type { Context } from "cordis";
 import type { Workbook } from "exceljs";
 import type { FileNode } from "../../types";
 import { labelButton } from "../../ui/dom";
-import { bindSaveShortcut, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+import { bindSaveShortcut, confirmDiscardDialog, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
 import {
   clickSelection,
   columnAddress,
@@ -613,7 +613,7 @@ export function apply(ctx: Context, _config: Record<string, never>): () => void 
   });
   const offGuardPromise = ctx.windows.guardClose(
     dirty,
-    () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并关闭？`),
+    () => confirmDiscardDialog(current?.name ?? "工作簿", "关闭"),
   );
   let offGuard: (() => void) | null = null;
   void offGuardPromise.then((off) => { offGuard = off; });

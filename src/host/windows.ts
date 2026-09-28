@@ -7,7 +7,7 @@ import type { WorkspaceService } from "./workspace";
 export interface WindowsDeps {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   currentLabel: () => string;
-  onCloseRequested: (cb: (e: { preventDefault(): void }) => void) => Promise<() => void>;
+  onCloseRequested: (cb: (e: { preventDefault(): void }) => void | Promise<void>) => Promise<() => void>;
   confirmDialog: (message: string) => Promise<boolean>;
   destroy: () => Promise<void>;
 }
@@ -82,12 +82,10 @@ export class WindowsService {
    * a confirmed discard closes through the injected destroy seam. Tauri only
    * honors CloseRequestedEvent.preventDefault during the synchronous phase. */
   async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
-    return this.#deps.onCloseRequested((e) => {
+    return this.#deps.onCloseRequested(async (e) => {
       if (!isDirty()) return;
       e.preventDefault();
-      void confirmDiscard().then((confirmed) => {
-        if (confirmed) void this.#deps.destroy();
-      });
+      if (await confirmDiscard()) await this.#deps.destroy();
     });
   }
 }

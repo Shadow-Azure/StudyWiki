@@ -43,6 +43,53 @@ export function paintTitle(file: FileNode | null, dirty = false, appTitle = "Stu
   document.title = file ? `${dirty ? "● " : ""}${file.name}` : appTitle;
 }
 
+/** Show an in-app discard confirmation and resolve the user's choice.
+ * Used for close guarding: Tauri's native confirm is not presented while a
+ * CloseRequested handler is pending on macOS, so this stays inside the webview.
+ * @param file Name of the dirty document shown in the prompt.
+ * @param action Verb used on the confirm button ("关闭" / "切换").
+ * @returns True to discard and proceed, false to cancel. */
+export function confirmDiscardDialog(file: string, action = "关闭"): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "viewer-confirm";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", `放弃未保存的修改并${action}`);
+    const card = document.createElement("div");
+    card.className = "viewer-confirm-card";
+    const title = document.createElement("h2");
+    title.textContent = `放弃对 ${file} 的未保存修改并${action}？`;
+    const hint = document.createElement("p");
+    hint.textContent = "确认后未保存的修改将丢失。";
+    const actions = document.createElement("div");
+    actions.className = "viewer-confirm-actions";
+    const done = (value: boolean): void => {
+      overlay.remove();
+      resolve(value);
+    };
+    const cancelBtn = labelButton("close", "取消", { className: "btn btn-ghost" });
+    cancelBtn.addEventListener("click", () => done(false));
+    const discardBtn = labelButton("trash", `放弃并${action}`, { className: "btn btn-danger" });
+    discardBtn.addEventListener("click", () => done(true));
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        done(false);
+      }
+    };
+    overlay.addEventListener("keydown", onKeyDown);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) done(false);
+    });
+    actions.append(cancelBtn, discardBtn);
+    card.append(title, hint, actions);
+    overlay.append(card);
+    document.body.append(overlay);
+    discardBtn.focus();
+  });
+}
+
 /** Bind a window-level Mod-S shortcut for one viewer.
  * @param isActive Returns true only while the owning viewer is active.
  * @param save Runs the viewer save action.

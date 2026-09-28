@@ -32,4 +32,5 @@ After m1-01 and m1-03 the three viewers work individually, but the experience is
 - External plugins cannot programmatically change roots or create windows for now; a real future use case should first design a host-mediated user-confirmation API instead of exposing the underlying authorization commands.
 - `src/ui/viewer.ts` is the home for shared viewer visual/key primitives; new viewers should reuse error, loading, title, and save handling instead of copying local implementations.
 - Video errors report load failure without exposing webview/codec internals; environment independence gains no runtime dependency.
+- Close guarding cannot use the native confirm under real Tauri (macOS 2.11.x): the dialog is not presented while a CloseRequested handler is pending. The guard preventDefaults synchronously, confirms through an in-app dialog, and closes via the destroy seam after confirmation; switch/root native confirms are unaffected.
 - m1-02 acceptance is enforced by workspace / windows / guard composition tests, three viewer DOM race tests, build, and the layering/environment gates.

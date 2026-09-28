@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, test, vi } from "vitest";
-import { bindSaveShortcut, errorBanner, loadingHint, paintTitle } from "../src/ui/viewer";
+import { bindSaveShortcut, confirmDiscardDialog, errorBanner, loadingHint, paintTitle } from "../src/ui/viewer";
 import type { FileNode } from "../src/types";
 
 const file = (name: string, kind: FileNode["kind"]): FileNode => ({ name, path: `/x/${name}`, kind });
@@ -59,4 +59,27 @@ test("viewer: bindSaveShortcut 不抢 CodeMirror 自己处理的 Mod-S", () => {
   expect(onSave).not.toHaveBeenCalled();
   off();
   cmContent.remove();
+});
+
+test("viewer: confirmDiscardDialog 确认/取消/Esc 三分支", async () => {
+  const confirm = confirmDiscardDialog("a.md", "关闭");
+  const dialog = document.querySelector(".viewer-confirm")!;
+  expect(dialog.getAttribute("role")).toBe("dialog");
+  expect(dialog.getAttribute("aria-modal")).toBe("true");
+  expect(dialog.querySelector("h2")?.textContent).toBe("放弃对 a.md 的未保存修改并关闭？");
+  const [cancelBtn, discardBtn] = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
+  expect([cancelBtn.textContent, discardBtn.textContent]).toEqual(["取消", "放弃并关闭"]);
+  discardBtn.click();
+  await expect(confirm).resolves.toBe(true);
+  expect(document.querySelector(".viewer-confirm")).toBeNull();
+
+  const cancelled = confirmDiscardDialog("a.md", "关闭");
+  document.querySelector<HTMLButtonElement>(".viewer-confirm button")!.click();
+  await expect(cancelled).resolves.toBe(false);
+
+  const escaped = confirmDiscardDialog("a.md", "关闭");
+  document.querySelector(".viewer-confirm")!.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  await expect(escaped).resolves.toBe(false);
 });
