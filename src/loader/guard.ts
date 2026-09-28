@@ -64,7 +64,7 @@ function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
 /** Service members external plugins may touch; unlisted services keep their full method surface. */
 const publicServiceMembers: Record<string, Set<string>> = {
   workspace: new Set(["root", "activeFile", "events", "openFile", "guardSwitch"]),
-  windows: new Set(["currentLabel", "create", "fetchRoot", "changeRoot", "confirmDialog", "guardClose"]),
+  windows: new Set(["currentLabel", "fetchRoot", "confirmDialog", "guardClose"]),
 };
 
 /** 服务对象包装：方法以原 receiver 调用，返回值（含 Promise 解包）拒 Context。 */

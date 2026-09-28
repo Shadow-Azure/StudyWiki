@@ -196,6 +196,25 @@ test("门面：workspace 仅暴露插件安全面，拒绝换根私有缝", () =
   (mod.apply as any)({ workspace }, {});
 });
 
+test("门面：windows 拒绝外置编程换根与带 root 建窗", () => {
+  const windows = {
+    currentLabel: () => "main",
+    changeRoot: async () => true,
+    create: async () => "new",
+  };
+  const mod = guardExternalModule({
+    name: "ext-demo",
+    inject: ["windows"],
+    apply: (ctx: any) => {
+      expect(() => ctx.windows.changeRoot("/evil")).toThrow(/windows.*changeRoot/);
+      expect(() => ctx.windows.create("/evil")).toThrow(/windows.*create/);
+      expect(ctx.windows.currentLabel()).toBe("main");
+      return () => {};
+    },
+  });
+  (mod.apply as any)({ windows }, {});
+});
+
 test("门面：windows 拒绝绑定工作区与绕行授权的私有成员", () => {
   const windows = {
     create: async () => "new",
@@ -206,7 +225,7 @@ test("门面：windows 拒绝绑定工作区与绕行授权的私有成员", () 
     name: "ext-demo",
     inject: ["windows"],
     apply: (ctx: any) => {
-      expect(typeof ctx.windows.create).toBe("function");
+      expect(() => ctx.windows.create()).toThrow(/windows.*create/);
       expect(() => ctx.windows.bindWorkspace({})).toThrow(/windows.*bindWorkspace/);
       expect(() => ctx.windows.setRoot("main", "/evil")).toThrow(/windows.*setRoot/);
       return () => {};
