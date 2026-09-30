@@ -310,7 +310,6 @@ pub fn raw_binary_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> taur
 }
 
 fn configure_window_lifecycle<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    native_close::install();
     builder
         .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
         .manage(std::sync::Mutex::new(windows::CloseGuardRegistry::default()))
@@ -349,6 +348,7 @@ fn configure_window_lifecycle<R: tauri::Runtime>(builder: tauri::Builder<R>) -> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    native_close::install();
     let app = app_builder()
         .build(tauri::generate_context!())
         .expect("error while building StudyWiki");
