@@ -9,6 +9,8 @@ priority: P0
 status: in-progress
 scope:
   - .agents/flow/issues/m1-native-close-guard.*
+  - .agents/flow/issues/m1-serial-quit.*
+  - plans/2026-09-30-pr46-review.md
   - .agents/flow/milestones/m1-prototype-shell.*
   - .agents/notes/**
   - src/host/windows.ts
