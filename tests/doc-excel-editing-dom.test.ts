@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { Workbook } from "exceljs";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ExcelService, parseWorkbook } from "../src/host/excel";
 import { apply } from "../src/plugins/doc-excel";
 import { WorkspaceService } from "../src/host/workspace";
@@ -55,9 +55,21 @@ function makeCtx(wb: Workbook, write: ((path: string, workbook: Workbook) => Pro
   };
 }
 
+/** 每个测试挂载一个插件实例，afterEach 统一 teardown，避免 window 级保存键残留。 */
+let cleanup: (() => void) | null = null;
+function mount(c: ReturnType<typeof makeCtx>): void {
+  cleanup?.();
+  cleanup = apply(c.ctx, {});
+}
+
+/** 等保存 Promise 的 catch/finally continuation 跑完，测试不带着在途异步结束。 */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 test("DOM：excel 脏工作簿响应全局 Mod-S 保存", async () => {
   const c = makeCtx(workbook());
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
   dblClickCell("A1");
   const input = editor();
@@ -65,6 +77,7 @@ test("DOM：excel 脏工作簿响应全局 Mod-S 保存", async () => {
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
   await vi.waitFor(() => expect(c.writes).toHaveLength(1));
+  await vi.waitFor(() => expect(c.guardShould()).toBe(false));
   expect(c.writes[0][0]).toBe(c.file.path);
 });
 
@@ -97,10 +110,15 @@ beforeEach(() => {
   document.title = "StudyWiki";
 });
 
+afterEach(() => {
+  cleanup?.();
+  cleanup = null;
+});
+
 test("双击编辑：`'` 预填保留文本，Enter 提交数值并记脏；保存清脏", async () => {
   const wb = workbook();
   const c = makeCtx(wb);
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   dblClickCell("A1");
@@ -125,7 +143,7 @@ test("双击编辑：`'` 预填保留文本，Enter 提交数值并记脏；保�
 test("Esc 不落值，Ctrl+S 保存，失败保持脏并显示错误", async () => {
   const wb = workbook();
   const c = makeCtx(wb, async () => { throw new Error("disk full"); });
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   dblClickCell("B1");
@@ -142,6 +160,7 @@ test("Esc 不落值，Ctrl+S 保存，失败保持脏并显示错误", async () 
     new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true }),
   );
   await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败"));
+  await settle();
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(true);
   expect(c.guardConfirm()).toBeInstanceOf(Promise);
 });
@@ -149,7 +168,7 @@ test("Esc 不落值，Ctrl+S 保存，失败保持脏并显示错误", async () 
 test("保存失败后触发 render 仍保留表格；关闭横幅后错误清除", async () => {
   const wb = workbook();
   const c = makeCtx(wb, async () => { throw new Error("disk full"); });
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   dblClickCell("B1");
@@ -164,6 +183,7 @@ test("保存失败后触发 render 仍保留表格；关闭横幅后错误清除
   expect(document.querySelector(".excel-viewer")).not.toBeNull();
 
   document.querySelector<HTMLButtonElement>(".doc-error button")!.click();
+  await settle();
   expect(document.querySelector(".doc-error")).toBeNull();
   expect(document.querySelector(".excel-viewer")).not.toBeNull();
 });
@@ -171,7 +191,7 @@ test("保存失败后触发 render 仍保留表格；关闭横幅后错误清除
 test("工具条：选区加粗/斜体/颜色，Shift 扩选；合并与取消合并", async () => {
   const wb = workbook();
   const c = makeCtx(wb);
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   clickCell("A1");
@@ -204,7 +224,7 @@ test("合并覆盖格点击选中整段，双击编辑 anchor；关闭守卫读�
   const wb = workbook();
   wb.getWorksheet("S")!.mergeCells("A1:B2");
   const c = makeCtx(wb);
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   clickCell("A1");
@@ -221,7 +241,7 @@ test("长合并 anchor 滚出视口后，双击可见片段仍可编辑并写回
   const wb = workbook();
   wb.getWorksheet("S")!.mergeCells("A1:A200");
   const c = makeCtx(wb);
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   const scroller = document.querySelector<HTMLElement>(".excel-scroll")!;
@@ -246,7 +266,7 @@ test("Shift 扩选保持原始锚点：方向反转后再扩选不漂移", async
     ws.getCell(address).value = address;
   }
   const c = makeCtx(wb);
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   clickCell("B3");
@@ -266,7 +286,7 @@ test("并发保存去重：保存进行中后续 Ctrl+S 被忽略，写入不交
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const c = makeCtx(wb, async () => { await gate; });
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
 
   dblClickCell("A1");
@@ -293,7 +313,7 @@ test("DOM：excel 保存期间继续编辑保持脏状态并可重试", async ()
     writes += 1;
     if (writes === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
   });
-  apply(c.ctx, {});
+  mount(c);
   await c.opened()(c.file);
   dblClickCell("A1");
   let input = editor();
@@ -323,7 +343,7 @@ test("DOM：excel 脏状态接入真实切换守卫", async () => {
     confirmDialog,
     guardClose: async () => () => {},
   };
-  apply(c.ctx, {});
+  mount(c);
   await workspace.openFile(c.file);
   dblClickCell("A1");
   const input = editor();
