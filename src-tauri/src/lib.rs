@@ -7,7 +7,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
+#[cfg(target_os = "macos")]
+pub mod native_close;
 pub mod plugins;
+#[cfg(not(target_os = "macos"))]
+mod native_close {
+    use tauri::{AppHandle, Runtime};
+
+    pub fn install() {}
+
+    pub fn set_ready<R: Runtime>(
+        _app: &AppHandle<R>,
+        _label: &str,
+        _ready: bool,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn remove_window(_label: &str) {}
+}
 pub mod windows;
 
 /// 递归树节点：`kind` 由扩展名分派（单一决策点），目录递归展开。
@@ -254,59 +272,104 @@ fn read_text_file(
 
 /// 装配发布运行的完整 Tauri builder。
 pub fn app_builder() -> tauri::Builder<tauri::Wry> {
-    tauri::Builder::<tauri::Wry>::new()
-        .plugin(tauri_plugin_dialog::init())
-        .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                let label = window.label().to_string();
-                let app = window.app_handle().clone();
-                if let Some(state) = app.try_state::<std::sync::Mutex<windows::WindowRegistry>>() {
-                    state.lock().unwrap().remove(&label);
-                }
-                let _ = app.emit("win://closed", &label);
-            }
-        })
-        .invoke_handler(tauri::generate_handler![
-            read_tree,
-            read_text_file,
-            write_text_file,
-            read_binary_file,
-            write_binary_file,
-            windows::create_window,
-            windows::get_window_state,
-            windows::set_window_root,
-            windows::read_manifest,
-            windows::write_manifest,
-            plugins::list_plugins,
-            plugins::read_plugin_module,
-            plugins::remove_plugin,
-            plugins::snapshot_plugin_version,
-            plugins::list_plugin_versions,
-            plugins::restore_plugin_version,
-            plugins::install_plugin,
-            plugins::import_plugin
-        ])
+    configure_window_lifecycle(
+        tauri::Builder::<tauri::Wry>::new().plugin(tauri_plugin_dialog::init()),
+    )
+    .invoke_handler(tauri::generate_handler![
+        read_tree,
+        read_text_file,
+        write_text_file,
+        read_binary_file,
+        write_binary_file,
+        windows::create_window,
+        windows::get_window_state,
+        windows::set_window_root,
+        windows::set_close_guard_ready,
+        windows::read_manifest,
+        windows::write_manifest,
+        plugins::list_plugins,
+        plugins::read_plugin_module,
+        plugins::remove_plugin,
+        plugins::snapshot_plugin_version,
+        plugins::list_plugin_versions,
+        plugins::restore_plugin_version,
+        plugins::install_plugin,
+        plugins::import_plugin
+    ])
 }
 
 /// Raw binary IPC 测试装配：同一 read/write 命令实现经 MockRuntime 的真实 IPC resolver。
 pub fn raw_binary_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    configure_window_lifecycle(builder).invoke_handler(tauri::generate_handler![
+        read_binary_file,
+        write_binary_file,
+        read_text_file,
+        windows::get_window_state,
+        windows::set_window_root
+    ])
+}
+
+fn configure_window_lifecycle<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
-        .invoke_handler(tauri::generate_handler![
-            read_binary_file,
-            write_binary_file,
-            read_text_file,
-            windows::get_window_state,
-            windows::set_window_root
-        ])
+        .manage(std::sync::Mutex::new(windows::CloseGuardRegistry::default()))
+        .on_window_event(|window, event| {
+            let label = window.label().to_string();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if let Some(state) = window
+                        .app_handle()
+                        .try_state::<std::sync::Mutex<windows::CloseGuardRegistry>>()
+                    {
+                        if state.lock().unwrap().is_ready(&label) {
+                            api.prevent_close();
+                        }
+                    }
+                }
+                tauri::WindowEvent::Destroyed => {
+                    native_close::remove_window(&label);
+                    let app = window.app_handle().clone();
+                    if let Some(state) =
+                        app.try_state::<std::sync::Mutex<windows::WindowRegistry>>()
+                    {
+                        state.lock().unwrap().remove(&label);
+                    }
+                    if let Some(state) =
+                        app.try_state::<std::sync::Mutex<windows::CloseGuardRegistry>>()
+                    {
+                        state.lock().unwrap().remove(&label);
+                    }
+                    let _ = app.emit("win://closed", &label);
+                }
+                _ => {}
+            }
+        })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    app_builder()
-        .run(tauri::generate_context!())
-        .expect("error while running StudyWiki");
+    native_close::install();
+    let app = app_builder()
+        .build(tauri::generate_context!())
+        .expect("error while building StudyWiki");
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            if code.is_some() {
+                return;
+            }
+            let webviews = app.webview_windows();
+            if webviews.is_empty() {
+                return;
+            }
+            api.prevent_exit();
+            for webview in webviews.values() {
+                #[cfg(target_os = "macos")]
+                let _ = webview.eval("window.__studywikiNativeClose?.()");
+                #[cfg(not(target_os = "macos"))]
+                let _ = webview.close();
+            }
+        }
+    });
 }
 
 #[cfg(test)]

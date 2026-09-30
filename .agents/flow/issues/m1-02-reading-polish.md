@@ -6,8 +6,9 @@
 kind: issue
 milestone: m1
 priority: P1
-status: in-progress
+status: done
 scope:
+  - .agents/flow/issues/m1-02-reading-polish.*
   - src/plugins/app-shell/**
   - src/plugins/app-windows/**
   - src/plugins/view-filetree/**

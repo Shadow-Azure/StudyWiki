@@ -19,7 +19,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
-  host/windows.ts                  窗口服务：label/建窗/root 查询/绑定内部工作区的守卫先行换根/确认框/关闭守卫（deps 可注入）（→ workspace.ts）
+  host/windows.ts                  窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
   host/workspace.ts                窗口 scope 工作区状态机：root/activeFile + 事件流 + 切换守卫与插件 facade（→ emitter.ts、types.ts）
   loader/activate.ts               外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
   loader/boot.ts                   装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ activate.ts、manifest.ts、table.ts、types.ts）
@@ -50,8 +50,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   ui/icons.ts                      内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）
   ui/viewer.ts                     共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                         Rust 壳
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ plugins.rs、windows.rs）
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ native_close.rs、plugins.rs、windows.rs）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
+  native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
   windows.rs                       窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO
 vendor/                            vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md
@@ -83,6 +84,7 @@ export type FileNode = {
 - **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS` / `VIDEO_EXTS` / `EXCEL_EXTS`）：单一决策点。
 - **xlsx 语义在前端 ExcelJS，Rust 只作字节边界**：`ctx.excel` 持 workbook 并强制 1_000_000 声明维度单元格上限；Rust 只搬运与原子写。
 - **切换守卫住宿主 `WorkspaceService`，Context 只挂 `WorkspaceFacade`**：文件 / 换根共用守卫；脏同路径重开 no-op；windows 绑定内部 controller，Rust 授权前先确认。
+- **关窗先主进程取消**：macOS `_close:`/红点/`terminate:` 入守卫，确认才 `destroy()`。
 - **vendored cordis，取契约弃装载器**：静态模块表 + 清单装载，组合是数据；升级 = 手动 diff + [vendor/VENDORED.md](../vendor/VENDORED.md) 登记。
 - **分层纪律**：`src/plugins/` 禁 import `@tauri-apps/*`（`pnpm verify:layering` 校验）；全局状态住 Rust，窗口状态住 Context。
 - **assetProtocol 配置 scope 为空，运行期动态授权**：选中/建窗/启动携带 root 时 Rust `allow_directory`（recursive）注入——视频与图片仍走 asset protocol，但配置面不再预开任意目录。

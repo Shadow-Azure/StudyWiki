@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
-#   pnpm run record:i18n -- docs/commands.md
-commands.md: fd75fa819344ae901c6526dccf5998873434c767
-commands.en.md: a764974f16484a43958163d7d3abcf747d20831b
+#   pnpm run record:i18n -- .agents/flow/issues/m1-serial-quit.md
+m1-serial-quit.md: b94c133fc47b073c942872e9a19612ef39a02cdb
+m1-serial-quit.en.md: b8ea4746ab05795beb950f46a33ac632b278e29b
