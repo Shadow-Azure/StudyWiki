@@ -61,12 +61,24 @@ function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
   });
 }
 
+/** Service members external plugins may touch; unlisted services keep their full method surface. */
+const publicServiceMembers: Record<string, Set<string>> = {
+  workspace: new Set(["root", "activeFile", "events", "openFile", "guardSwitch"]),
+  windows: new Set(["currentLabel", "fetchRoot", "confirmDialog", "guardClose"]),
+};
+
 /** 服务对象包装：方法以原 receiver 调用，返回值（含 Promise 解包）拒 Context。 */
 function guardService(name: string, serviceName: string, service: unknown): unknown {
   if (service === null || (typeof service !== "object" && typeof service !== "function")) return service;
   const target = service as Record<string | symbol, unknown>;
   return new Proxy(target, {
     get(t, prop) {
+      const publicMembers = publicServiceMembers[serviceName];
+      if (publicMembers && (typeof prop !== "string" || !publicMembers.has(prop))) {
+        throw new Error(
+          `外置插件 ${name} 访问了 ${serviceName} 私有成员 "${String(prop)}"——插件面仅提供 ${[...publicMembers].join("/")}`,
+        );
+      }
       const value = Reflect.get(t, prop, t);
       if (typeof value !== "function") return denyContext(name, serviceName, value);
       return (...args: unknown[]) => {

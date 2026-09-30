@@ -295,7 +295,10 @@ pub fn raw_binary_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> taur
         .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
         .invoke_handler(tauri::generate_handler![
             read_binary_file,
-            write_binary_file
+            write_binary_file,
+            read_text_file,
+            windows::get_window_state,
+            windows::set_window_root
         ])
 }
 

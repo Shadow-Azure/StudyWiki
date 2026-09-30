@@ -93,6 +93,33 @@ test("shell: narrowing the viewport keeps the main surface at its minimum width"
   root.remove();
 });
 
+test("shell: file-opened 统一维护窗口标题基线", () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const events = new Map<string, (payload?: unknown) => void>();
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = {
+    root: "/lib",
+    activeFile: null as unknown,
+    events: { on: (name: string, handler: (payload?: unknown) => void) => {
+      events.set(name, handler);
+      return () => events.delete(name);
+    } },
+  };
+
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const fileOpened = events.get("file-opened")!;
+  fileOpened({ name: "v.mp4", kind: "video" });
+  expect(document.title).toBe("v.mp4");
+  fileOpened({ name: "data.csv", kind: "other" });
+  expect(document.title).toBe("data.csv");
+  fileOpened(null);
+  expect(document.title).toBe("StudyWiki");
+  teardown();
+  root.remove();
+});
+
 test("shell: other 文件显示不支持预览，支持类型恢复查看器", () => {
   const root = document.createElement("div");
   root.id = "app";

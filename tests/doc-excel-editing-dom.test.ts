@@ -3,6 +3,7 @@ import { Workbook } from "exceljs";
 import { beforeEach, expect, test, vi } from "vitest";
 import { ExcelService, parseWorkbook } from "../src/host/excel";
 import { apply } from "../src/plugins/doc-excel";
+import { WorkspaceService } from "../src/host/workspace";
 import type { FileNode } from "../src/types";
 
 function workbook(): Workbook {
@@ -36,7 +37,8 @@ function makeCtx(wb: Workbook, write: ((path: string, workbook: Workbook) => Pro
   let opened!: (file: FileNode | null) => void;
   const workspace = {
     activeFile: null as FileNode | null,
-    events: { on: (_k: string, fn: (file: FileNode | null) => void) => { opened = fn; return () => {}; } },
+    events: { on: (_k: string, fn: (file: FileNode | null) => void) => { opened = (file) => { workspace.activeFile = file; fn(file); }; return () => {}; } },
+    guardSwitch: () => () => {},
   };
   let guardShould: () => boolean = () => false;
   let guardConfirm: () => Promise<boolean> = async () => true;
@@ -52,6 +54,19 @@ function makeCtx(wb: Workbook, write: ((path: string, workbook: Workbook) => Pro
     opened: () => opened, ctx: { excel, workspace, windows, slots } as never,
   };
 }
+
+test("DOM：excel 脏工作簿响应全局 Mod-S 保存", async () => {
+  const c = makeCtx(workbook());
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+  dblClickCell("A1");
+  const input = editor();
+  input.value = "009";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(c.writes).toHaveLength(1));
+  expect(c.writes[0][0]).toBe(c.file.path);
+});
 
 function button(text: string): HTMLButtonElement {
   const found = [...document.querySelectorAll<HTMLButtonElement>(".excel-toolbar button")].find((b) => b.textContent === text);
@@ -129,6 +144,28 @@ test("Esc 不落值，Ctrl+S 保存，失败保持脏并显示错误", async () 
   await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败"));
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(true);
   expect(c.guardConfirm()).toBeInstanceOf(Promise);
+});
+
+test("保存失败后触发 render 仍保留表格；关闭横幅后错误清除", async () => {
+  const wb = workbook();
+  const c = makeCtx(wb, async () => { throw new Error("disk full"); });
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+
+  dblClickCell("B1");
+  editor().value = "changed";
+  editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  button("保存").click();
+  await vi.waitFor(() => expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败"));
+
+  clickCell("A1");
+  button("加粗").click();
+  expect(document.querySelector(".doc-error")?.textContent).toContain("保存失败");
+  expect(document.querySelector(".excel-viewer")).not.toBeNull();
+
+  document.querySelector<HTMLButtonElement>(".doc-error button")!.click();
+  expect(document.querySelector(".doc-error")).toBeNull();
+  expect(document.querySelector(".excel-viewer")).not.toBeNull();
 });
 
 test("工具条：选区加粗/斜体/颜色，Shift 扩选；合并与取消合并", async () => {
@@ -247,4 +284,55 @@ test("并发保存去重：保存进行中后续 Ctrl+S 被忽略，写入不交
   await vi.waitFor(() => expect(c.guardShould()).toBe(false));
   expect(c.excel.write).toHaveBeenCalledTimes(1);
   expect(document.querySelector(".save-btn")?.classList.contains("dirty")).toBe(false);
+});
+
+test("DOM：excel 保存期间继续编辑保持脏状态并可重试", async () => {
+  let releaseFirst!: () => void;
+  let writes = 0;
+  const c = makeCtx(workbook(), async () => {
+    writes += 1;
+    if (writes === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+  });
+  apply(c.ctx, {});
+  await c.opened()(c.file);
+  dblClickCell("A1");
+  let input = editor();
+  input.value = "41";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(c.writes).toHaveLength(1));
+  dblClickCell("B1");
+  input = editor();
+  input.value = "42";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  releaseFirst();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(c.guardShould()).toBe(true);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true }));
+  await vi.waitFor(() => expect(c.writes).toHaveLength(2));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(c.guardShould()).toBe(false);
+});
+
+test("DOM：excel 脏状态接入真实切换守卫", async () => {
+  const c = makeCtx(workbook());
+  const workspace = new WorkspaceService();
+  (c.ctx as { workspace: unknown }).workspace = workspace.facade;
+  const confirmDialog = vi.fn(async () => false);
+  (c.ctx as { windows: unknown }).windows = {
+    confirmDialog,
+    guardClose: async () => () => {},
+  };
+  apply(c.ctx, {});
+  await workspace.openFile(c.file);
+  dblClickCell("A1");
+  const input = editor();
+  input.value = "41";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const other: FileNode = { name: "a.md", path: "/x/a.md", kind: "markdown" };
+  await expect(workspace.openFile(other)).resolves.toBe(false);
+  expect(workspace.activeFile).toBe(c.file);
+  confirmDialog.mockResolvedValue(true);
+  await expect(workspace.openFile(other)).resolves.toBe(true);
+  expect(workspace.activeFile).toBe(other);
 });

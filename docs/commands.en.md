@@ -39,7 +39,7 @@ fn read_text_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegist
 
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]
-pub fn create_window(app: AppHandle, state: tauri::State<'_, Mutex<WindowRegistry>>, root: Option<String>) -> Result<String, String>;
+pub fn create_window<R: tauri::Runtime>(app: AppHandle<R>, state: tauri::State<'_, Mutex<WindowRegistry>>, root: Option<String>) -> Result<String, String>;
 
 /// 查询某窗口的工作区根；未登记或未设 root 均返回 None（前端归一为欢迎态）。
 #[tauri::command]
@@ -48,7 +48,7 @@ pub fn get_window_state(state: tauri::State<'_, Mutex<WindowRegistry>>, label: S
 /// 更新窗口工作区根并把该目录加入 asset protocol 运行期白名单（recursive）。
 /// 配置 scope 已收空，这是唯一授权点；启动时重设同值即重新授权（幂等）。
 #[tauri::command]
-pub fn set_window_root(app: AppHandle, state: tauri::State<'_, Mutex<WindowRegistry>>, label: String, root: Option<String>) -> Result<(), String>;
+pub fn set_window_root<R: tauri::Runtime>(app: AppHandle<R>, state: tauri::State<'_, Mutex<WindowRegistry>>, label: String, root: Option<String>) -> Result<(), String>;
 
 /// 读插件清单（app 配置目录 plugins.json）；不存在返回 None，由前端生成默认。
 #[tauri::command]

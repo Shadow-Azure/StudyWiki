@@ -7,8 +7,9 @@ import type { WorkspaceService } from "./workspace";
 export interface WindowsDeps {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   currentLabel: () => string;
-  onCloseRequested: (cb: (e: { preventDefault(): void }) => void) => Promise<() => void>;
+  onCloseRequested: (cb: (e: { preventDefault(): void }) => void | Promise<void>) => Promise<() => void>;
   confirmDialog: (message: string) => Promise<boolean>;
+  destroy: () => Promise<void>;
 }
 
 /** Real Tauri bindings. */
@@ -17,11 +18,13 @@ export const defaultWindowsDeps: WindowsDeps = {
   currentLabel: () => getCurrentWebviewWindow().label,
   onCloseRequested: (cb) => getCurrentWebviewWindow().onCloseRequested(cb),
   confirmDialog: (message) => confirm(message, { title: "StudyWiki" }),
+  destroy: () => getCurrentWebviewWindow().destroy(),
 };
 
 /** Window-scoped service: window identity, creation, close guarding. */
 export class WindowsService {
   readonly #deps: WindowsDeps;
+  #workspace: WorkspaceService | null = null;
 
   constructor(deps: WindowsDeps = defaultWindowsDeps) {
     this.#deps = deps;
@@ -49,14 +52,25 @@ export class WindowsService {
     await this.#deps.invoke("set_window_root", { label, root });
   }
 
+  /** Bind this window-scoped service to its private workspace controller.
+   * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+  bindWorkspace(workspace: WorkspaceService): void {
+    this.#workspace = workspace;
+  }
+
   /** Full root change in one call: Rust-side grant + registry upsert first
    * (fail-closed), then the workspace switch. Every root change goes through
    * here — topbar button, welcome-state button, boot re-grant — so the
    * grant-before-switch ordering is structural, not conventional. Passing
-   * null clears the frontend only (no Rust call). */
-  async changeRoot(workspace: Pick<WorkspaceService, "setRoot">, root: string | null): Promise<void> {
+   * null clears the frontend only (no Rust call).
+   * @returns True when the root changed; false when a workspace switch guard rejected it. */
+  async changeRoot(root: string | null): Promise<boolean> {
+    if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+    const workspace = this.#workspace;
+    if (!(await workspace.confirmSwitch())) return false;
     if (root !== null) await this.setRoot(this.currentLabel(), root);
-    workspace.setRoot(root);
+    workspace.forceSetRoot(root);
+    return true;
   }
 
   /** Native confirm dialog (close-guard prompt); true = proceed. */
@@ -64,11 +78,14 @@ export class WindowsService {
     return this.#deps.confirmDialog(message);
   }
 
-  /** Intercept close while `isDirty()` holds; `confirmDiscard` resolves true
-   * to close anyway (discarding), false to cancel the close. */
+  /** Intercept close synchronously while `isDirty()` holds, then ask;
+   * a confirmed discard closes through the injected destroy seam. Tauri only
+   * honors CloseRequestedEvent.preventDefault during the synchronous phase. */
   async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
     return this.#deps.onCloseRequested(async (e) => {
-      if (isDirty() && !(await confirmDiscard())) e.preventDefault();
+      if (!isDirty()) return;
+      e.preventDefault();
+      if (await confirmDiscard()) await this.#deps.destroy();
     });
   }
 }

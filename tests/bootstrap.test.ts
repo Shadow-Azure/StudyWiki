@@ -111,3 +111,10 @@ test("bootstrap: 持久 root 启动时重授权 asset scope（set_window_root）
   expect(ctx.workspace.root).toBe("/had-root");
   expect(f.env.invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/had-root" });
 });
+
+test("bootstrap: Context 只暴露 workspace 插件面，不暴露换根私有缝", async () => {
+  const f = fakeEnv({});
+  const ctx = await bootstrap(f.env);
+  expect((ctx.workspace as unknown as Record<string, unknown>).setRoot).toBeUndefined();
+  expect((ctx.workspace as unknown as Record<string, unknown>).forceSetRoot).toBeUndefined();
+});

@@ -2,7 +2,7 @@ import type { Context } from "cordis";
 import type { FilesService } from "./files";
 import type { ExcelService } from "./excel";
 import type { WindowsService } from "./windows";
-import type { WorkspaceService } from "./workspace";
+import type { WorkspaceFacade } from "./workspace";
 import type { SlotsService } from "./slots";
 import type { PluginsService } from "./plugins";
 
@@ -14,8 +14,8 @@ declare module "cordis" {
     excel: ExcelService;
     /** 窗口身份/创建/原生确认框/关窗守卫。 */
     windows: WindowsService;
-    /** 窗口 scope 工作区状态（root/activeFile）。 */
-    workspace: WorkspaceService;
+    /** 窗口 scope 工作区插件面（读/事件/守卫打开；换根仅经 windows 单路）。 */
+    workspace: WorkspaceFacade;
     /** 类型化 UI 槽位注册表。 */
     slots: SlotsService;
     /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */

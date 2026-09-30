@@ -10,6 +10,7 @@ mod ipc;
 fn main() {
     ipc::raw_ipc_read_and_write_round_trip();
     ipc::raw_ipc_write_rejects_json_body_and_unauthorized_paths();
+    ipc::raw_ipc_window_state_authorizes_text_reads();
 }
 
 #[cfg(windows)]
