@@ -26,3 +26,4 @@ Three-format reading comes together: markdown / excel / video are all comfortabl
 - [Excel viewer](../issues/m1-01-excel-viewer.en.md)
 - [Reading experience unification](../issues/m1-02-reading-polish.en.md)
 - [Fix dirty-document loss on native close and quit](../issues/m1-native-close-guard.en.md)
+- [Multi-window serial quit state machine](../issues/m1-serial-quit.en.md)

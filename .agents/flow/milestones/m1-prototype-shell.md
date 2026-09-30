@@ -26,3 +26,4 @@ github:
 - [excel 查看器](../issues/m1-01-excel-viewer.md)
 - [阅读体验统一](../issues/m1-02-reading-polish.md)
 - [修复原生关窗退出丢脏稿](../issues/m1-native-close-guard.md)
+- [多窗口串行退出状态机](../issues/m1-serial-quit.md)
