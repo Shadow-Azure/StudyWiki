@@ -84,6 +84,54 @@ test("windows: setRoot 透传 label+root（注册表更新 + asset 授权的命�
   expect(invoke).toHaveBeenCalledWith("set_window_root", { label: "main", root: "/picked" });
 });
 
+test("windows: markCloseGuardReady 向原生壳注册当前窗口", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
+  await win.guardClose(() => false, vi.fn(async () => true));
+  await win.markCloseGuardReady();
+  expect(invoke).toHaveBeenCalledWith("set_close_guard_ready", { label: "main", ready: true });
+});
+
+test("windows: 无 guard 或全部退订时不启用原生同步取消", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const onCloseRequested = vi.fn(async () => () => {});
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested, confirmDialog: vi.fn(), destroy: vi.fn() });
+  await win.markCloseGuardReady();
+  expect(invoke).toHaveBeenCalledWith("set_close_guard_ready", { label: "main", ready: false });
+
+  const off = await win.guardClose(() => false, vi.fn(async () => true));
+  expect(invoke).toHaveBeenLastCalledWith("set_close_guard_ready", { label: "main", ready: true });
+  await off();
+  expect(invoke).toHaveBeenLastCalledWith("set_close_guard_ready", { label: "main", ready: false });
+});
+
+test("windows: 会话中途注册 guard 即刻武装原生壳，无需重跑 boot 标记", async () => {
+  const invoke = vi.fn().mockResolvedValue(null);
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(async () => () => {}), confirmDialog: vi.fn(), destroy: vi.fn() });
+  await win.markCloseGuardReady();
+  expect(invoke).toHaveBeenLastCalledWith("set_close_guard_ready", { label: "main", ready: false });
+
+  await win.guardClose(() => true, vi.fn(async () => true));
+  expect(invoke).toHaveBeenLastCalledWith("set_close_guard_ready", { label: "main", ready: true });
+});
+
+test("windows: macOS hook 桥接为前端聚合关窗函数", async () => {
+  const global = globalThis as typeof globalThis & { __studywikiNativeClose?: () => void };
+  const invoke = vi.fn().mockResolvedValue(null);
+  const destroy = vi.fn(async () => {});
+  const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(async () => () => {}), confirmDialog: vi.fn(), destroy });
+  const off = await win.guardClose(() => false, vi.fn(async () => true));
+  expect(typeof global.__studywikiNativeClose).toBe("function");
+
+  global.__studywikiNativeClose?.();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(destroy).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledWith("set_close_guard_ready", { label: "main", ready: false });
+
+  await off();
+  expect(global.__studywikiNativeClose).toBeUndefined();
+});
+
 test("windows: changeRoot 非 null 先授权登记再切工作区；null 只清前端", async () => {
   const invoke = vi.fn().mockResolvedValue(null);
   const win = new WindowsService({ invoke, currentLabel: () => "main", onCloseRequested: vi.fn(), confirmDialog: vi.fn(), destroy: vi.fn() });
@@ -128,7 +176,7 @@ test("windows: changeRoot 授权登记失败时 fail-closed 不切前端", async
   expect(workspace.activeFile).toBe(md);
 });
 
-test("windows: guardClose 同步拦关，确认后经 destroy 关窗、取消不关（真实 Tauri 时序）", async () => {
+test("windows: guardClose 同步拦关，干净与确认后都经 destroy 显式关窗", async () => {
   let handler!: (e: { preventDefault(): void }) => void;
   const onCloseRequested = vi.fn((cb: (e: { preventDefault(): void }) => void) => {
     handler = cb;
@@ -140,12 +188,13 @@ test("windows: guardClose 同步拦关，确认后经 destroy 关窗、取消不
   let dirty = false;
   await win.guardClose(() => dirty, () => win.confirmDialog("放弃修改？"));
 
-  // 干净：同步放行——不 preventDefault，也不发起确认/destroy。
+  // 干净：原生壳先同步取消，前端回调仍必须显式 destroy，避免窗体停留。
   const clean = { preventDefault: vi.fn() };
   handler(clean);
-  expect(clean.preventDefault).not.toHaveBeenCalled();
+  expect(clean.preventDefault).toHaveBeenCalledTimes(1);
   expect(confirmDialog).not.toHaveBeenCalled();
-  expect(destroy).not.toHaveBeenCalled();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(destroy).toHaveBeenCalledTimes(1);
 
   // 脏 + 取消：preventDefault 必须发生在任何 await 之前；不 destroy。
   dirty = true;
@@ -154,7 +203,7 @@ test("windows: guardClose 同步拦关，确认后经 destroy 关窗、取消不
   expect(cancelled.preventDefault).toHaveBeenCalledTimes(1);
   expect(confirmDialog).toHaveBeenCalledWith("放弃修改？");
   await new Promise((r) => setTimeout(r, 0));
-  expect(destroy).not.toHaveBeenCalled();
+  expect(destroy).toHaveBeenCalledTimes(1);
 
   // 脏 + 确认：仍同步拦下，确认 resolve 后经 destroy 关窗。
   confirmDialog.mockResolvedValue(true);
@@ -162,7 +211,29 @@ test("windows: guardClose 同步拦关，确认后经 destroy 关窗、取消不
   handler(confirmed);
   expect(confirmed.preventDefault).toHaveBeenCalledTimes(1);
   await new Promise((r) => setTimeout(r, 0));
-  expect(destroy).toHaveBeenCalledTimes(1);
+  expect(destroy).toHaveBeenCalledTimes(2);
+});
+
+test("windows: 多个 guard 聚合成一次关窗判定，干净 guard 不提前 destroy", async () => {
+  let handler!: (e: { preventDefault(): void }) => void;
+  const onCloseRequested = vi.fn((cb: (e: { preventDefault(): void }) => void) => {
+    handler = cb;
+    return Promise.resolve(() => {});
+  });
+  const cleanConfirm = vi.fn(async () => true);
+  const dirtyConfirm = vi.fn(async () => false);
+  const destroy = vi.fn(async () => {});
+  const win = new WindowsService({ invoke: vi.fn(), currentLabel: () => "main", onCloseRequested, confirmDialog: vi.fn(), destroy });
+  await win.guardClose(() => false, cleanConfirm);
+  await win.guardClose(() => true, dirtyConfirm);
+
+  const event = { preventDefault: vi.fn() };
+  handler(event);
+  expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  expect(cleanConfirm).not.toHaveBeenCalled();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(dirtyConfirm).toHaveBeenCalledTimes(1);
+  expect(destroy).not.toHaveBeenCalled();
 });
 
 test("windows: bootstrap 绑定内部工作区后 changeRoot 走守卫与授权切根", async () => {

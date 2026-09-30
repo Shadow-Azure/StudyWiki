@@ -85,5 +85,6 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     snapshot: (name) => plugins.snapshot(name),
   });
   plugins.bootBroken = report.broken;
+  await windows.markCloseGuardReady();
   return ctx;
 }

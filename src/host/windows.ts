@@ -25,6 +25,10 @@ export const defaultWindowsDeps: WindowsDeps = {
 export class WindowsService {
   readonly #deps: WindowsDeps;
   #workspace: WorkspaceService | null = null;
+  #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+  #nextGuardId = 0;
+  #offNativeClose: (() => void | Promise<void>) | null = null;
+  #closing = false;
 
   constructor(deps: WindowsDeps = defaultWindowsDeps) {
     this.#deps = deps;
@@ -78,14 +82,61 @@ export class WindowsService {
     return this.#deps.confirmDialog(message);
   }
 
-  /** Intercept close synchronously while `isDirty()` holds, then ask;
-   * a confirmed discard closes through the injected destroy seam. Tauri only
-   * honors CloseRequestedEvent.preventDefault during the synchronous phase. */
+  /** Mark this window's close listener as ready; the native shell can now
+   * synchronously cancel native close requests before asking the webview. */
+  async markCloseGuardReady(): Promise<void> {
+    await this.#syncNativeReady();
+  }
+
+  /** Force this window's native close-guard flag, bypassing live state. */
+  async #setNativeReady(ready: boolean): Promise<void> {
+    await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+  }
+
+  /** Arm the native shell only while the aggregated listener is installed, so
+   * startup, guard-less and already-confirmed windows keep native direct close. */
+  async #syncNativeReady(): Promise<void> {
+    await this.#setNativeReady(this.#offNativeClose !== null);
+  }
+
+  /** Aggregate document guards into one close decision. Every native request
+   * is synchronously cancelled first; only when every dirty guard confirms the
+   * discard does this method close through the destroy seam. */
   async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
-    return this.#deps.onCloseRequested(async (e) => {
-      if (!isDirty()) return;
-      e.preventDefault();
-      if (await confirmDiscard()) await this.#deps.destroy();
-    });
+    const id = this.#nextGuardId++;
+    this.#guards.set(id, { isDirty, confirmDiscard });
+    if (!this.#offNativeClose) {
+      this.#offNativeClose = await this.#deps.onCloseRequested((e) => void this.#handleClose(e));
+      (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose = () => {
+        void this.#handleClose({ preventDefault: () => {} });
+      };
+      await this.#syncNativeReady();
+    }
+    return async () => {
+      this.#guards.delete(id);
+      if (this.#guards.size === 0 && this.#offNativeClose) {
+        const off = this.#offNativeClose;
+        this.#offNativeClose = null;
+        await off();
+        delete (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose;
+        await this.#syncNativeReady();
+      }
+    };
+  }
+
+  async #handleClose(e: { preventDefault(): void }): Promise<void> {
+    e.preventDefault();
+    if (this.#closing) return;
+    this.#closing = true;
+    try {
+      for (const guard of this.#guards.values()) {
+        if (!guard.isDirty()) continue;
+        if (!(await guard.confirmDiscard())) return;
+      }
+      await this.#setNativeReady(false);
+      await this.#deps.destroy();
+    } finally {
+      this.#closing = false;
+    }
   }
 }

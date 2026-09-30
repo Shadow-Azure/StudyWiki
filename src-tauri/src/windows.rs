@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -8,6 +8,30 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub struct WindowRegistry {
     next: u32,
     roots: HashMap<String, Option<String>>,
+}
+
+/// 原生关窗守卫就绪表：只有前端聚合守卫完成装载的窗口才由主进程同步取消原生关闭。
+#[derive(Default)]
+pub struct CloseGuardRegistry {
+    ready: HashSet<String>,
+}
+
+impl CloseGuardRegistry {
+    pub fn set_ready(&mut self, label: &str, ready: bool) {
+        if ready {
+            self.ready.insert(label.to_string());
+        } else {
+            self.ready.remove(label);
+        }
+    }
+
+    pub fn is_ready(&self, label: &str) -> bool {
+        self.ready.contains(label)
+    }
+
+    pub fn remove(&mut self, label: &str) {
+        self.ready.remove(label);
+    }
 }
 
 impl WindowRegistry {
@@ -87,6 +111,19 @@ pub fn set_window_root<R: tauri::Runtime>(
             .map_err(|e| format!("授权 asset 访问 {root} 失败：{e}"))?;
     }
     state.lock().unwrap().set_root(&label, root);
+    Ok(())
+}
+
+/// 标记窗口聚合关窗守卫是否就绪；就绪后原生关闭由主进程同步取消。
+#[tauri::command]
+pub fn set_close_guard_ready<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, Mutex<CloseGuardRegistry>>,
+    label: String,
+    ready: bool,
+) -> Result<(), String> {
+    crate::native_close::set_ready(&app, &label, ready)?;
+    state.lock().unwrap().set_ready(&label, ready);
     Ok(())
 }
 
@@ -173,5 +210,18 @@ mod tests {
         // 主窗口（windows[] 配置窗）从未登记过：upsert 让"打开文件夹"也持久化
         reg.set_root("main", Some("/first".into()));
         assert_eq!(reg.get("main"), Some(Some("/first".into())));
+    }
+
+    #[test]
+    fn close_guard_registry_tracks_ready_windows() {
+        let mut registry = CloseGuardRegistry::default();
+        assert!(!registry.is_ready("main"));
+        registry.set_ready("main", true);
+        assert!(registry.is_ready("main"));
+        registry.set_ready("main", false);
+        assert!(!registry.is_ready("main"));
+        registry.set_ready("main", true);
+        registry.remove("main");
+        assert!(!registry.is_ready("main"));
     }
 }
