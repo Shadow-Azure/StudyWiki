@@ -43,11 +43,12 @@ pub fn install() {
             .expect("NSWindow implements close");
         let original_close = close_method.implementation();
         ORIGINAL_CLOSE.store(original_close as usize, Ordering::Release);
-        let underscore_close_method = class!(NSWindow)
-            .instance_method(sel!(_close:))
-            .expect("NSWindow implements _close:");
-        let original_underscore_close = underscore_close_method.implementation();
-        ORIGINAL_UNDERSCORE_CLOSE.store(original_underscore_close as usize, Ordering::Release);
+        // `_close:` is the private selector macOS 26 routes the red traffic
+        // light through. Other (or future) systems may not expose it; skip
+        // that fallback instead of failing app startup. The public
+        // performClose:/close hooks and the rewritten red-button target keep
+        // guarding every exit they can see.
+        let underscore_close_method = class!(NSWindow).instance_method(sel!(_close:));
         let terminate_method = class!(NSApplication)
             .instance_method(sel!(terminate:))
             .expect("NSApplication implements terminate:");
@@ -60,7 +61,15 @@ pub fn install() {
         let hook: Imp = std::mem::transmute(hook_function);
         method.set_implementation(hook);
         close_method.set_implementation(hook);
-        underscore_close_method.set_implementation(hook);
+        if let Some(underscore_close_method) = underscore_close_method {
+            ORIGINAL_UNDERSCORE_CLOSE.store(
+                underscore_close_method.implementation() as usize,
+                Ordering::Release,
+            );
+            underscore_close_method.set_implementation(hook);
+        } else {
+            eprintln!("StudyWiki: NSWindow._close: unavailable; skipping private close fallback");
+        }
         let terminate_hook: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) =
             application_terminate;
         let terminate_hook: Imp = std::mem::transmute(terminate_hook);

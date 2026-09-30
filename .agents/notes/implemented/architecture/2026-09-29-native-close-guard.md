@@ -15,7 +15,7 @@ macOS 26 + Tauri 2.12 / tao 0.37.1 下，红点、Close Window、Cmd+W 与 Cmd+Q
 - 同一模块 hook `NSApplication.terminate:`：存在已武装窗口时逐个 eval 同一桥接、不调用原实现，其余情况放行原实现。Cmd+Q / 菜单 Quit 因此走逐窗守卫，最后一个窗口销毁后的空窗退出请求让进程正常结束。
 - Rust 维护 `CloseGuardRegistry`。`guardClose` 装载聚合并发 listener 时立即标记 ready（不依赖 boot 时序，会话中途新增 guard 也武装）；退订或确认关闭前恢复/移除原生拦截，启动中、无守卫或已确认窗口保持原生直关，避免无法关闭。重新武装幂等：已武装窗口不再重读红点 target/action，否则会把自身动作当成"原始"而永久破坏原生关闭。
 - 系统 `ExitRequested` 不直接退出：先 `prevent_exit()`，macOS 对每个 webview eval 同一桥接（其他平台逐窗 `close()`）；窗口守卫逐窗决定去留。最后一个窗口真正销毁后的空窗退出请求放行。
-- 该方案不替换 tao，也不把脏状态镜像到 Rust；主进程只拥有“守卫已就绪”这一同步事实，文档脏语义仍住前端插件。`_close:` 是 macOS 26 实测必需的私有 selector 兜底。
+- 该方案不替换 tao，也不把脏状态镜像到 Rust；主进程只拥有“守卫已就绪”这一同步事实，文档脏语义仍住前端插件。`_close:` 是 macOS 26 实测必需的私有 selector 兜底；该 selector 缺失时跳过该路钩子并告警，公开 selector 钩子与红点改接继续生效，不因私有 API 兼容性变化导致启动 panic。
 
 ## Alternatives considered
 
