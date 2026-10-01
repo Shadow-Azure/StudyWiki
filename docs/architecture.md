@@ -54,8 +54,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   ui/viewer.ts                     共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                         Rust 壳
   config.rs                        用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、native_close.rs、plugins.rs、windows.rs）
-  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 非流式 chat 出口（唯一联网点，ureq rustls）
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、windows.rs）
+  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口（唯一联网点，ureq rustls）
+  llm_stream.rs                    流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
@@ -82,7 +83,7 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat({model})` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization），归一错误码原路返回。
+数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat({model})` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat` / `llm_chat_stream` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization）；流式 chunk 经 Channel 回调，`llm_chat_abort` 置停；归一错误码原路返回。
 
 ## 关键决策点
 

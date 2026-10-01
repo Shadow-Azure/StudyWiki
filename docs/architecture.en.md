@@ -54,8 +54,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   ui/viewer.ts                     共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                         Rust 壳
   config.rs                        用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、native_close.rs、plugins.rs、windows.rs）
-  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 非流式 chat 出口（唯一联网点，ureq rustls）
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、windows.rs）
+  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口（唯一联网点，ureq rustls）
+  llm_stream.rs                    流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
@@ -82,7 +83,7 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder → `read_tree` assigns kind → view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file` + markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown / excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)); LLM inference — plugins call `ctx.llm.chat({model})`, the host service routes the model to its owning endpoint (`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` are thrown here), and the Rust `llm_chat` reads `~/.studywiki/settings.json` and sends HTTPS (an empty apiKey carries no Authorization header), returning normalized error codes along the same path.
+Data flows: tree reading — pick a folder → `read_tree` assigns kind → view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file` + markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown / excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)); LLM inference — plugins call `ctx.llm.chat({model})`, the host service routes the model to its owning endpoint (`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` are thrown here), and the Rust `llm_chat` / `llm_chat_stream` read `~/.studywiki/settings.json` and send HTTPS (an empty apiKey carries no Authorization header); streaming chunks are delivered through a Channel, and `llm_chat_abort` sets the stop flag; normalized error codes return along the same path.
 
 ## Key decision points
 

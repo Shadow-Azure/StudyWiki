@@ -13,8 +13,8 @@ The inference service landed in m2-01 only offers non-streaming chat: the full a
 ### Streaming pipeline
 
 - Rust hand-rolls SSE line parsing (blocking reads via ureq, `data:` lines + blank-line dispatch + multi-data-line joining + the `[DONE]` marker) with no new dependencies. EOF before `[DONE]` is the `STREAM_CLOSED` truncation error (truncation must never pass for a normal ending).
-- Chunks reach the frontend over `tauri::ipc::Channel`: each invoke gets its own channel, so windows are isolated by construction; the frontend dropping the Channel fails the Rust send and stops the read — abort needs no separate command.
-- The `llm_chat_stream(req, channel)` command spawns a dedicated thread to read the stream; the invoke Promise resolves when the stream settles — the channel delivers deltas, await delivers settlement.
+- Chunks reach the frontend over `tauri::ipc::Channel`: each invoke gets its own channel, so windows are isolated by construction; the frontend dropping the Channel fails the Rust send and stops the read. User-initiated abort sets a flag through `llm_chat_abort(streamId)`, and the read loop stops before the next chunk.
+- The `llm_chat_stream(req, channel)` command spawns a worker thread to read the stream; the invoke Promise resolves when the stream settles — the channel delivers deltas, await delivers settlement.
 
 ### Chunk vocabulary and assembly
 
@@ -22,7 +22,7 @@ Take the minimal set mainstream agent implementations converged on: `text-delta`
 
 ### Multimodal message model
 
-Message content grows from a plain string to a part array, and a media part's source is a union: `path` (local file; Rust reads it at egress, base64-encodes it into the request body, path confined to the workspace root) / `inline` (base64 from clipboard paste and drag-drop, never persisted) / `url` (remote URL passed through verbatim for the provider to fetch; the client never downloads). Capability gating runs before sending: endpoint `capabilities` gains `audio`, and a message carrying image/audio to a model without the matching capability fails with `UNSUPPORTED_CONTENT` before sending.
+Message content grows from a plain string to a part array, and a media part's source is a union: `path` (local file; Rust reads it at egress, base64-encodes it into the request body, path validated by canonicalization against a root snapshot) / `inline` (base64 from clipboard paste and drag-drop, never persisted) / `url` (remote URL passed through verbatim for the provider to fetch; the client never downloads). Capability gating runs before sending: endpoint `capabilities` gains `audio`, and a message carrying image/audio to a model without the matching capability fails with `UNSUPPORTED_CONTENT` before sending.
 
 ### Chat slot and rendering
 
@@ -40,5 +40,5 @@ Message content grows from a plain string to a part array, and a media part's so
 
 ## Consequences
 
-- The guard whitelist for `llm` gains `chatStream`; `SlotName` gains `sidebar.right`; the commands.md generated section gains `llm_chat_stream`; the normalized error vocabulary gains `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`.
+- The guard whitelist for `llm` gains `chatStream`; `SlotName` gains `sidebar.right`; the commands.md generated section gains `llm_chat_stream` / `llm_chat_abort`; the normalized error vocabulary gains `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`.
 - Debts: `tool-call-delta` has no consumer this round; sessions are not persisted (reopening clears them); block-level incremental rendering remains a performance optimization; remote url sources depend on provider reachability, and a self-hosted endpoint that cannot reach the public internet reports through the transport error semantics.

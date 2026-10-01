@@ -10,6 +10,7 @@ status: in-progress
 scope:
   - src/host/**
   - src/plugins/**
+  - src/ui/**
   - src/loader/**
   - src-tauri/**
   - src/styles.css

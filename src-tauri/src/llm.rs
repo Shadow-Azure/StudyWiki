@@ -1,14 +1,21 @@
-//! LLM 推理薄能力层：厂商预设、endpoint CRUD、探测与非流式 chat 出口。
+//! LLM 推理薄能力层：厂商预设、endpoint CRUD、探测与流式/非流式 chat 出口。
 
 use crate::config::{self, Endpoint, ModelEntry, Settings};
+use crate::llm_stream::{parse_sse_lines, StreamChunk};
+use base64::Engine as _;
 use serde::Serialize;
+use std::io::BufReader;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tauri::ipc::Channel;
 use tauri::AppHandle;
 
 /// 探测超时：OpenAI 兼容 /models 是轻调用，10s 足够。
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// chat 超时：大模型生成可达数分钟，给满 300s。
 const CHAT_TIMEOUT: Duration = Duration::from_secs(300);
+/// 流式 chat 超时：长回答持续出字，给 600s。
+const STREAM_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// 归一错误：code 为全链路共享词表（前端路由层另有 MODEL_* 三码；
 /// INTERNAL 仅由 async 命令的后台任务 JoinError 产生，正常路径不可达）。
@@ -27,11 +34,50 @@ impl LlmError {
     }
 }
 
-/// 一条对话消息（本期 content 为纯文本；多模态随 m2-02 流式一起扩）。
+/// 消息内容：纯文本或多模态 part 数组。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+/// 多模态 part：文本，或 image/audio 媒体（source 三源联合）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ContentPart {
+    Text {
+        text: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Media {
+        kind: String,
+        source: MediaSource,
+    },
+}
+
+/// 媒体来源：path = 本地文件（Rust 出口读盘）；inline = 剪贴板/拖拽 base64；url = 透传。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum MediaSource {
+    Path {
+        path: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Inline {
+        data: String,
+        mime_type: String,
+    },
+    Url {
+        url: String,
+    },
+}
+
+/// 一条对话消息：content 是纯文本或多模态 part 数组。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: MessageContent,
 }
 
 /// chat 请求：前端已路由好归属 endpoint（endpointId），Rust 只做传输。
@@ -65,6 +111,163 @@ pub struct Usage {
     pub prompt_tokens: u64,
     #[serde(default, alias = "completion_tokens")]
     pub completion_tokens: u64,
+}
+
+/// 流式请求：ChatRequest + streamId（中止寻址）。
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStreamRequest {
+    #[serde(flatten)]
+    pub base: ChatRequest,
+    pub stream_id: String,
+}
+
+/// 中止登记表：streamId 置位即停读（进程级单例）。
+pub type AbortRegistry = Arc<Mutex<std::collections::HashSet<String>>>;
+
+/// 进程级流式中止登记表唯一入口。
+pub fn abort_registry() -> &'static AbortRegistry {
+    static R: OnceLock<AbortRegistry> = OnceLock::new();
+    R.get_or_init(|| Arc::new(Mutex::new(std::collections::HashSet::new())))
+}
+
+/// 流式 chat 专用 Agent：读循环可长时持续出字。
+fn stream_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new().timeout(STREAM_TIMEOUT).build()
+}
+
+/// 按扩展名出 mime：image → png/jpg/jpeg/webp/gif；audio → mp3/wav。
+fn mime_of_path(path: &str, media_kind: &str) -> Result<String, LlmError> {
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    let mime = match (media_kind, ext.as_str()) {
+        ("image", "png") => "image/png",
+        ("image", "jpg" | "jpeg") => "image/jpeg",
+        ("image", "webp") => "image/webp",
+        ("image", "gif") => "image/gif",
+        ("audio", "mp3") => "audio/mpeg",
+        ("audio", "wav") => "audio/wav",
+        _ => {
+            return Err(LlmError::new(
+                "UNSUPPORTED_CONTENT",
+                format!("不支持的附件类型：{path}"),
+            ))
+        }
+    };
+    Ok(mime.to_string())
+}
+
+/// input_audio 的 format 字段只认 wav/mp3。
+fn audio_format(mime: &str) -> Result<&'static str, LlmError> {
+    match mime {
+        "audio/wav" | "audio/x-wav" => Ok("wav"),
+        "audio/mpeg" | "audio/mp3" => Ok("mp3"),
+        _ => Err(LlmError::new(
+            "UNSUPPORTED_CONTENT",
+            format!("音频格式不受支持：{mime}（仅 wav/mp3）"),
+        )),
+    }
+}
+
+/// 媒体 source → OpenAI content part JSON；path 在出口处读盘转 base64。
+fn resolve_media(
+    source: &MediaSource,
+    media_kind: &str,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<serde_json::Value, LlmError> {
+    match source {
+        MediaSource::Inline { data, mime_type } => {
+            if media_kind == "audio" {
+                Ok(serde_json::json!({
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": data,
+                        "format": audio_format(mime_type)?
+                    }
+                }))
+            } else {
+                Ok(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:{mime_type};base64,{data}")}
+                }))
+            }
+        }
+        MediaSource::Path { path } => {
+            if !root_check(path) {
+                return Err(LlmError::new(
+                    "UNSUPPORTED_CONTENT",
+                    format!("附件路径不在工作区内：{path}"),
+                ));
+            }
+            let bytes = std::fs::read(path)
+                .map_err(|e| LlmError::new("UNSUPPORTED_CONTENT", format!("附件读取失败：{e}")))?;
+            let mime = mime_of_path(path, media_kind)?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            if media_kind == "audio" {
+                Ok(serde_json::json!({
+                    "type": "input_audio",
+                    "input_audio": {"data": b64, "format": audio_format(&mime)?}
+                }))
+            } else {
+                Ok(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:{mime};base64,{b64}")}
+                }))
+            }
+        }
+        MediaSource::Url { url } => {
+            if media_kind == "audio" {
+                return Err(LlmError::new("UNSUPPORTED_CONTENT", "音频不支持 url 来源"));
+            }
+            Ok(serde_json::json!({
+                "type": "image_url",
+                "image_url": {"url": url}
+            }))
+        }
+    }
+}
+
+/// 请求体构建（非流式/流式共用）：parts 归一为 OpenAI content 数组。
+fn build_chat_body(
+    req: &ChatRequest,
+    stream: bool,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<serde_json::Value, LlmError> {
+    let mut messages = Vec::new();
+    for m in &req.messages {
+        let content = match &m.content {
+            MessageContent::Text(t) => serde_json::json!(t),
+            MessageContent::Parts(parts) => {
+                let mut out = Vec::new();
+                for p in parts {
+                    out.push(match p {
+                        ContentPart::Text { text } => {
+                            serde_json::json!({"type": "text", "text": text})
+                        }
+                        ContentPart::Media { kind, source } => {
+                            resolve_media(source, kind, root_check)?
+                        }
+                    });
+                }
+                serde_json::json!(out)
+            }
+        };
+        messages.push(serde_json::json!({"role": m.role, "content": content}));
+    }
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "messages": messages,
+        "stream": stream,
+    });
+    if stream {
+        body["stream_options"] = serde_json::json!({"include_usage": true});
+    }
+    if let Some(max) = req.max_tokens {
+        body["max_tokens"] = serde_json::json!(max);
+    }
+    if let Some(t) = req.temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
+    Ok(body)
 }
 
 /// OpenAI 兼容 chat/completions 回包的只取所需子集。
@@ -200,19 +403,10 @@ fn chat_with(
     agent: &ureq::Agent,
     ep: &Endpoint,
     req: &ChatRequest,
+    root_check: &dyn Fn(&str) -> bool,
 ) -> Result<ChatResponse, LlmError> {
     let url = join_url(&ep.base_url, "chat/completions");
-    let mut body = serde_json::json!({
-        "model": req.model,
-        "messages": req.messages,
-        "stream": false,
-    });
-    if let Some(max) = req.max_tokens {
-        body["max_tokens"] = serde_json::json!(max);
-    }
-    if let Some(t) = req.temperature {
-        body["temperature"] = serde_json::json!(t);
-    }
+    let body = build_chat_body(req, false, root_check)?;
     // ureq 未开 json feature（依赖白名单零新增）：手工序列化 + Content-Type 头。
     let resp = with_auth(agent.post(&url), ep)
         .set("Content-Type", "application/json")
@@ -386,16 +580,99 @@ pub fn llm_set_default_model(app: AppHandle, model: Option<String>) -> Result<()
 /// spawn_blocking：大模型生成可达数分钟，同步命令会让主线程冻结整个事件循环
 /// （所有窗口 UI 与关窗守卫失效），必须下放 worker 线程。
 #[tauri::command]
-pub async fn llm_chat(app: AppHandle, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+pub async fn llm_chat(
+    app: AppHandle,
+    reg: tauri::State<'_, Mutex<crate::windows::WindowRegistry>>,
+    req: ChatRequest,
+) -> Result<ChatResponse, LlmError> {
+    let roots_ok = {
+        let reg = reg.lock().unwrap();
+        reg.roots()
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let dir =
             config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
         let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
         let ep = find_endpoint(&s, &req.endpoint_id)?;
-        chat_with(&chat_agent(), &ep, &req)
+        let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
+        chat_with(&chat_agent(), &ep, &req, &root_check)
     })
     .await
     .map_err(|e| LlmError::new("INTERNAL", format!("chat 后台任务异常终止：{e}")))?
+}
+
+/// 流式读循环（纯缝：sink 可测）：abort 置位或 sink 返回 false 即停；结束时清理登记。
+fn run_chat_stream(
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &ChatRequest,
+    sink: &mut dyn FnMut(StreamChunk) -> bool,
+    stream_id: &str,
+    aborts: &AbortRegistry,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<(), LlmError> {
+    let url = join_url(&ep.base_url, "chat/completions");
+    let body = build_chat_body(req, true, root_check)?;
+    let resp = with_auth(agent.post(&url), ep)
+        .set("Content-Type", "application/json")
+        .send_bytes(body.to_string().as_bytes())
+        .map_err(map_transport)?;
+    let reader = BufReader::new(resp.into_reader());
+    let result = parse_sse_lines(reader, &mut |chunk| {
+        if aborts.lock().unwrap().contains(stream_id) {
+            return false;
+        }
+        sink(chunk)
+    });
+    aborts.lock().unwrap().remove(stream_id);
+    result
+}
+
+/// 流式 chat：chunk 经 Channel 增量投递，Promise 在流终结时 resolve。
+/// 中止经 llm_chat_abort 置位；前端 webview 消失（send 失败）自停。
+#[tauri::command]
+pub async fn llm_chat_stream(
+    app: AppHandle,
+    reg: tauri::State<'_, Mutex<crate::windows::WindowRegistry>>,
+    req: ChatStreamRequest,
+    on_chunk: Channel<StreamChunk>,
+) -> Result<(), LlmError> {
+    let roots_ok = {
+        let reg = reg.lock().unwrap();
+        reg.roots()
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir =
+            config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let ep = find_endpoint(&s, &req.base.endpoint_id)?;
+        let sid = req.stream_id.clone();
+        let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
+        run_chat_stream(
+            &stream_agent(),
+            &ep,
+            &req.base,
+            &mut |chunk| on_chunk.send(chunk).is_ok(),
+            &sid,
+            abort_registry(),
+            &root_check,
+        )
+    })
+    .await
+    .map_err(|e| LlmError::new("INTERNAL", format!("流式后台任务异常终止：{e}")))?
+}
+
+/// 中止在途流式 chat（幂等：未知 id 视为已结束）。
+#[tauri::command]
+pub fn llm_chat_abort(id: String) -> Result<(), LlmError> {
+    abort_registry().lock().unwrap().insert(id);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -531,12 +808,12 @@ mod tests {
             model: "m1".into(),
             messages: vec![ChatMessage {
                 role: "user".into(),
-                content: "hi".into(),
+                content: MessageContent::Text("hi".into()),
             }],
             max_tokens: None,
             temperature: None,
         };
-        let resp = chat_with(&agent(), &ep(&base, "secret-key"), &req).unwrap();
+        let resp = chat_with(&agent(), &ep(&base, "secret-key"), &req, &|_| false).unwrap();
         assert_eq!(resp.content, "你好");
         assert_eq!(resp.finish_reason, "stop");
         let sent = rx.recv().unwrap();
@@ -558,7 +835,9 @@ mod tests {
             temperature: None,
         };
         assert_eq!(
-            chat_with(&agent(), &ep(&base, ""), &req).unwrap_err().code,
+            chat_with(&agent(), &ep(&base, ""), &req, &|_| false)
+                .unwrap_err()
+                .code,
             "BAD_RESPONSE"
         );
     }
@@ -650,6 +929,220 @@ mod tests {
         assert!(s.default_model.is_none());
     }
 
+    fn read_full_request(stream: &mut std::net::TcpStream) -> String {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut tmp).unwrap_or(0);
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(pos) = find_header_end(&buf) {
+                let head = String::from_utf8_lossy(&buf[..pos]).to_string();
+                let len: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        l.strip_prefix("Content-Length: ")
+                            .or_else(|| l.strip_prefix("content-length: "))
+                    })
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+                if buf.len() >= pos + len {
+                    break;
+                }
+            }
+            if n == 0 {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buf).to_string()
+    }
+
+    /// 流式 mock：分片写出 SSE（模拟网络分段），最后 [DONE]。
+    fn mock_stream_server(fragments: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_full_request(&mut stream);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            for frag in fragments {
+                stream.write_all(frag.as_bytes()).unwrap();
+                stream.flush().unwrap();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        format!("http://127.0.0.1:{port}/v1")
+    }
+
+    fn test_endpoint(base: &str) -> Endpoint {
+        ep(base, "")
+    }
+
+    fn text_request() -> ChatRequest {
+        ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Text("你好".into()),
+            }],
+            max_tokens: None,
+            temperature: None,
+        }
+    }
+
+    fn new_abort_registry() -> AbortRegistry {
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()))
+    }
+
+    #[test]
+    fn stream_loop_delivers_chunks_and_finishes() {
+        let base = mock_stream_server(vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n".into(),
+            "data: {\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":\"stop\"}]}\n\n"
+                .into(),
+            "data: [DONE]\n\n".into(),
+        ]);
+        let ep = test_endpoint(&base);
+        let aborts = new_abort_registry();
+        let mut got: Vec<StreamChunk> = Vec::new();
+        let r = run_chat_stream(
+            &stream_agent(),
+            &ep,
+            &text_request(),
+            &mut |c| {
+                got.push(c);
+                true
+            },
+            "s1",
+            &aborts,
+            &|_| false,
+        );
+        assert!(r.is_ok());
+        assert!(got
+            .iter()
+            .any(|c| matches!(c, StreamChunk::TextDelta { text, .. } if text == "好")));
+    }
+
+    #[test]
+    fn stream_abort_flag_stops_reading() {
+        let base = mock_stream_server(vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"一\"}}]}\n\n".into(),
+            "data: {\"choices\":[{\"delta\":{\"content\":\"二\"}}]}\n\n".into(),
+            "data: [DONE]\n\n".into(),
+        ]);
+        let ep = test_endpoint(&base);
+        let aborts = new_abort_registry();
+        let mut n = 0;
+        let r = run_chat_stream(
+            &stream_agent(),
+            &ep,
+            &text_request(),
+            &mut |_c| {
+                n += 1;
+                if n == 1 {
+                    aborts.lock().unwrap().insert("s2".to_string());
+                }
+                n == 0 // 恒 false：模拟中止后停止。
+            },
+            "s2",
+            &aborts,
+            &|_| false,
+        );
+        assert!(r.is_ok());
+        assert_eq!(n, 1, "回调停止后不得再投递 chunk");
+    }
+
+    #[test]
+    fn image_path_part_becomes_data_url() {
+        let dir = std::env::temp_dir().join(format!("sw-att-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.png"), b"\x89PNG").unwrap();
+        let p = dir.join("a.png").to_string_lossy().to_string();
+        let req = ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "看图".into(),
+                    },
+                    ContentPart::Media {
+                        kind: "image".into(),
+                        source: MediaSource::Path { path: p },
+                    },
+                ]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        };
+        let body = build_chat_body(&req, false, &|_p| true).unwrap();
+        let parts = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(parts[0]["type"], "text");
+        assert!(parts[1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert_eq!(body["stream"], serde_json::json!(false));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn root_outside_path_rejected() {
+        let req = ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![ContentPart::Media {
+                    kind: "image".into(),
+                    source: MediaSource::Path {
+                        path: "/etc/passwd".into(),
+                    },
+                }]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        };
+        let r = build_chat_body(&req, true, &|_p| false);
+        assert_eq!(r.unwrap_err().code, "UNSUPPORTED_CONTENT");
+    }
+
+    #[test]
+    fn stream_body_carries_stream_options_usage() {
+        let body = build_chat_body(&text_request(), true, &|_| true).unwrap();
+        assert_eq!(body["stream"], serde_json::json!(true));
+        assert_eq!(
+            body["stream_options"],
+            serde_json::json!({"include_usage": true})
+        );
+    }
+
+    #[test]
+    fn audio_url_source_rejected() {
+        let req = ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![ContentPart::Media {
+                    kind: "audio".into(),
+                    source: MediaSource::Url {
+                        url: "https://x/a.mp3".into(),
+                    },
+                }]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        };
+        let r = build_chat_body(&req, true, &|_| true);
+        assert_eq!(r.unwrap_err().code, "UNSUPPORTED_CONTENT");
+    }
+
     #[test]
     fn upsert_validation_errors_are_invalid_config_and_find_endpoint_miss() {
         let mut s = Settings {
@@ -673,12 +1166,18 @@ mod async_command_tests {
 
     /// tauri-macros 对同步命令生成 body_blocking（IPC 处理器内联执行 → 主线程）；
     /// 网络命令必须是 async fn（宏走 respond_async 挂 async runtime），
-    /// 否则一次推理（最长 300s）期间所有窗口冻结、关窗守卫失效。
+    /// 否则一次推理（最长 600s）期间所有窗口冻结、关窗守卫失效。
     #[test]
-    fn chat_and_probe_commands_are_async() {
-        fn assert_async_chat<F: std::future::Future>(_f: fn(AppHandle, ChatRequest) -> F) {}
+    fn chat_stream_and_probe_commands_are_async() {
+        type Reg = tauri::State<'static, Mutex<crate::windows::WindowRegistry>>;
+        fn assert_async_chat<F: std::future::Future>(_f: fn(AppHandle, Reg, ChatRequest) -> F) {}
+        fn assert_async_stream<F: std::future::Future>(
+            _f: fn(AppHandle, Reg, ChatStreamRequest, Channel<StreamChunk>) -> F,
+        ) {
+        }
         fn assert_async_probe<F: std::future::Future>(_f: fn(AppHandle, String) -> F) {}
         assert_async_chat(llm_chat);
+        assert_async_stream(llm_chat_stream);
         assert_async_probe(llm_probe);
     }
 }

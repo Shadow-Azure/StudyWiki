@@ -13,8 +13,8 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 ### 流式链路
 
 - Rust 手写 SSE 行解析（ureq 阻塞读，`data:` 行 + 空行分派 + 多 data 行拼接 + `[DONE]` 哨兵），不引新依赖。EOF 之前无 `[DONE]` = `STREAM_CLOSED` 截断错误（截断不能当正常结束）。
-- chunk 经 `tauri::ipc::Channel` 推到前端：每次 invoke 一条独立通道，多窗口天然隔离；前端 drop Channel → Rust send 失败即中断读取，abort 不需要独立命令。
-- `llm_chat_stream(req, channel)` 命令起独立线程读流；invoke 的 Promise 在流终结时 resolve——channel 给增量，await 给结算。
+- chunk 经 `tauri::ipc::Channel` 推到前端：每次 invoke 一条独立通道，多窗口天然隔离；前端 drop Channel → Rust send 失败即中断读取。用户主动中止由 `llm_chat_abort(streamId)` 置位，读循环在下一 chunk 前停止。
+- `llm_chat_stream(req, channel)` 命令起 worker 线程读流；invoke 的 Promise 在流终结时 resolve——channel 给增量，await 给结算。
 
 ### chunk 词表与组装
 
@@ -22,7 +22,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### 多模态消息模型
 
-消息 content 从纯字符串扩为 part 数组，媒体 part 的 source 是联合类型：`path`（本地文件，Rust 出口读盘转 base64 注入请求体，路径限工作区 root）/ `inline`（剪贴板粘贴与拖拽的 base64，不落盘）/ `url`（远程 URL 原样透传，由 provider 端拉取，客户端不下载）。模型能力门禁前置：endpoint 的 `capabilities` 增 `audio`，消息带图/音频而模型无对应能力时发送前报 `UNSUPPORTED_CONTENT`。
+消息 content 从纯字符串扩为 part 数组，媒体 part 的 source 是联合类型：`path`（本地文件，Rust 出口读盘转 base64 注入请求体，路径经 root 快照 canonicalize 校验）/ `inline`（剪贴板粘贴与拖拽的 base64，不落盘）/ `url`（远程 URL 原样透传，由 provider 端拉取，客户端不下载）。模型能力门禁前置：endpoint 的 `capabilities` 增 `audio`，消息带图/音频而模型无对应能力时发送前报 `UNSUPPORTED_CONTENT`。
 
 ### chat 槽位与渲染
 
@@ -40,5 +40,5 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ## Consequences
 
-- guard 白名单 `llm` 增 `chatStream`；`SlotName` 增 `sidebar.right`；commands.md 生成区增 `llm_chat_stream`；归一错误词表增 `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`。
+- guard 白名单 `llm` 增 `chatStream`；`SlotName` 增 `sidebar.right`；commands.md 生成区增 `llm_chat_stream` / `llm_chat_abort`；归一错误词表增 `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`。
 - 欠账：`tool-call-delta` 本期无消费方；会话不持久化（重开即清）；块级增量渲染留作性能优化；远程 url 来源依赖 provider 可达性，自托管 endpoint 够不到公网时按传输错误语义报错。
