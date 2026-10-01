@@ -91,6 +91,32 @@ describe("LlmService", () => {
     expect(err.code).toBe("UNAUTHORIZED");
   });
 
+  it("routes only chat endpoints — asr-only models stay unreachable from chat", async () => {
+    const asrOnly = new LlmService({
+      invoke: (cmd) =>
+        cmd === "llm_list_endpoints"
+          ? Promise.resolve({
+              endpoints: [{ ...redacted.endpoints[0], kind: "asr" }],
+              defaultModel: null,
+            })
+          : Promise.resolve(null),
+    });
+    await expect(asrOnly.chat({ model: "deepseek-v4-flash", messages: [] })).rejects.toMatchObject({
+      code: "MODEL_UNKNOWN",
+    });
+  });
+
+  it("forwards setDefaultModel to the Rust command", async () => {
+    const calls: { cmd: string; args?: unknown }[] = [];
+    const llm = new LlmService(depsWith(calls));
+    await llm.setDefaultModel("glm-5.3");
+    await llm.setDefaultModel(null);
+    expect(calls.filter((c) => c.cmd === "llm_set_default_model").map((c) => c.args)).toEqual([
+      { model: "glm-5.3" },
+      { model: null },
+    ]);
+  });
+
   it("exposes presets, upsert, remove and probe as thin command wrappers", async () => {
     const calls: { cmd: string; args?: unknown }[] = [];
     const llm = new LlmService(depsWith(calls));

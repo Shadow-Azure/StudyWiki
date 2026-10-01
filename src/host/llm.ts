@@ -126,6 +126,11 @@ export class LlmService {
     return this.#call<void>("llm_remove_endpoint", { id });
   }
 
+  /** 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达；未知模型 INVALID_CONFIG）。 */
+  setDefaultModel(model: string | null): Promise<void> {
+    return this.#call<void>("llm_set_default_model", { model });
+  }
+
   /** 探测 endpoint（GET /models），成功返回延迟 ms。 */
   probe(id: string): Promise<number> {
     return this.#call<number>("llm_probe", { id });
@@ -139,7 +144,10 @@ export class LlmService {
     if (!model) {
       throw new LlmError("MODEL_UNSPECIFIED", "未指定 model 且未配置默认模型");
     }
-    const owners = settings.endpoints.filter((e) => e.models.some((m) => m.id === model));
+    // 只路由 chat 类 endpoint：asr 配置本期无消费方，模型不得误入 chat/completions。
+    const owners = settings.endpoints.filter(
+      (e) => e.kind === "chat" && e.models.some((m) => m.id === model),
+    );
     if (owners.length === 0) {
       throw new LlmError("MODEL_UNKNOWN", `未找到模型：${model}`);
     }

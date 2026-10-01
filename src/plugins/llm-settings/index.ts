@@ -59,6 +59,33 @@ async function openPanel(ctx: Context): Promise<void> {
     box.append(title);
     try {
       const [settings, presets] = await Promise.all([ctx.llm.listEndpoints(), ctx.llm.listPresets()]);
+      const modelIds = [...new Set(settings.endpoints.flatMap((e) => e.models.map((m) => m.id)))];
+      if (modelIds.length > 0) {
+        const defaultRow = document.createElement("div");
+        defaultRow.className = "plugin-row llm-default-row";
+        const label = document.createElement("span");
+        label.textContent = "默认模型";
+        const select = document.createElement("select");
+        const none = document.createElement("option");
+        none.value = "";
+        none.textContent = "（不设置）";
+        select.append(none);
+        for (const id of modelIds) {
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = id;
+          select.append(opt);
+        }
+        select.value = settings.defaultModel ?? "";
+        select.addEventListener("change", () => {
+          void ctx.llm
+            .setDefaultModel(select.value || null)
+            .then(() => renderList())
+            .catch((err) => (feedbackOf(defaultRow).textContent = errorMessage(err)));
+        });
+        defaultRow.append(label, select);
+        box.append(defaultRow);
+      }
       for (const e of settings.endpoints) box.append(endpointRow(ctx, e, renderList));
       if (settings.endpoints.length === 0) {
         const empty = document.createElement("p");
@@ -200,10 +227,15 @@ async function renderForm(
       input.dataset.dyn = "";
       input.name = name;
       input.value = value;
+      if (name === "id" && initial) {
+        // 编辑态锁 id：改 id 等于"删旧建新"，显式走删除动作更诚实。
+        input.disabled = true;
+        input.title = "id 不可改；如需改名请删除后重建";
+      }
       if (name === "apiKey") {
         input.type = "password";
         input.autocomplete = "off";
-        input.placeholder = "留空 = 自托管无鉴权";
+        input.placeholder = initial ? "留空 = 保留已存 key" : "留空 = 自托管无鉴权";
       }
       input.addEventListener("input", () => setField(name, input.value));
       form.append(l, input);
@@ -251,7 +283,19 @@ async function renderForm(
   vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
   if (initial) drawFields();
   else refreshFields();
-  form.append(vendorLabel, vendor);
+  // kind 选择：chat = LLM/VLM；asr 本期仅契约与探测（保存后 chat 路由不可见）。
+  const kindLabel = fieldLabel("类型");
+  const kind = document.createElement("select");
+  kind.name = "kind";
+  for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    kind.append(opt);
+  }
+  kind.value = draft.kind;
+  kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
+  form.append(vendorLabel, vendor, kindLabel, kind);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     // 提交时从 DOM 收值（对程序化赋值与手动输入同样稳健）；模型行走闭包编辑态。
@@ -272,6 +316,17 @@ async function renderForm(
   });
   form.append(error, save, cancel);
   box.append(title, form);
+}
+
+/** 行内反馈槽（缺失时建一个），供默认模型行等复用。 */
+function feedbackOf(row: HTMLElement): HTMLElement {
+  let el = row.querySelector<HTMLElement>(".llm-probe-result");
+  if (!el) {
+    el = document.createElement("span");
+    el.className = "llm-probe-result";
+    row.append(el);
+  }
+  return el;
 }
 
 function fieldLabel(text: string): HTMLElement {

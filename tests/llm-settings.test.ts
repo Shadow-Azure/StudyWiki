@@ -35,6 +35,29 @@ describe("model", () => {
 });
 
 describe("panel", () => {
+  it("saves a default-model change through ctx.llm", async () => {
+    const { ctx, saved, renders } = fakeCtx();
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "deepseek", kind: "chat", hasKey: true, keyPreview: "sk-…ef",
+          models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }] }],
+        defaultModel: null,
+      });
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const select = document.querySelector(".llm-default-row select") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    select.value = "deepseek-v4-pro";
+    select.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r));
+    expect(saved).toContainEqual({ defaultModel: "deepseek-v4-pro" });
+  });
+
+
   function fakeCtx() {
     const saved: unknown[] = [];
     const llm = {
@@ -45,6 +68,10 @@ describe("panel", () => {
         return Promise.resolve();
       },
       removeEndpoint: () => Promise.resolve(),
+      setDefaultModel: (m: string | null) => {
+        saved.push({ defaultModel: m });
+        return Promise.resolve();
+      },
       probe: () => Promise.resolve(42),
     };
     const renders: ((host: HTMLElement) => void)[] = [];
