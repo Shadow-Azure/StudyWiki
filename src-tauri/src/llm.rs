@@ -420,6 +420,49 @@ fn probe_with(agent: &ureq::Agent, ep: &Endpoint) -> Result<u64, LlmError> {
     Ok(start.elapsed().as_millis() as u64)
 }
 
+/// 模型能力守门：消息里的媒体类 part 必须有对应模型能力；纯文本不受影响。
+/// TS 侧同类门禁保留，本函数是 Rust 出口的最后防线。
+fn ensure_media_caps(req: &ChatRequest, ep: &Endpoint) -> Result<(), LlmError> {
+    let has_cap = |wanted: &str| {
+        ep.models
+            .iter()
+            .any(|model| {
+                model.id == req.model
+                    && model.capabilities.iter().any(|cap| cap == wanted)
+            })
+    };
+    for message in &req.messages {
+        let MessageContent::Parts(parts) = &message.content else {
+            continue;
+        };
+        for part in parts {
+            let (kind, capability) = match part {
+                ContentPart::Image { .. } => ("图片", "vision"),
+                ContentPart::Audio { .. } => ("音频", "audio"),
+                ContentPart::Text { .. } => continue,
+            };
+            if !has_cap(capability) {
+                return Err(LlmError::new(
+                    "UNSUPPORTED_CONTENT",
+                    format!("当前模型缺少 {capability} 能力，不支持{kind}内容"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 能力门禁后的非流式 chat：供命令与集成测试共用，确保媒体被拒时不建立请求。
+fn chat_checked(
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &ChatRequest,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<ChatResponse, LlmError> {
+    ensure_media_caps(req, ep)?;
+    chat_with(agent, ep, req, root_check)
+}
+
 /// 非流式 chat：POST chat/completions，解析 choices[0].message.content（必须是字符串）。
 fn chat_with(
     agent: &ureq::Agent,
@@ -620,13 +663,28 @@ pub async fn llm_chat(
         let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
         let ep = find_endpoint(&s, &req.endpoint_id)?;
         let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
-        chat_with(&chat_agent(), &ep, &req, &root_check)
+        chat_checked(&chat_agent(), &ep, &req, &root_check)
     })
     .await
     .map_err(|e| LlmError::new("INTERNAL", format!("chat 后台任务异常终止：{e}")))?
 }
 
-/// 流式读循环（纯缝：sink 可测）：abort 置位或 sink 返回 false 即停；结束时清理登记。
+/// RAII 清理一条流的中止登记：HTTP 构建或发送失败也会在 drop 时移除 id。
+struct AbortGuard<'a>(&'a AbortRegistry, String);
+
+impl<'a> AbortGuard<'a> {
+    fn new(aborts: &'a AbortRegistry, stream_id: &str) -> Self {
+        Self(aborts, stream_id.to_string())
+    }
+}
+
+impl Drop for AbortGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// 流式读循环（纯缝：sink 可测）：abort 置位或 sink 返回 false 即停；结束或失败都清理登记。
 fn run_chat_stream(
     agent: &ureq::Agent,
     ep: &Endpoint,
@@ -636,6 +694,7 @@ fn run_chat_stream(
     aborts: &AbortRegistry,
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), LlmError> {
+    let _guard = AbortGuard::new(aborts, stream_id);
     let url = join_url(&ep.base_url, "chat/completions");
     let body = build_chat_body(req, true, root_check)?;
     let resp = with_auth(agent.post(&url), ep)
@@ -649,8 +708,21 @@ fn run_chat_stream(
         }
         sink(chunk)
     });
-    aborts.lock().unwrap().remove(stream_id);
     result
+}
+
+/// 能力门禁后的流式 chat：供命令与集成测试共用，确保媒体被拒时不建立请求。
+fn run_chat_stream_checked(
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &ChatRequest,
+    sink: &mut dyn FnMut(StreamChunk) -> bool,
+    stream_id: &str,
+    aborts: &AbortRegistry,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<(), LlmError> {
+    ensure_media_caps(req, ep)?;
+    run_chat_stream(agent, ep, req, sink, stream_id, aborts, root_check)
 }
 
 /// 流式 chat：chunk 经 Channel 增量投递，Promise 在流终结时 resolve。
@@ -676,7 +748,7 @@ pub async fn llm_chat_stream(
         let ep = find_endpoint(&s, &req.base.endpoint_id)?;
         let sid = req.stream_id.clone();
         let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
-        run_chat_stream(
+        run_chat_stream_checked(
             &stream_agent(),
             &ep,
             &req.base,
@@ -1246,6 +1318,112 @@ mod tests {
         let mut e = ep("https://h", "");
         e.id = String::new();
         assert_eq!(upsert_into(&mut s, e).unwrap_err().code, "INVALID_CONFIG");
+    }
+
+    fn media_request(part: ContentPart) -> ChatRequest {
+        ChatRequest {
+            endpoint_id: "e1".into(),
+            model: "m1".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![part]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        }
+    }
+
+    #[test]
+    fn media_caps_match_image_and_audio_capabilities() {
+        let endpoint = ep("https://h", "");
+        let vision = ensure_media_caps(
+            &media_request(ContentPart::Image {
+                source: MediaSource::Url {
+                    url: "https://x/a.png".into(),
+                },
+            }),
+            &endpoint,
+        );
+        let vision = vision.unwrap_err();
+        assert_eq!(vision.code, "UNSUPPORTED_CONTENT");
+        assert!(vision.message.contains("vision"));
+        let audio = ensure_media_caps(
+            &media_request(ContentPart::Audio {
+                source: MediaSource::Inline {
+                    data: "ZA".into(),
+                    mime_type: "audio/wav".into(),
+                },
+            }),
+            &endpoint,
+        );
+        let audio = audio.unwrap_err();
+        assert_eq!(audio.code, "UNSUPPORTED_CONTENT");
+        assert!(audio.message.contains("audio"));
+    }
+
+    #[test]
+    fn chat_checked_blocks_unsupported_media_without_sending() {
+        let (base, rx) = mock_server(200, "{}");
+        let endpoint = ep(&base, "");
+        let req = media_request(ContentPart::Image {
+            source: MediaSource::Url {
+                url: "https://x/a.png".into(),
+            },
+        });
+        let result = chat_checked(&agent(), &endpoint, &req, &|_| false);
+        assert_eq!(result.unwrap_err().code, "UNSUPPORTED_CONTENT");
+        assert!(
+            rx.try_recv().is_err(),
+            "mock server must receive no request"
+        );
+    }
+
+    #[test]
+    fn stream_checked_blocks_unsupported_media_without_sending() {
+        let (base, rx) = mock_server(200, "{}");
+        let endpoint = ep(&base, "");
+        let req = media_request(ContentPart::Audio {
+            source: MediaSource::Inline {
+                data: "ZA".into(),
+                mime_type: "audio/wav".into(),
+            },
+        });
+        let aborts = new_abort_registry();
+        let result = run_chat_stream_checked(
+            &agent(),
+            &endpoint,
+            &req,
+            &mut |_| true,
+            "caps",
+            &aborts,
+            &|_| false,
+        );
+        assert_eq!(result.unwrap_err().code, "UNSUPPORTED_CONTENT");
+        assert!(
+            rx.try_recv().is_err(),
+            "mock server must receive no request"
+        );
+    }
+
+    #[test]
+    fn stream_send_failure_cleans_abort_registration() {
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let endpoint = test_endpoint(&format!("http://127.0.0.1:{port}"));
+        let aborts = new_abort_registry();
+        aborts.lock().unwrap().insert("send-failure".into());
+        let result = run_chat_stream(
+            &agent(),
+            &endpoint,
+            &text_request(),
+            &mut |_| true,
+            "send-failure",
+            &aborts,
+            &|_| false,
+        );
+        assert_eq!(result.unwrap_err().code, "UNREACHABLE");
+        assert!(!aborts.lock().unwrap().contains("send-failure"));
     }
 }
 
