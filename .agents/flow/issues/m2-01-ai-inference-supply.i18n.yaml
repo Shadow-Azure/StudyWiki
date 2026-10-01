@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m2-01-ai-inference-supply.md
-m2-01-ai-inference-supply.md: b9ca8023e861071612bd2f87b067a64f12930813
-m2-01-ai-inference-supply.en.md: 3b7fad976998c96be84fb50358059930d3846499
+m2-01-ai-inference-supply.md: 40d94e973338bbad391e5eaa1d9da7a2c724e1de
+m2-01-ai-inference-supply.en.md: 9607e01a332a751184cbb7f8a7609f5e2a4c113a

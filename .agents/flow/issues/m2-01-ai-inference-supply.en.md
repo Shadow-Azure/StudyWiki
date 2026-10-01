@@ -6,7 +6,7 @@ English | [中文](m2-01-ai-inference-supply.md)
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - src-tauri/**
   - src/host/**

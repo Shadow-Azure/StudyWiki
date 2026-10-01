@@ -18,13 +18,13 @@ Status: proposed
 | 前端宿主服务 `ctx.llm`（第七服务） | 模型路由（`chat({model})` 解析归属 endpoint）、脱敏列表、inject 白名单 | 直接持 key、直接发网络请求 |
 | 内置 `llm-settings` 插件 | 纯 UI：厂商预设实例化、填 key、探测 | 业务逻辑 |
 
-调用形态：插件调 `ctx.llm.chat({model, messages})` → 前端路由出 `(endpointId, model)` → invoke Rust `llm_chat` → reqwest 发 HTTPS → 归一错误后原路返回。非流式一趟 IPC；流式在 m2-02 用 Tauri `ipc::Channel` 增量加入，调用形状不变。
+调用形态：插件调 `ctx.llm.chat({model, messages})` → 前端路由出 `(endpointId, model)` → invoke Rust `llm_chat` → 复用既有 `ureq`（rustls）发 HTTPS → 归一错误后原路返回。非流式一趟 IPC；流式在 m2-02 用 Tauri `ipc::Channel` 增量加入，调用形状不变。
 
 论据（与 dsh 对照）：dsh 的 agent/llm/tools 全在 TS 侧（`ctx.llm` / `ctx.tools` / `ctx.agents` 三正交服务，agent-loop 也只是插件），native 只做能力隔离（landlock-run）；m2-02 issue scope 已排除 `src-tauri/**`；插件契约是单文件零依赖 JS。
 
 ### 用户配置根 `~/.studywiki/`
 
-统一用户配置目录：`dirs::home_dir()` + `.studywiki`，三端同形（Windows 为 `C:\Users\<name>\.studywiki\`），无环境变量分支，对标 `~/.claude` / `~/.codex` 的可发现性。现有 `app_config_dir()` 下的 `plugins.json` 与 `plugins/` 一并迁入；`plugin_dir` / `read_manifest` / `write_manifest` 三处切到新模块 `config.rs` 的 `studywiki_dir()`。启动一次性迁移：老目录有条目且新目录缺席则 move；两边都有以新目录为准，老条目保留不删（迁移幂等可重入）。
+统一用户配置目录：Tauri `app.path().home_dir()` + `.studywiki`（零新 Cargo 依赖），三端同形（Windows 为 `C:\Users\<name>\.studywiki\`），无环境变量分支，对标 `~/.claude` / `~/.codex` 的可发现性。现有 `app_config_dir()` 下的 `plugins.json` 与 `plugins/` 一并迁入；`plugin_dir` / `read_manifest` / `write_manifest` 三处切到新模块 `config.rs` 的 `studywiki_dir()`。启动一次性迁移：老目录有条目且新目录缺席则 move；两边都有以新目录为准，老条目保留不删（迁移幂等可重入）。
 
 ### 配置契约 `~/.studywiki/settings.json`
 
@@ -52,20 +52,21 @@ Status: proposed
 - `capabilities` 含 `vision` 即 VLM；`kind: "asr"` 走 `/v1/audio/transcriptions` 契约，本期只落 schema 与探测，工具本体在 m3-01。
 - 写文件 tmp + rename 原子写，权限 0600；解析失败 fail-loud，不静默覆盖用户文件。
 
-### Rust 命令面（新模块 `config.rs` + `llm.rs`，reqwest rustls + dirs 进白名单）
+### Rust 命令面（新模块 `config.rs` + `llm.rs`，复用既有 ureq rustls，零新 Cargo 依赖）
 
 | 命令 | 语义 |
 |---|---|
+| `llm_list_presets` | 返回厂商预设表；baseUrl 只存在于 Rust 侧（`verify-env-independence` 机械门禁禁 `src/**` 外部 URL） |
 | `llm_list_endpoints` | 返回脱敏配置（`apiKey` → `hasKey` + 掩码预览），任何路径拿不到完整 key |
 | `llm_upsert_endpoint` / `llm_remove_endpoint` | 原子写 settings.json |
 | `llm_probe(endpoint_id)` | OpenAI 兼容 `GET /models` 轻量探测，成功返回延迟 ms |
 | `llm_chat({endpointId, model, messages, …})` | 非流式 chat/completions，纯传输 |
 
-归一错误码（全链路共享词表）：Rust 传输层 `UNREACHABLE` / `UNAUTHORIZED` / `TIMEOUT` / `RATE_LIMITED` / `BAD_RESPONSE` / `ENDPOINT_UNKNOWN`；前端路由层 `MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED`。插件只处理同一套码。
+归一错误码（全链路共享词表）：Rust 传输层 `UNREACHABLE` / `UNAUTHORIZED` / `TIMEOUT` / `RATE_LIMITED` / `BAD_RESPONSE` / `ENDPOINT_UNKNOWN`；upsert 校验 `INVALID_CONFIG`；前端路由层 `MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED`。插件只处理同一套码。
 
 ### 前端宿主服务与内置插件
 
-`src/host/llm.ts`（deps 可注入）挂 `ctx.llm`，facade：`list / upsert / remove / probe / chat`；外置插件 inject 白名单只放 `list / probe / chat`，写操作仅内置插件可用。内置 `llm-settings` 插件：顶栏入口 + 面板；厂商预设表（构建期静态模板，不锁死）——智谱 GLM（`https://open.bigmodel.cn/api/paas/v4`，glm-5.3 / glm-5.3-flash）、DeepSeek（`https://api.deepseek.com/v1`，deepseek-v4-pro / deepseek-v4-flash）、Kimi（`https://api.moonshot.cn/v1`，kimi-k3）、MiniMax（`https://api.minimaxi.com/v1`，minimax-m3）、自定义 OpenAI 兼容；选预设自动带 baseUrl + 模型清单（可增删改），用户只必填 apiKey；每模型可标 `vision`；保存后可一键探测。
+`src/host/llm.ts`（deps 可注入）挂 `ctx.llm`，facade：`list / upsert / remove / probe / chat`；外置插件 inject 白名单只放 `list / probe / chat`，写操作仅内置插件可用。内置 `llm-settings` 插件：顶栏入口 + 面板；厂商预设表（构建期静态模板，不锁死，经 `llm_list_presets` 提供）——智谱 GLM（`https://open.bigmodel.cn/api/paas/v4`，glm-5.3 / glm-5.3-flash）、DeepSeek（`https://api.deepseek.com/v1`，deepseek-v4-pro / deepseek-v4-flash）、Kimi（`https://api.moonshot.cn/v1`，kimi-k3）、MiniMax（`https://api.minimaxi.com/v1`，minimax-m3）、自定义 OpenAI 兼容；选预设自动带 baseUrl + 模型清单（可增删改），用户只必填 apiKey；每模型可标 `vision`；保存后可一键探测。
 
 ### 密钥立场
 
@@ -82,7 +83,7 @@ settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明
 ## Alternatives considered
 
 - **Rust 侧做 agent 宿主**：动态库插件破坏单文件 JS 契约并引入 ABI/签名地狱；内嵌 JS 引擎等于再造运行时、撞环境无关性红线并催生两套插件系统。均否（dsh 亦同：agent 全在 TS，native 只做能力隔离）。
-- **前端直接 fetch 厂商 API**：webview CORS 卡死，排除；tauri-plugin-http 是其代理版，流式与错误语义不如自持 reqwest。
+- **前端直接 fetch 厂商 API**：webview CORS 卡死，排除；tauri-plugin-http 是其代理版，流式与错误语义不如自持 ureq。
 - **OS 钥匙串存 key（keyring crate）**：安全水位更高，但用户拍板与 Claude Code / Codex / dsh 的明文配置文件机制保持一致，降低迁移与调试成本；保留 0600 + 命令面只进不出作为加固。
 - **保留 `app_config_dir()` 存配置**：macOS 上藏在 `~/Library/Application Support` 深处，用户找不到、改不了，否。
 - **多协议适配器层（抄 dsh `LlmAdapter`）**：ADR 锁定 OpenAI 兼容单协议，GLM/DeepSeek/Kimi/MiniMax 均提供兼容端点，适配退化为配置差异，YAGNI。

@@ -8,6 +8,7 @@ use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "macos")]
+pub mod config;
 pub mod native_close;
 pub mod plugins;
 #[cfg(not(target_os = "macos"))]
@@ -275,6 +276,11 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
     configure_window_lifecycle(
         tauri::Builder::<tauri::Wry>::new().plugin(tauri_plugin_dialog::init()),
     )
+    .setup(|app| {
+        // 用户配置根一次性迁移：老 app_config_dir 的插件清单/目录搬入 ~/.studywiki。
+        config::migrate_legacy(&app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+        Ok(())
+    })
     .invoke_handler(tauri::generate_handler![
         read_tree,
         read_text_file,
