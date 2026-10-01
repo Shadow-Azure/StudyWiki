@@ -22,6 +22,14 @@ function vendorLabel(vendor: string): string {
   return VENDOR_LABELS[vendor] ?? VENDOR_LABELS.custom;
 }
 
+/** 与 Rust redact 预览同形：只用于展示态，不代表待保存 key。 */
+function keyPreview(key: string): string {
+  const chars = [...key];
+  if (chars.length === 0) return "";
+  if (chars.length <= 7) return "****";
+  return `${chars.slice(0, 4).join("")}…${chars.slice(-2).join("")}`;
+}
+
 /** 模型配置面板（第七内置插件）：顶栏入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
  * 预设表来自 Rust llm_list_presets（baseUrl 不进前端源码）；key 明文仅内存持有，
  * 保存经 ctx.llm（写面仅内置插件可用）；探测/错误归一码原样内联展示。
@@ -301,6 +309,10 @@ async function renderForm(
   custom.value = CUSTOM_VENDOR;
   custom.textContent = "自定义（OpenAI 兼容）";
   vendor.append(custom);
+  if (initial) {
+    vendor.disabled = true;
+    vendor.title = "编辑态不可切换厂商；如需换预设请删除后新增";
+  }
   vendorField.append(vendorLabel, vendor);
   const kindField = document.createElement("div");
   kindField.className = "llm-field";
@@ -348,6 +360,9 @@ async function renderForm(
 
   // 动态区：字段网格 + 模型 fieldset（vendor change / 模型增删触发整体重建）
   let zone: HTMLElement | null = null;
+  let keyRevealed = false;
+  let editedKey: string | null = null;
+  let revealedStoredKey: string | null = null;
   const drawFields = (): void => {
     zone?.remove();
     zone = document.createElement("div");
@@ -375,41 +390,71 @@ async function renderForm(
       if (name === "apiKey") {
         input.autocomplete = "off";
         input.placeholder = initial
-          ? "已存 key 以掩码显示；输入即替换，删空 = 清除"
+          ? "掩码仅展示；点眼睛查看或编辑"
           : "粘贴厂商控制台签发的 API Key（自托管可留空）";
-        // 编辑态回填掩码（完整 key 从不随列表出 Rust）；眼睛按需换明文，输入即明文编辑。
-        if (initial && endpoint) input.value = endpoint.keyPreview;
         const row = document.createElement("div");
         row.className = "llm-key-row";
         row.append(input);
+        let eye: HTMLButtonElement | null = null;
+        const keyHint = document.createElement("span");
+        keyHint.className = "llm-hint llm-key-hint";
+        const syncKeyDisplay = (): void => {
+          const hasStoredKey = Boolean(initial && endpoint?.hasKey);
+          input.readOnly = hasStoredKey && !keyRevealed;
+          if (hasStoredKey) {
+            input.value = keyRevealed
+              ? editedKey ?? revealedStoredKey ?? ""
+              : editedKey !== null ? keyPreview(editedKey) : endpoint!.keyPreview;
+          }
+          input.title = keyRevealed ? "编辑明文 Key" : "掩码仅展示；点击眼睛查看或编辑";
+          if (hasStoredKey && editedKey !== null) {
+            keyHint.textContent = keyRevealed
+              ? "正在编辑新 Key；保存会替换旧 key。仅保存在本机 ~/.studywiki/settings.json（0600）"
+              : `已修改待保存：${editedKey === "" ? "已清空" : keyPreview(editedKey)}；切回掩码不会丢失修改。`;
+          } else if (keyRevealed) {
+            keyHint.textContent = "已揭示旧 key；编辑后保存替换，未编辑保存保留。仅保存在本机 ~/.studywiki/settings.json（0600）";
+          } else {
+            keyHint.textContent = "掩码仅展示，不能编辑；点眼睛查看或编辑。仅保存在本机 ~/.studywiki/settings.json（0600）";
+          }
+          if (eye) {
+            eye.setAttribute("aria-label", keyRevealed ? "隐藏密钥" : "显示密钥");
+            eye.title = keyRevealed ? "隐藏完整密钥" : "显示/隐藏完整密钥";
+          }
+        };
         if (initial && endpoint?.hasKey) {
-          const eye = labelButton("eye", "", { className: "btn btn-ghost icon-btn", ariaLabel: "显示密钥" });
+          eye = labelButton("eye", "", { className: "btn btn-ghost icon-btn", ariaLabel: "显示密钥" });
           eye.type = "button";
           eye.dataset.action = "toggle-key";
           eye.title = "显示/隐藏完整密钥";
-          let revealed = false;
           eye.addEventListener("click", () => {
             void (async () => {
-              if (revealed) {
-                input.value = endpoint.keyPreview;
-                revealed = false;
+              if (keyRevealed) {
+                keyRevealed = false;
               } else {
-                input.value = await ctx.llm.revealKey(endpoint.id);
-                revealed = true;
+                if (editedKey === null) {
+                  revealedStoredKey = await ctx.llm.revealKey(endpoint.id);
+                }
+                keyRevealed = true;
               }
-              setField("apiKey", input.value);
+              syncKeyDisplay();
             })();
           });
           row.append(eye);
+          syncKeyDisplay();
+        } else {
+          syncKeyDisplay();
         }
-        const keyHint = document.createElement("span");
-        keyHint.className = "llm-hint";
-        keyHint.textContent = "仅保存在本机 ~/.studywiki/settings.json（0600）";
         f.append(l, row, keyHint);
       } else {
         f.append(l, input);
       }
-      input.addEventListener("input", () => setField(name, input.value));
+      input.addEventListener("input", () => {
+        if (name === "apiKey" && initial && endpoint?.hasKey) {
+          if (!keyRevealed) return;
+          editedKey = input.value;
+        }
+        setField(name, input.value);
+      });
       grid.append(f);
     }
     zone.append(grid);
@@ -479,15 +524,19 @@ async function renderForm(
       const input = form.querySelector<HTMLInputElement>(`[name=${name}]`);
       if (input) setField(name, input.value);
     }
+    if (initial && endpoint?.hasKey) {
+      draft.apiKey = keyRevealed && editedKey === null
+        ? revealedStoredKey ?? ""
+        : editedKey ?? "";
+    }
     const problem = validateDraft(draft);
     if (problem) {
       error.textContent = problem;
       return;
     }
     error.textContent = "";
-    // key 保存语义：编辑态未动掩码 = 保留（空 + 无 dirty，Rust 安全默认）；
-    // 动过（新 key / 删空 / 眼睛揭示后明文）= 按现值更新，dirty 标记区分显式清空。
-    const keyDirty = Boolean(initial && endpoint && draft.apiKey !== endpoint.keyPreview);
+    // key 保存值独立于显示态：掩码永远只读；只有明文编辑产生的 editedKey 才替换。
+    const keyDirty = !initial || !endpoint?.hasKey || editedKey !== null;
     const payload: EndpointInput = {
       ...draft,
       // 新增态原样传（空 key 合法）；编辑态未动掩码 = 保留（空 + 无 dirty）。

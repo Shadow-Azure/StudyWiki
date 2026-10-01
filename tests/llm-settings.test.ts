@@ -127,6 +127,8 @@ describe("panel", () => {
     await new Promise((r) => setTimeout(r));
     const form = document.querySelector(".llm-panel form") as HTMLFormElement;
     expect((form.querySelector("[name=apiKey]") as HTMLInputElement).value).toBe("sk-…ef");
+    expect((form.querySelector("[name=apiKey]") as HTMLInputElement).readOnly).toBe(true);
+    expect(form.querySelector(".llm-key-hint")?.textContent).toContain("不能编辑");
     form.dispatchEvent(new Event("submit", { cancelable: true }));
     await new Promise((r) => setTimeout(r));
     expect(saved[0]).toMatchObject({ id: "deepseek", apiKey: "" });
@@ -164,6 +166,111 @@ describe("panel", () => {
     form.dispatchEvent(new Event("submit", { cancelable: true }));
     await new Promise((r) => setTimeout(r));
     expect(saved[0]).toMatchObject({ id: "deepseek", apiKey: "", apiKeyDirty: true });
+  });
+
+  // 掩码只是展示态：明文编辑后切回掩码，保存值必须仍是已编辑的新 key。
+  it("keeps an edited plaintext key when the eye toggles back to the mask", async () => {
+    const { ctx, saved, renders } = fakeCtx();
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "deepseek", kind: "chat", hasKey: true, keyPreview: "sk-…ef",
+          models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }] }],
+        defaultModel: null,
+      });
+    (ctx.llm as { revealKey: () => Promise<string> }).revealKey = () =>
+      Promise.resolve("sk-secret-full");
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const card = document.querySelector(".llm-card") as HTMLElement;
+    (card.querySelectorAll("button")[1] as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const form = document.querySelector(".llm-panel form") as HTMLFormElement;
+    const keyInput = form.querySelector("[name=apiKey]") as HTMLInputElement;
+    const eye = form.querySelector("[data-action=toggle-key]") as HTMLButtonElement;
+    eye.click();
+    await new Promise((r) => setTimeout(r));
+    keyInput.value = "sk-new-key-9876";
+    keyInput.dispatchEvent(new Event("input"));
+    eye.click();
+    await new Promise((r) => setTimeout(r));
+    expect(keyInput.value).toBe("sk-n…76");
+    expect(keyInput.readOnly).toBe(true);
+    expect(form.querySelector(".llm-key-hint")?.textContent).toContain("不会丢失");
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await new Promise((r) => setTimeout(r));
+    expect(saved[0]).toMatchObject({ id: "deepseek", apiKey: "sk-new-key-9876", apiKeyDirty: true });
+  });
+
+  // 删空后的掩码不再是假 key：空白 + “已清空”提示继续表达同一个待保存空值。
+  it("shows an edited empty key as blank when hidden and saves the explicit clear", async () => {
+    const { ctx, saved, renders } = fakeCtx();
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "deepseek", kind: "chat", hasKey: true, keyPreview: "sk-…ef",
+          models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }] }],
+        defaultModel: null,
+      });
+    (ctx.llm as { revealKey: () => Promise<string> }).revealKey = () =>
+      Promise.resolve("sk-secret-full");
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const card = document.querySelector(".llm-card") as HTMLElement;
+    (card.querySelectorAll("button")[1] as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const form = document.querySelector(".llm-panel form") as HTMLFormElement;
+    const keyInput = form.querySelector("[name=apiKey]") as HTMLInputElement;
+    const eye = form.querySelector("[data-action=toggle-key]") as HTMLButtonElement;
+    eye.click();
+    await new Promise((r) => setTimeout(r));
+    keyInput.value = "";
+    keyInput.dispatchEvent(new Event("input"));
+    eye.click();
+    await new Promise((r) => setTimeout(r));
+    expect(keyInput.value).toBe("");
+    expect(form.querySelector(".llm-key-hint")?.textContent).toContain("已清空");
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await new Promise((r) => setTimeout(r));
+    expect(saved[0]).toMatchObject({ id: "deepseek", apiKey: "", apiKeyDirty: true });
+  });
+
+  // 只揭示、未编辑、再隐藏 = 仍是“未动掩码”，Rust 侧安全保留旧 key。
+  it("preserves the stored key after revealing and hiding without edits", async () => {
+    const { ctx, saved, renders } = fakeCtx();
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "deepseek", kind: "chat", hasKey: true, keyPreview: "sk-…ef",
+          models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }] }],
+        defaultModel: null,
+      });
+    (ctx.llm as { revealKey: () => Promise<string> }).revealKey = () =>
+      Promise.resolve("sk-secret-full");
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const card = document.querySelector(".llm-card") as HTMLElement;
+    (card.querySelectorAll("button")[1] as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const form = document.querySelector(".llm-panel form") as HTMLFormElement;
+    const eye = form.querySelector("[data-action=toggle-key]") as HTMLButtonElement;
+    eye.click();
+    await new Promise((r) => setTimeout(r));
+    eye.click();
+    await new Promise((r) => setTimeout(r));
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await new Promise((r) => setTimeout(r));
+    expect(saved[0]).toMatchObject({ id: "deepseek", apiKey: "" });
+    expect("apiKeyDirty" in (saved[0] as object)).toBe(false);
   });
 
   // 固化 2026-10-01 GUI 人工冒烟旅程：保存后的列表行（含 🔑）+ 行内探测延迟。

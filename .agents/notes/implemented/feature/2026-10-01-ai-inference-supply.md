@@ -70,11 +70,11 @@ Status: implemented
 
 ### 模型配置 UI 与厂商投影
 
-列表态使用卡片化滚动布局，顶部提供「全部 / 智谱 / DeepSeek / Kimi / MiniMax / 自定义」厂商摘要 chips，可按归属厂商筛选；卡片显示厂商徽标、id、baseUrl、模型数量、密钥状态与探测结果。表单态把厂商预设放到顶部，切换预设即时填充 baseUrl 与模型清单；字段区、模型区和底部操作条按 mockup 网格化布局。为此 Rust 脱敏 endpoint 投影新增 `vendor`（按 baseUrl 匹配预设，未匹配为 `custom`），前端只用于展示与筛选，不参与配置写入。
+列表态使用卡片化滚动布局，顶部提供「全部 / 智谱 / DeepSeek / Kimi / MiniMax / 自定义」厂商摘要 chips，可按归属厂商筛选；卡片显示厂商徽标、id、baseUrl、模型数量、密钥状态与探测结果。新增表单把厂商预设放到顶部，切换预设即时填充 baseUrl 与模型清单；编辑表单锁定预设（id 同步锁定，换预设必须删除后新增）。字段区、模型区和底部操作条按 mockup 网格化布局。为此 Rust 脱敏 endpoint 投影新增 `vendor`（按 baseUrl 匹配预设，未匹配为 `custom`），前端只用于展示与筛选，不参与配置写入。
 
 ### 密钥立场
 
-settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件白名单不含写命令，也不含 `llm_reveal_key`（编辑态眼睛按需揭示明文的专用命令，仅内置插件可达）。编辑表单回填掩码（keyPreview）+ 眼睛切换明文；保存语义由 dirty 标记区分：未动掩码 = 保留已存 key，动过（新 key / 删空 / 揭示后明文）= 按现值更新，删空即显式清空——“没动 key 栏”与“故意清空”自此在 wire 上可区分。仓库不存密钥的约束不受影响（用户目录）。
+settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件白名单不含写命令，也不含 `llm_reveal_key`（编辑态眼睛按需揭示明文的专用命令，仅内置插件可达）。编辑表单的掩码是只读展示态并有提示；眼睛切明文后才可编辑，切回掩码只重建展示值，不丢弃待保存修改。保存语义由显式 edited 态驱动：未动掩码 / 只揭示未改 = 保留已存 key，明文新值 / 删空 = 更新并带 dirty 标记，删空即显式清空——“没动 key 栏”与“故意清空”在 wire 上可区分。仓库不存密钥的约束不受影响（用户目录）。
 
 ### 门禁与文档
 
@@ -82,7 +82,7 @@ settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明
 
 ### GUI 冒烟与测试固化
 
-冒烟以本地 mock HTTP server + debug bundle 人工走查：零配置调用返回归一错误码（不弹窗）、预设表单实例化、保存后列表行带 🔑 徽标、探测显示延迟（82ms）、错误 baseUrl 探测显示 `UNAUTHORIZED: HTTP 401`；settings.json 落盘 0600 且字段 camelCase。该旅程固化为 `tests/llm-settings.test.ts` 两个面板集成用例（真实面板 DOM + 脚本化 `ctx.llm`，端点 wire 形状与 Rust 脱敏投影一致）；Rust 侧探测/chat 路径另有 mock HTTP server 单测（`cargo test` 50/50）。
+冒烟以本地 mock HTTP server + debug bundle 人工走查：零配置调用返回归一错误码（不弹窗）、预设表单实例化、保存后列表行带 🔑 徽标、探测显示延迟（82ms）、错误 baseUrl 探测显示 `UNAUTHORIZED: HTTP 401`；settings.json 落盘 0600 且字段 camelCase。掩码只读、眼睛往返、编辑后切回掩码仍保存新 key 的旅程固化为 `tests/llm-settings.test.ts` 面板集成用例（真实面板 DOM + 脚本化 `ctx.llm`，端点 wire 形状与 Rust 脱敏投影一致）；Rust 侧探测/chat 路径另有 mock HTTP server 单测（`cargo test` 50/50）。
 
 ### 范围裁剪
 
