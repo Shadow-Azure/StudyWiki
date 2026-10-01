@@ -24,7 +24,7 @@ fn write_text_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mut
 /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
 /// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；授权与 FS 访问前先校验。
 #[tauri::command]
-fn read_binary_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<Response, String>;
+fn read_binary_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<Response, String>;
 
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
 /// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
@@ -35,7 +35,7 @@ fn write_binary_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::
 /// Errors carry the OS failure verbatim.
 /// 路径须在已授权文件夹内（欢迎态无授权即拒）。
 #[tauri::command]
-fn read_text_file(state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String) -> Result<String, String>;
+fn read_text_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String) -> Result<String, String>;
 
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]

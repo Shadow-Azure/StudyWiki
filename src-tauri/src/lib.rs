@@ -132,16 +132,26 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// 命令面根域校验（单一决策点）：路径须落在某个已授权 root 之内。
-/// 词法 starts_with（路径组件级），与 assetProtocol 的 allow_directory 授权
-/// 同源；含 `..` 组件直接拒（前缀组件可恰匹配 root 而 OS 解析后落在 root 外，
-/// 必须在词法层收口）；symlink 跟随不在本层防线（停机坪）。
-fn path_authorized(reg: &windows::WindowRegistry, path: &str) -> Result<(), String> {
+/// 命令面根域校验（单一决策点，所有文件命令共用）：先拒用户配置域——
+/// ~/.studywiki 内路径（settings.json 明文 key、plugins.json 清单、plugins/
+/// 插件代码）对文件服务一律不可见，祖先 root 打开时也不可经读写命令触达；
+/// 再查路径须落在某个已授权 root 之内。词法 starts_with（路径组件级），与
+/// assetProtocol 的 allow_directory 授权同源；含 `..` 组件直接拒（前缀组件可
+/// 恰匹配 root 而 OS 解析后落在 root 外，必须在词法层收口）；symlink 跟随
+/// 不在本层防线（停机坪）。
+fn path_authorized(
+    reg: &windows::WindowRegistry,
+    path: &str,
+    config_root: &Path,
+) -> Result<(), String> {
     let p = Path::new(path);
     if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(format!("路径不得含 .. 组件：{path}"));
+    }
+    if config::is_config_domain_in(p, config_root) {
+        return Err(format!("路径位于用户配置域，禁止经文件服务访问：{path}"));
     }
     for root in reg.roots() {
         if p.starts_with(&root) {
@@ -156,8 +166,9 @@ fn path_authorized(reg: &windows::WindowRegistry, path: &str) -> Result<(), Stri
 fn ensure_authorized(
     state: &tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
     path: &str,
+    config_root: &Path,
 ) -> Result<(), String> {
-    path_authorized(&state.lock().unwrap(), path)
+    path_authorized(&state.lock().unwrap(), path, config_root)
 }
 
 const PATH_HEADER: &str = "x-studywiki-path";
@@ -199,20 +210,6 @@ fn request_path(request: &Request<'_>) -> Result<String, String> {
     decode_path_header(encoded)
 }
 
-/// 拒绝触达用户配置域（~/.studywiki）：配置不是工作区数据，防外置插件经 files 服务读到明文 key。
-fn ensure_not_config_domain<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    path: &Path,
-) -> Result<(), String> {
-    if config::is_config_domain_in(path, &config::app_studywiki_dir(app)?) {
-        return Err(format!(
-            "路径位于用户配置域，禁止经文件服务访问：{}",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
 /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
 /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
 /// 命令面与 assetProtocol 运行期授权同源收口）。
@@ -222,8 +219,8 @@ fn read_tree(
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
     root: String,
 ) -> Result<Vec<FileNode>, String> {
-    ensure_authorized(&state, &root)?;
-    ensure_not_config_domain(&app, Path::new(&root))?;
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &root, &config_root)?;
     walk_dir(Path::new(&root))
 }
 
@@ -237,7 +234,8 @@ fn write_text_file(
     path: String,
     contents: String,
 ) -> Result<(), String> {
-    ensure_authorized(&state, &path)?;
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &path, &config_root)?;
     std_write(Path::new(&path), &contents)?;
     app.emit("fs://changed", &path)
         .map_err(|e| format!("emit: {e}"))
@@ -246,12 +244,14 @@ fn write_text_file(
 /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
 /// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；授权与 FS 访问前先校验。
 #[tauri::command]
-fn read_binary_file(
+fn read_binary_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
     request: Request<'_>,
 ) -> Result<Response, String> {
     let path = request_path(&request)?;
-    ensure_authorized(&state, &path)?;
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &path, &config_root)?;
     fs::read(&path)
         .map(Response::new)
         .map_err(|e| format!("read {path}: {e}"))
@@ -266,7 +266,8 @@ fn write_binary_file<R: tauri::Runtime>(
     request: Request<'_>,
 ) -> Result<(), String> {
     let path = request_path(&request)?;
-    ensure_authorized(&state, &path)?;
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &path, &config_root)?;
     let bytes = match request.body() {
         InvokeBody::Raw(bytes) => bytes,
         InvokeBody::Json(_) => {
@@ -282,11 +283,13 @@ fn write_binary_file<R: tauri::Runtime>(
 /// Errors carry the OS failure verbatim.
 /// 路径须在已授权文件夹内（欢迎态无授权即拒）。
 #[tauri::command]
-fn read_text_file(
+fn read_text_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
     path: String,
 ) -> Result<String, String> {
-    ensure_authorized(&state, &path)?;
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &path, &config_root)?;
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
@@ -413,20 +416,20 @@ mod tests {
     fn path_authorized_accepts_root_and_nested() {
         let mut reg = WindowRegistry::default();
         reg.set_root("main", Some("/lib/root".into()));
-        assert!(path_authorized(&reg, "/lib/root").is_ok());
-        assert!(path_authorized(&reg, "/lib/root/sub/a.md").is_ok());
+        assert!(path_authorized(&reg, "/lib/root", Path::new("/cfg-root")).is_ok());
+        assert!(path_authorized(&reg, "/lib/root/sub/a.md", Path::new("/cfg-root")).is_ok());
         // 词法按路径组件比对：前缀字符串相同但组件不同不算在内。
-        assert!(path_authorized(&reg, "/lib/rootx/a.md").is_err());
+        assert!(path_authorized(&reg, "/lib/rootx/a.md", Path::new("/cfg-root")).is_err());
     }
 
     #[test]
     fn path_authorized_rejects_outside_and_empty_registry() {
         let mut reg = WindowRegistry::default();
         reg.set_root("main", Some("/lib/root".into()));
-        let err = path_authorized(&reg, "/etc/passwd").unwrap_err();
+        let err = path_authorized(&reg, "/etc/passwd", Path::new("/cfg-root")).unwrap_err();
         assert!(err.contains("先打开文件夹"), "{err}");
         reg.set_root("main", None);
-        assert!(path_authorized(&reg, "/lib/root/a.md").is_err());
+        assert!(path_authorized(&reg, "/lib/root/a.md", Path::new("/cfg-root")).is_err());
     }
 
     #[test]
@@ -434,14 +437,38 @@ mod tests {
         let mut reg = WindowRegistry::default();
         reg.set_root("main", Some("/lib/root".into()));
         // 前缀组件恰匹配 root，但 OS 解析 .. 后落在 root 外——词法层必须先拒。
-        assert!(path_authorized(&reg, "/lib/root/../evil").is_err());
+        assert!(path_authorized(&reg, "/lib/root/../evil", Path::new("/cfg-root")).is_err());
     }
 
     #[test]
     fn path_authorized_rejects_parent_dir_escaping_nested() {
         let mut reg = WindowRegistry::default();
         reg.set_root("main", Some("/lib/root".into()));
-        assert!(path_authorized(&reg, "/lib/root/sub/../../etc/x").is_err());
+        assert!(
+            path_authorized(&reg, "/lib/root/sub/../../etc/x", Path::new("/cfg-root")).is_err()
+        );
+    }
+
+    /// 场景 B 复现：用户把祖先目录（/Users/u）打开为学习库时，配置域内的
+    /// settings.json（明文 key）、plugins.json（清单）、plugins/（插件代码）
+    /// 必须对文件服务一律不可见——决策点在 path_authorized，所有文件命令共用。
+    #[test]
+    fn path_authorized_rejects_config_domain_under_ancestor_root() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/Users/u".into()));
+        let config_root = Path::new("/Users/u/.studywiki");
+        assert!(path_authorized(&reg, "/Users/u/.studywiki/settings.json", config_root).is_err());
+        assert!(path_authorized(&reg, "/Users/u/.studywiki/plugins.json", config_root).is_err());
+        assert!(path_authorized(
+            &reg,
+            "/Users/u/.studywiki/plugins/ext-a/main.js",
+            config_root
+        )
+        .is_err());
+        // root 本身即配置域（场景 A）同样拒。
+        assert!(path_authorized(&reg, "/Users/u/.studywiki", config_root).is_err());
+        // 配置域外的正常学习文件放行。
+        assert!(path_authorized(&reg, "/Users/u/notes/a.md", config_root).is_ok());
     }
 
     #[test]
