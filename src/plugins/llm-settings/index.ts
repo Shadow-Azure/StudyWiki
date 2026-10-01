@@ -8,6 +8,20 @@ export const name = "llm-settings";
 /** Service keys awaited before apply runs. */
 export const inject = ["llm", "slots"];
 
+/** 厂商徽标显示名（仅展示层；key 对齐 Rust 预设 vendor，未收录回退"自定义"）。 */
+const VENDOR_LABELS: Record<string, string> = {
+  zhipu: "智谱",
+  deepseek: "DeepSeek",
+  moonshot: "Kimi",
+  minimax: "MiniMax",
+  custom: "自定义",
+};
+
+/** vendor 徽标显示名；未收录的 key 视为自定义。 */
+function vendorLabel(vendor: string): string {
+  return VENDOR_LABELS[vendor] ?? VENDOR_LABELS.custom;
+}
+
 /** 模型配置面板（第七内置插件）：顶栏入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
  * 预设表来自 Rust llm_list_presets（baseUrl 不进前端源码）；key 明文仅内存持有，
  * 保存经 ctx.llm（写面仅内置插件可用）；探测/错误归一码原样内联展示。
@@ -32,7 +46,7 @@ async function openPanel(ctx: Context): Promise<void> {
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", "模型配置");
   const box = document.createElement("div");
-  box.className = "plugin-panel-box";
+  box.className = "plugin-panel-box llm-box";
   overlay.append(box);
   document.body.append(overlay);
   const close = (): void => {
@@ -43,6 +57,8 @@ async function openPanel(ctx: Context): Promise<void> {
     if (e.key === "Escape") close();
   };
   document.addEventListener("keydown", onKey);
+
+  let vendorFilter: string | null = null;
 
   const renderError = (message: string): void => {
     const el = document.createElement("div");
@@ -59,8 +75,46 @@ async function openPanel(ctx: Context): Promise<void> {
     box.append(title);
     try {
       const [settings, presets] = await Promise.all([ctx.llm.listEndpoints(), ctx.llm.listPresets()]);
+      // 厂商摘要条：全部 + 各厂商计数（品牌色圆点 + 点击筛选，再点取消）
+      if (settings.endpoints.length > 0) {
+        const groups = new Map<string, number>();
+        for (const e of settings.endpoints) groups.set(e.vendor, (groups.get(e.vendor) ?? 0) + 1);
+        const summary = document.createElement("div");
+        summary.className = "llm-summary";
+        summary.setAttribute("role", "group");
+        summary.setAttribute("aria-label", "厂商筛选");
+        const mkChip = (vendor: string, label: string): HTMLButtonElement => {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "llm-vchip";
+          chip.dataset.vendor = vendor;
+          chip.setAttribute("aria-pressed", String(vendorFilter === vendor));
+          if (vendor !== "all") {
+            const dot = document.createElement("span");
+            dot.className = "llm-dot";
+            dot.dataset.vendor = vendor;
+            chip.append(dot);
+          }
+          chip.append(document.createTextNode(label));
+          chip.addEventListener("click", () => {
+            vendorFilter = vendor === "all" || vendorFilter === vendor ? null : vendor;
+            void renderList();
+          });
+          return chip;
+        };
+        summary.append(mkChip("all", `全部 ${settings.endpoints.length}`));
+        for (const [vendor, count] of groups) {
+          summary.append(mkChip(vendor, `${vendorLabel(vendor)} ${count}`));
+        }
+        box.append(summary);
+      }
+      // 默认模型选择（跨 endpoint 聚合；选项带厂商后缀）
       const modelIds = [...new Set(settings.endpoints.flatMap((e) => e.models.map((m) => m.id)))];
       if (modelIds.length > 0) {
+        const ownerOf = new Map<string, string>();
+        for (const e of settings.endpoints) {
+          for (const m of e.models) if (!ownerOf.has(m.id)) ownerOf.set(m.id, vendorLabel(e.vendor));
+        }
         const defaultRow = document.createElement("div");
         defaultRow.className = "plugin-row llm-default-row";
         const label = document.createElement("span");
@@ -73,7 +127,7 @@ async function openPanel(ctx: Context): Promise<void> {
         for (const id of modelIds) {
           const opt = document.createElement("option");
           opt.value = id;
-          opt.textContent = id;
+          opt.textContent = `${id} · ${ownerOf.get(id) ?? ""}`;
           select.append(opt);
         }
         select.value = settings.defaultModel ?? "";
@@ -86,19 +140,31 @@ async function openPanel(ctx: Context): Promise<void> {
         defaultRow.append(label, select);
         box.append(defaultRow);
       }
-      for (const e of settings.endpoints) box.append(endpointRow(ctx, e, renderList));
-      if (settings.endpoints.length === 0) {
+      // 可滚动卡片列表（厂商筛选生效）
+      const list = document.createElement("div");
+      list.className = "llm-list";
+      const visible = settings.endpoints.filter(
+        (e) => !vendorFilter || e.vendor === vendorFilter,
+      );
+      for (const e of visible) list.append(endpointRow(ctx, e, renderList));
+      if (visible.length === 0) {
         const empty = document.createElement("p");
-        empty.textContent = "尚未配置任何 endpoint。";
-        box.append(empty);
+        empty.className = "llm-empty";
+        empty.textContent = settings.endpoints.length === 0 ? "尚未配置任何 endpoint。" : "该厂商暂无配置";
+        list.append(empty);
       }
+      box.append(list);
+      // 底部常驻新增
+      const foot = document.createElement("div");
+      foot.className = "llm-panel-foot";
       const add = document.createElement("button");
       add.type = "button";
-      add.className = "btn";
+      add.className = "btn llm-add";
       add.dataset.action = "add";
-      add.textContent = "新增 endpoint";
+      add.textContent = "＋ 新增 endpoint";
       add.addEventListener("click", () => void renderForm(ctx, presets, renderList));
-      box.append(add);
+      foot.append(add);
+      box.append(foot);
     } catch (e) {
       renderError(errorMessage(e));
     }
@@ -107,26 +173,62 @@ async function openPanel(ctx: Context): Promise<void> {
   await renderList();
 }
 
-/** 列表行：名称 / baseUrl / 模型数 / key 徽标 + 探测（延迟或归一码）/ 编辑 / 删除。 */
+/** endpoint 卡片：厂商徽标 + id 片 + mono baseUrl + 状态徽章 + 探测（延迟/归一码）/编辑/删除。 */
 function endpointRow(ctx: Context, e: RedactedEndpoint, rerender: () => Promise<void>): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "plugin-row llm-row";
-  const info = document.createElement("span");
-  info.style.flex = "1";
-  info.textContent = `${e.name}（${e.id}） · ${e.baseUrl} · ${e.models.length} 个模型${e.hasKey ? " · 🔑" : ""}`;
-  row.append(info);
+  const card = document.createElement("div");
+  card.className = "llm-card";
+  card.dataset.vendor = e.vendor;
+  const main = document.createElement("div");
+  main.className = "llm-card-main";
+  const head = document.createElement("div");
+  head.className = "llm-card-head";
+  const name = document.createElement("span");
+  name.className = "llm-card-name";
+  name.textContent = e.name;
+  const vendor = document.createElement("span");
+  vendor.className = "llm-vendor";
+  const dot = document.createElement("span");
+  dot.className = "llm-dot";
+  dot.dataset.vendor = e.vendor;
+  vendor.append(dot, document.createTextNode(vendorLabel(e.vendor)));
+  const idChip = document.createElement("span");
+  idChip.className = "llm-idchip";
+  idChip.textContent = e.id;
+  head.append(name, vendor, idChip);
+  const url = document.createElement("div");
+  url.className = "llm-url";
+  url.textContent = e.baseUrl;
+  const meta = document.createElement("div");
+  meta.className = "llm-meta";
+  const count = document.createElement("span");
+  count.className = "llm-badge";
+  count.textContent = `${e.models.length} 个模型`;
+  const keyBadge = document.createElement("span");
+  keyBadge.className = e.hasKey ? "llm-badge llm-badge-key" : "llm-badge llm-badge-nokey";
+  keyBadge.textContent = e.hasKey ? "🔑 密钥已配置" : "未配置密钥";
   const feedback = document.createElement("span");
   feedback.className = "llm-probe-result";
+  meta.append(count, keyBadge, feedback);
+  main.append(head, url, meta);
+  const actions = document.createElement("div");
+  actions.className = "llm-card-actions";
   const probe = document.createElement("button");
   probe.type = "button";
   probe.className = "btn btn-ghost";
   probe.textContent = "探测";
   probe.addEventListener("click", () => {
+    feedback.className = "llm-probe-result";
     feedback.textContent = "…";
     void ctx.llm
       .probe(e.id)
-      .then((ms) => (feedback.textContent = `${ms}ms`))
-      .catch((err) => (feedback.textContent = errorMessage(err)));
+      .then((ms) => {
+        feedback.className = "llm-probe-result llm-probe-ok";
+        feedback.textContent = `${ms}ms`;
+      })
+      .catch((err) => {
+        feedback.className = "llm-probe-result llm-probe-err";
+        feedback.textContent = errorMessage(err);
+      });
   });
   const edit = document.createElement("button");
   edit.type = "button";
@@ -147,19 +249,23 @@ function endpointRow(ctx: Context, e: RedactedEndpoint, rerender: () => Promise<
   });
   const remove = document.createElement("button");
   remove.type = "button";
-  remove.className = "btn btn-ghost";
+  remove.className = "btn btn-danger";
   remove.textContent = "删除";
   remove.addEventListener("click", () => {
     void ctx.llm
       .removeEndpoint(e.id)
       .then(() => rerender())
-      .catch((err) => (feedback.textContent = errorMessage(err)));
+      .catch((err) => {
+        feedback.className = "llm-probe-result llm-probe-err";
+        feedback.textContent = errorMessage(err);
+      });
   });
-  row.append(feedback, probe, edit, remove);
-  return row;
+  actions.append(probe, edit, remove);
+  card.append(main, actions);
+  return card;
 }
 
-/** 表单态：vendor 选择（预设或自定义）→ 字段回填 → 模型行编辑 → 校验保存。 */
+/** 表单态：厂商预设置顶（决定其余字段的第一选择）→ 字段回填 → 模型行编辑 → 校验保存。 */
 async function renderForm(
   ctx: Context,
   presets: LlmPreset[],
@@ -175,27 +281,48 @@ async function renderForm(
   title.className = "plugin-panel-title";
   title.textContent = initial ? "编辑 endpoint" : "新增 endpoint";
   const form = document.createElement("form");
+  form.className = "llm-form";
+  // 顶部：厂商预设 + 类型
+  const top = document.createElement("div");
+  top.className = "llm-grid";
+  const vendorField = document.createElement("div");
+  vendorField.className = "llm-field";
   const vendorLabel = fieldLabel("厂商预设");
   const vendor = document.createElement("select");
   vendor.name = "vendor";
   for (const p of presets) {
     const opt = document.createElement("option");
     opt.value = p.vendor;
-    opt.textContent = `${p.name}（${p.baseUrl}）`;
+    opt.textContent = p.name;
     vendor.append(opt);
   }
   const custom = document.createElement("option");
   custom.value = CUSTOM_VENDOR;
   custom.textContent = "自定义（OpenAI 兼容）";
   vendor.append(custom);
-  const refreshFields = (): void => {
-    draft =
-      vendor.value === CUSTOM_VENDOR
-        ? blankDraft()
-        : instantiatePreset(presets.find((p) => p.vendor === vendor.value)!);
-    drawFields();
-  };
-  vendor.addEventListener("change", refreshFields);
+  vendorField.append(vendorLabel, vendor);
+  const kindField = document.createElement("div");
+  kindField.className = "llm-field";
+  const kindLabel = fieldLabel("类型");
+  const kind = document.createElement("select");
+  kind.name = "kind";
+  for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    kind.append(opt);
+  }
+  kind.value = draft.kind;
+  kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
+  kindField.append(kindLabel, kind);
+  top.append(vendorField, kindField);
+  form.append(top);
+  if (!initial) {
+    const hint = document.createElement("p");
+    hint.className = "llm-hint";
+    hint.textContent = "选择预设自动填入 id / 名称 / baseUrl 与模型清单，只需补 apiKey；切「自定义」则全部手填。";
+    form.append(hint);
+  }
   const setField = (field: "id" | "name" | "baseUrl" | "apiKey", value: string): void => {
     if (field === "id") draft.id = value;
     else if (field === "name") draft.name = value;
@@ -204,27 +331,38 @@ async function renderForm(
   };
   const error = document.createElement("div");
   error.className = "llm-error";
-  const save = document.createElement("button");
-  save.type = "submit";
-  save.className = "btn";
-  save.textContent = "保存";
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "btn btn-ghost";
   cancel.textContent = "取消";
   cancel.addEventListener("click", () => void rerender());
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "btn btn-primary";
+  save.textContent = "保存";
+  const foot = document.createElement("div");
+  foot.className = "llm-form-foot";
+  foot.append(error, cancel, save);
+  form.append(foot);
 
+  // 动态区：字段网格 + 模型 fieldset（vendor change / 模型增删触发整体重建）
+  let zone: HTMLElement | null = null;
   const drawFields = (): void => {
-    form.querySelectorAll("[data-dyn]").forEach((el) => el.remove());
-    for (const [label, name, value] of [
-      ["id", "id", draft.id],
-      ["名称", "name", draft.name],
-      ["baseUrl", "baseUrl", draft.baseUrl],
-      ["apiKey", "apiKey", draft.apiKey],
+    zone?.remove();
+    zone = document.createElement("div");
+    zone.dataset.dyn = "";
+    const grid = document.createElement("div");
+    grid.className = "llm-grid";
+    for (const [label, name, value, wide] of [
+      ["id", "id", draft.id, false],
+      ["名称", "name", draft.name, false],
+      ["baseUrl", "baseUrl", draft.baseUrl, true],
+      ["apiKey", "apiKey", draft.apiKey, true],
     ] as const) {
+      const f = document.createElement("div");
+      f.className = wide ? "llm-field llm-field-wide" : "llm-field";
       const l = fieldLabel(label);
       const input = document.createElement("input");
-      input.dataset.dyn = "";
       input.name = name;
       input.value = value;
       if (name === "id" && initial) {
@@ -232,19 +370,32 @@ async function renderForm(
         input.disabled = true;
         input.title = "id 不可改；如需改名请删除后重建";
       }
+      if (name === "id" || name === "baseUrl") input.classList.add("llm-mono");
       if (name === "apiKey") {
         input.type = "password";
         input.autocomplete = "off";
-        input.placeholder = initial ? "留空 = 保留已存 key" : "留空 = 自托管无鉴权";
+        input.placeholder = initial ? "留空 = 保留已存 key" : "粘贴厂商控制台签发的 API Key（自托管可留空）";
+        const keyHint = document.createElement("span");
+        keyHint.className = "llm-hint";
+        keyHint.textContent = "仅保存在本机 ~/.studywiki/settings.json（0600）";
+        f.append(l, input, keyHint);
+      } else {
+        f.append(l, input);
       }
       input.addEventListener("input", () => setField(name, input.value));
-      form.append(l, input);
+      grid.append(f);
     }
+    zone.append(grid);
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "llm-fieldset";
+    const legend = document.createElement("legend");
+    legend.textContent = "模型（随预设带入，可增删改）";
+    fieldset.append(legend);
     for (const [i, m] of draft.models.entries()) {
       const row = document.createElement("div");
-      row.dataset.dyn = "";
       row.className = "llm-model-row";
       const id = document.createElement("input");
+      id.classList.add("llm-mono");
       id.value = m.id;
       id.placeholder = "模型 id";
       id.addEventListener("input", () => (m.id = id.value));
@@ -258,44 +409,42 @@ async function renderForm(
           : m.capabilities.filter((c) => c !== "vision");
       });
       const visionLabel = document.createElement("label");
+      visionLabel.className = "llm-vision";
       visionLabel.append(vision, document.createTextNode("vision"));
       const del = document.createElement("button");
       del.type = "button";
+      del.className = "btn btn-ghost";
       del.textContent = "×";
       del.addEventListener("click", () => {
         draft.models.splice(i, 1);
         drawFields();
       });
       row.append(id, visionLabel, del);
-      form.append(row);
+      fieldset.append(row);
     }
     const addModel = document.createElement("button");
-    addModel.dataset.dyn = "";
     addModel.type = "button";
-    addModel.textContent = "添加模型";
+    addModel.className = "llm-model-add";
+    addModel.textContent = "＋ 添加模型";
     addModel.addEventListener("click", () => {
       draft.models.push({ id: "", capabilities: ["text"] });
       drawFields();
     });
-    form.append(addModel);
+    fieldset.append(addModel);
+    zone.append(fieldset);
+    form.insertBefore(zone, foot);
   };
 
-  vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
-  if (initial) drawFields();
-  else refreshFields();
-  // kind 选择：chat = LLM/VLM；asr 本期仅契约与探测（保存后 chat 路由不可见）。
-  const kindLabel = fieldLabel("类型");
-  const kind = document.createElement("select");
-  kind.name = "kind";
-  for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = text;
-    kind.append(opt);
-  }
-  kind.value = draft.kind;
-  kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
-  form.append(vendorLabel, vendor, kindLabel, kind);
+  const refreshFields = (): void => {
+    draft =
+      vendor.value === CUSTOM_VENDOR
+        ? blankDraft()
+        : instantiatePreset(presets.find((p) => p.vendor === vendor.value)!);
+    kind.value = draft.kind;
+    drawFields();
+  };
+  vendor.addEventListener("change", refreshFields);
+
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     // 提交时从 DOM 收值（对程序化赋值与手动输入同样稳健）；模型行走闭包编辑态。
@@ -314,7 +463,10 @@ async function renderForm(
       .then(() => rerender())
       .catch((err) => (error.textContent = errorMessage(err)));
   });
-  form.append(error, save, cancel);
+
+  vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
+  if (initial) drawFields();
+  else refreshFields();
   box.append(title, form);
 }
 

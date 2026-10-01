@@ -68,6 +68,10 @@ Normalized error codes (one shared vocabulary across the whole chain): Rust tran
 
 `src/host/llm.ts` (deps injectable) mounts `ctx.llm` with facade `list / upsert / remove / probe / chat`; the external-plugin inject whitelist exposes only `list / probe / chat`, writes are reserved for built-in plugins. The built-in `llm-settings` plugin: topbar entry + panel; a vendor preset table (build-time static templates, not locked, served via `llm_list_presets`) — Zhipu GLM (`https://open.bigmodel.cn/api/paas/v4`, glm-5.3 / glm-5.3-flash), DeepSeek (`https://api.deepseek.com/v1`, deepseek-v4-pro / deepseek-v4-flash), Kimi (`https://api.moonshot.cn/v1`, kimi-k3), MiniMax (`https://api.minimaxi.com/v1`, minimax-m3), and custom OpenAI-compatible; picking a preset prefills baseUrl + model list (editable — add/remove/rename), the user only must enter an apiKey; each model can be flagged `vision`; saved endpoints can be probed in one click.
 
+### Model configuration UI and vendor projection
+
+The list view uses a scrollable card layout with vendor summary chips at the top (All / Zhipu / DeepSeek / Kimi / MiniMax / Custom) for one-click filtering. Cards show the vendor badge, id, baseUrl, model count, key status, and probe result. In the form view, vendor presets sit at the top; changing a preset immediately fills baseUrl and the model list. Field, model, and footer areas follow the approved grid layout. The Rust redacted endpoint projection gains `vendor` (matched from baseUrl against presets, otherwise `custom`); the frontend uses it only for display and filtering, never as configuration input.
+
 ### Key-storage stance
 
 Plaintext in settings.json, at the same water level as Claude Code (plaintext token in `~/.claude/settings.json` env), Codex (`~/.codex/auth.json`), and dsh (literal `apiKey` as a first-class citizen). Hardening: 0600 file permissions; the command surface is write-only for keys (list is redacted); the external-plugin whitelist excludes write commands. The "no secrets in the repo" constraint is unaffected (user directory).

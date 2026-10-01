@@ -68,6 +68,10 @@ Status: implemented
 
 `src/host/llm.ts`（deps 可注入）挂 `ctx.llm`，facade：`list / upsert / remove / probe / chat`；外置插件 inject 白名单只放 `list / probe / chat`，写操作仅内置插件可用。内置 `llm-settings` 插件：顶栏入口 + 面板；厂商预设表（构建期静态模板，不锁死，经 `llm_list_presets` 提供）——智谱 GLM（`https://open.bigmodel.cn/api/paas/v4`，glm-5.3 / glm-5.3-flash）、DeepSeek（`https://api.deepseek.com/v1`，deepseek-v4-pro / deepseek-v4-flash）、Kimi（`https://api.moonshot.cn/v1`，kimi-k3）、MiniMax（`https://api.minimaxi.com/v1`，minimax-m3）、自定义 OpenAI 兼容；选预设自动带 baseUrl + 模型清单（可增删改），用户只必填 apiKey；每模型可标 `vision`；保存后可一键探测。
 
+### 模型配置 UI 与厂商投影
+
+列表态使用卡片化滚动布局，顶部提供「全部 / 智谱 / DeepSeek / Kimi / MiniMax / 自定义」厂商摘要 chips，可按归属厂商筛选；卡片显示厂商徽标、id、baseUrl、模型数量、密钥状态与探测结果。表单态把厂商预设放到顶部，切换预设即时填充 baseUrl 与模型清单；字段区、模型区和底部操作条按 mockup 网格化布局。为此 Rust 脱敏 endpoint 投影新增 `vendor`（按 baseUrl 匹配预设，未匹配为 `custom`），前端只用于展示与筛选，不参与配置写入。
+
 ### 密钥立场
 
 settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件白名单不含写命令。仓库不存密钥的约束不受影响（用户目录）。

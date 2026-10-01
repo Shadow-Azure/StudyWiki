@@ -286,13 +286,32 @@ pub fn llm_list_presets() -> Vec<LlmPreset> {
     presets()
 }
 
+/// baseUrl → vendor：匹配预设 baseUrl（容忍尾斜杠差异）；未匹配 → custom。
+fn vendor_of(base_url: &str, presets: &[LlmPreset]) -> String {
+    let normalized = base_url.trim_end_matches('/');
+    presets
+        .iter()
+        .find(|p| p.base_url.trim_end_matches('/') == normalized)
+        .map(|p| p.vendor.clone())
+        .unwrap_or_else(|| "custom".into())
+}
+
 /// 返回全部 endpoint 的脱敏投影 + 默认模型（完整 key 永不出 Rust）。
 #[tauri::command]
 pub fn llm_list_endpoints(app: AppHandle) -> Result<serde_json::Value, String> {
     let dir = config::app_studywiki_dir(&app)?;
     let s = config::load_settings(&dir)?;
+    let presets = presets();
     Ok(serde_json::json!({
-        "endpoints": s.endpoints.iter().map(config::redact).collect::<Vec<_>>(),
+        "endpoints": s
+            .endpoints
+            .iter()
+            .map(|e| {
+                let mut r = config::redact(e);
+                r.vendor = vendor_of(&e.base_url, &presets);
+                r
+            })
+            .collect::<Vec<_>>(),
         "defaultModel": s.default_model,
     }))
 }
@@ -420,6 +439,17 @@ mod tests {
                 capabilities: vec!["text".into()],
             }],
         }
+    }
+
+    #[test]
+    fn vendor_of_matches_presets_and_falls_back_to_custom() {
+        let ps = presets();
+        assert_eq!(vendor_of("https://api.deepseek.com/v1", &ps), "deepseek");
+        assert_eq!(
+            vendor_of("https://open.bigmodel.cn/api/paas/v4/", &ps),
+            "zhipu"
+        );
+        assert_eq!(vendor_of("http://127.0.0.1:18042/v1", &ps), "custom");
     }
 
     #[test]

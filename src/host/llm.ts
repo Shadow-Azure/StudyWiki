@@ -43,6 +43,8 @@ export interface RedactedEndpoint {
   name: string;
   kind: string;
   baseUrl: string;
+  /** Owning vendor: preset matched by baseUrl, else "custom". */
+  vendor: string;
   hasKey: boolean;
   keyPreview: string;
   models: ModelEntry[];

@@ -95,6 +95,8 @@ pub struct RedactedEndpoint {
     pub name: String,
     pub kind: String,
     pub base_url: String,
+    /// 归属厂商：baseUrl 匹配预设 → vendor id；未匹配 → custom（llm_list_endpoints 填充）。
+    pub vendor: String,
     pub has_key: bool,
     pub key_preview: String,
     pub models: Vec<ModelEntry>,
@@ -186,6 +188,7 @@ pub fn redact(e: &Endpoint) -> RedactedEndpoint {
         name: e.name.clone(),
         kind: e.kind.clone(),
         base_url: e.base_url.clone(),
+        vendor: "custom".into(),
         has_key: !e.api_key.is_empty(),
         key_preview: preview,
         models: e.models.clone(),

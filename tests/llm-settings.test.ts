@@ -112,7 +112,7 @@ describe("panel", () => {
     const { ctx, renders } = fakeCtx();
     (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
       Promise.resolve({
-        endpoints: [{ ...preset, id: "mock", name: "Local Mock", kind: "chat",
+        endpoints: [{ ...preset, id: "mock", name: "Local Mock", kind: "chat", vendor: "zhipu",
           baseUrl: "http://127.0.0.1:18042/v1", hasKey: true, keyPreview: "sk-…ef",
           models: [{ id: "glm-5.3", capabilities: ["text", "vision"] }] }],
         defaultModel: null,
@@ -123,10 +123,11 @@ describe("panel", () => {
     document.body.append(host);
     (host.querySelector("button") as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r));
-    const row = document.querySelector(".llm-row") as HTMLElement;
+    const row = document.querySelector(".llm-card") as HTMLElement;
     expect(row.textContent).toContain("Local Mock");
     expect(row.textContent).toContain("127.0.0.1:18042");
     expect(row.textContent).toContain("🔑");
+    expect(row.textContent).toContain("智谱");
     const probeBtn = row.querySelectorAll("button")[0] as HTMLButtonElement; // 顺序：探测/编辑/删除
     probeBtn.click();
     await new Promise((r) => setTimeout(r));
@@ -138,7 +139,7 @@ describe("panel", () => {
     const { ctx, renders } = fakeCtx();
     (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
       Promise.resolve({
-        endpoints: [{ ...preset, id: "mock", name: "Local Mock", kind: "chat",
+        endpoints: [{ ...preset, id: "mock", name: "Local Mock", kind: "chat", vendor: "deepseek",
           baseUrl: "https://api.deepseek.com/v1", hasKey: true, keyPreview: "sk-…ef",
           models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }] }],
         defaultModel: null,
@@ -151,7 +152,7 @@ describe("panel", () => {
     document.body.append(host);
     (host.querySelector("button") as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r));
-    const row = document.querySelector(".llm-row") as HTMLElement;
+    const row = document.querySelector(".llm-card") as HTMLElement;
     const probeBtn = row.querySelectorAll("button")[0] as HTMLButtonElement;
     probeBtn.click();
     await new Promise((r) => setTimeout(r));
