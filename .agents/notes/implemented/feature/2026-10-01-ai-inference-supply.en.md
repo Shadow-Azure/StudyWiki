@@ -1,12 +1,12 @@
 # Agent Note: Inference Supply Landing: Config Contract, Thin Rust Capability Layer, and the ~/.studywiki User Config Root
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-10-01-ai-inference-supply.md)
 
 ## Problem
 
-The [AI inference supply ADR](../architecture/2026-09-19-ai-inference-supply.en.md) settled the direction — user-explicitly-configured remote endpoints, OpenAI-compatible protocol, no built-in keys — but direction only: where config lives, its schema, who sends HTTP, how plugins reach inference, and the key-storage stance all lack contracts. m2-01 (issue #28) requires landing this layer as an implementable foundation, or the m2-02/m2-03 agent host and basic agent have nothing to build on.
+The [AI inference supply ADR](../../proposed/architecture/2026-09-19-ai-inference-supply.en.md) settled the direction — user-explicitly-configured remote endpoints, OpenAI-compatible protocol, no built-in keys — but direction only: where config lives, its schema, who sends HTTP, how plugins reach inference, and the key-storage stance all lack contracts. m2-01 (issue #28) requires landing this layer as an implementable foundation, or the m2-02/m2-03 agent host and basic agent have nothing to build on.
 
 ## Decision
 

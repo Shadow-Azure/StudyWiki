@@ -1,12 +1,12 @@
 # Agent Note: 模型供给落地：配置契约、Rust 薄能力层与 ~/.studywiki 用户配置根
 
-Status: proposed
+Status: implemented
 
 [English](2026-10-01-ai-inference-supply.en.md) | 中文
 
 ## Problem
 
-[AI 推理供给 ADR](../architecture/2026-09-19-ai-inference-supply.md) 已定论「用户显式配置的远程 endpoint + OpenAI 兼容协议 + 产品不内置密钥」，但只是方向：配置存哪、什么 schema、HTTP 谁发、插件怎么触达、密钥什么立场，全部没有契约。m2-01（issue #28）要求把这层落成可实现的底座，否则 m2-02/m2-03 的 agent 宿主与基础 agent 无米下锅。
+[AI 推理供给 ADR](../../proposed/architecture/2026-09-19-ai-inference-supply.md) 已定论「用户显式配置的远程 endpoint + OpenAI 兼容协议 + 产品不内置密钥」，但只是方向：配置存哪、什么 schema、HTTP 谁发、插件怎么触达、密钥什么立场，全部没有契约。m2-01（issue #28）要求把这层落成可实现的底座，否则 m2-02/m2-03 的 agent 宿主与基础 agent 无米下锅。
 
 ## Decision
 

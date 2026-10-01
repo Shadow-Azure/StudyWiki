@@ -59,7 +59,7 @@ async function openPanel(ctx: Context): Promise<void> {
     box.append(title);
     try {
       const [settings, presets] = await Promise.all([ctx.llm.listEndpoints(), ctx.llm.listPresets()]);
-      for (const e of settings.endpoints) box.append(endpointRow(ctx, e, renderList, close));
+      for (const e of settings.endpoints) box.append(endpointRow(ctx, e, renderList));
       if (settings.endpoints.length === 0) {
         const empty = document.createElement("p");
         empty.textContent = "尚未配置任何 endpoint。";
@@ -81,12 +81,7 @@ async function openPanel(ctx: Context): Promise<void> {
 }
 
 /** 列表行：名称 / baseUrl / 模型数 / key 徽标 + 探测（延迟或归一码）/ 编辑 / 删除。 */
-function endpointRow(
-  ctx: Context,
-  e: RedactedEndpoint,
-  rerender: () => Promise<void>,
-  close: () => void,
-): HTMLElement {
+function endpointRow(ctx: Context, e: RedactedEndpoint, rerender: () => Promise<void>): HTMLElement {
   const row = document.createElement("div");
   row.className = "plugin-row llm-row";
   const info = document.createElement("span");
@@ -174,6 +169,12 @@ async function renderForm(
     drawFields();
   };
   vendor.addEventListener("change", refreshFields);
+  const setField = (field: "id" | "name" | "baseUrl" | "apiKey", value: string): void => {
+    if (field === "id") draft.id = value;
+    else if (field === "name") draft.name = value;
+    else if (field === "baseUrl") draft.baseUrl = value;
+    else draft.apiKey = value;
+  };
   const error = document.createElement("div");
   error.className = "llm-error";
   const save = document.createElement("button");
@@ -204,7 +205,7 @@ async function renderForm(
         input.autocomplete = "off";
         input.placeholder = "留空 = 自托管无鉴权";
       }
-      input.addEventListener("input", () => ((draft as Record<string, string>)[name] = input.value));
+      input.addEventListener("input", () => setField(name, input.value));
       form.append(l, input);
     }
     for (const [i, m] of draft.models.entries()) {
@@ -256,7 +257,7 @@ async function renderForm(
     // 提交时从 DOM 收值（对程序化赋值与手动输入同样稳健）；模型行走闭包编辑态。
     for (const name of ["id", "name", "baseUrl", "apiKey"] as const) {
       const input = form.querySelector<HTMLInputElement>(`[name=${name}]`);
-      if (input) (draft as Record<string, string>)[name] = input.value;
+      if (input) setField(name, input.value);
     }
     const problem = validateDraft(draft);
     if (problem) {

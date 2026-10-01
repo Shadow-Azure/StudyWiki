@@ -12,8 +12,8 @@ Multi-window Tauri 2 desktop app: one Rust shell for the whole app, one frontend
 ```text
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
-  bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：六个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  bootstrap.ts                     每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
+  host/context.d.ts                cordis Context 声明合并：七个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
@@ -82,7 +82,7 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder → `read_tree` assigns kind → view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file` + markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown / excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)).
+Data flows: tree reading — pick a folder → `read_tree` assigns kind → view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file` + markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown / excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)); LLM inference — plugins call `ctx.llm.chat({model})`, the host service routes the model to its owning endpoint (`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` are thrown here), and the Rust `llm_chat` reads `~/.studywiki/settings.json` and sends HTTPS (an empty apiKey carries no Authorization header), returning normalized error codes along the same path.
 
 ## Key decision points
 
@@ -95,6 +95,9 @@ Data flows: tree reading — pick a folder → `read_tree` assigns kind → view
 - **assetProtocol's configured scope is empty, runtime dynamic authorization**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory` (recursive) — video and images keep using the asset protocol, but the configured surface no longer pre-opens arbitrary directories.
 - **markdown-it bundled at build time, `html: false`**: a corollary of environment independence (below), and it shrinks the XSS surface.
 - **The system webview does rendering and video decoding** (WKWebView / WebView2 / webkit2gtk): a volume-vs-dependencies tradeoff, see [environment-independence.en.md](environment-independence.en.md).
+- **`~/.studywiki` is the user config root**: identical shape on all three platforms; legacy `app_config_dir` data migrates once at startup (idempotent, re-entrant).
+- **Keys are stored in plaintext in settings.json with 0600**: the same water level as Claude Code / Codex / dsh; the command surface is write-only for keys (list is redacted) and the external-plugin whitelist excludes write operations.
+- **Rust is a thin capability layer (persistence + egress)**: model routing and the future agent loop both live in the frontend (compared with dsh: native code only isolates capabilities); vendor preset baseUrls exist only on the Rust side.
 - **External plugins load via blob URL**: a Rust command reads the entry source → JS Blob → dynamic import; the single-file zero-dependency contract drives the blob's usual weaknesses (relative imports, URL lifetime) to zero, and the channel is testable end-to-end in vitest with an injected fake import; custom-protocol ESM can only be verified in a real webview and stays as a fallback (landing record in the Phase 2 Note, decision 1).
 - **npm as a repository, not as a runtime**: networking happens only in the Rust install command (ureq+rustls pure-Rust stack); runtime stays fully offline ([environment-independence.en.md](environment-independence.en.md) exemption registry).
 
