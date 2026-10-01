@@ -1,6 +1,6 @@
 import type { Context } from "cordis";
 import type { ContentPart, RedactedSettings } from "../../host/llm";
-import type { ChatStreamHandle, PartialAssistant, StreamChunk } from "../../host/llm-stream";
+import type { ChatStreamHandle, PartialAssistant } from "../../host/llm-stream";
 import { fileToAttachment, type PendingAttachment } from "./attachments";
 import { createStreamRenderer } from "./render";
 
@@ -32,53 +32,11 @@ interface ChatMessage {
 /** An in-flight assistant response and its DOM target. */
 interface ActiveChat {
   handle: ChatStreamHandle;
-  assembler: SnapshotAssembler;
+  /** Latest read-only view returned by the host-owned stream assembler. */
+  snapshot: PartialAssistant;
   wrapper: HTMLElement;
   stream: HTMLElement;
   finishing: boolean;
-}
-
-/** Minimal assembler surface consumed by the chat loop. */
-interface SnapshotAssembler {
-  push: (chunk: StreamChunk) => void;
-  snapshot: () => PartialAssistant;
-}
-
-/** Plugin-local assembler with the host StreamAssembler contract.
- * The plugin layer may import host types only, so instantiation stays local while
- * the chunk vocabulary and snapshot shape remain wire-compatible. */
-class ChatSnapshotAssembler implements SnapshotAssembler {
-  #reasoning = "";
-  #text = "";
-  #tools = new Map<number, PartialAssistant["toolCalls"][number]>();
-  #usage?: PartialAssistant["usage"];
-  #finish?: string;
-  #error?: PartialAssistant["error"];
-
-  push(chunk: StreamChunk): void {
-    if (chunk.type === "text-delta") this.#text += chunk.text;
-    else if (chunk.type === "reasoning-delta") this.#reasoning += chunk.text;
-    else if (chunk.type === "tool-call-delta") {
-      const tool = this.#tools.get(chunk.index) ?? { index: chunk.index, id: "", name: "", argumentsText: "" };
-      if (chunk.id) tool.id = chunk.id;
-      if (chunk.name) tool.name = chunk.name;
-      tool.argumentsText += chunk.argumentsDelta;
-      this.#tools.set(chunk.index, tool);
-    } else if (chunk.type === "usage") this.#usage = chunk.usage;
-    else if (chunk.type === "finish") this.#finish = chunk.reason;
-    else if (chunk.type === "error") this.#error = { code: chunk.code, message: chunk.message };
-  }
-
-  snapshot(): PartialAssistant {
-    return {
-      reasoning: this.#reasoning,
-      text: this.#text,
-      toolCalls: [...this.#tools.values()].sort((a, b) => a.index - b.index),
-      ...(this.#usage ? { usage: this.#usage } : {}),
-      ...(this.#finish ? { finishReason: this.#finish } : {}),
-      ...(this.#error ? { error: this.#error } : {}),
-    };
-  }
 }
 
 /** Shape of the workspace facade consumed by this UI plugin. */
@@ -126,6 +84,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   let attachments: PendingAttachment[] = [];
   let current: ActiveChat | null = null;
   let selectedModel: string | null = null;
+  let disposed = false;
   let chatRoot: HTMLElement | null = null;
   let composer: HTMLElement | null = null;
   let transcript: HTMLElement | null = null;
@@ -196,8 +155,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     transcript.append(wrapper);
     transcript.scrollTop = transcript.scrollHeight;
     return {
-      assembler: new ChatSnapshotAssembler(),
       handle: null as unknown as ChatStreamHandle,
+      snapshot: { reasoning: "", text: "", toolCalls: [] },
       stream,
       wrapper,
       finishing: false,
@@ -205,16 +164,14 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   };
 
   const finishComplete = (active: ActiveChat): void => {
-    const snapshot = active.assembler.snapshot();
-    messages.push({ role: "assistant", content: snapshot.text });
+    messages.push({ role: "assistant", content: active.snapshot.text });
     current = null;
     paintSendButton();
   };
 
   const finishError = (active: ActiveChat, error: { code: string; message: string }): void => {
-    if (!active.assembler.snapshot().error) active.assembler.push({ type: "error", ...error });
-    const snapshot = active.assembler.snapshot();
-    if (snapshot.text) messages.push({ role: "assistant", content: snapshot.text });
+    if (!active.snapshot.error) active.snapshot = { ...active.snapshot, error };
+    if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
     current = null;
     paintSendButton();
   };
@@ -222,8 +179,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   const markInterrupted = (active: ActiveChat): void => {
     if (active.finishing) return;
     active.finishing = true;
-    const snapshot = active.assembler.snapshot();
-    if (snapshot.text) messages.push({ role: "assistant", content: snapshot.text });
+    if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
     const marker = document.createElement("div");
     marker.className = "chat-interrupted";
     marker.textContent = "已中断 · 已保留以上内容";
@@ -260,22 +216,24 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
       });
       active.handle = handle;
       const settled = handle.settled.catch((error: unknown) => {
-        active.assembler.push({ type: "error", ...toChatError(error) });
+        if (!active.snapshot.error) {
+          active.snapshot = { ...active.snapshot, error: toChatError(error) };
+        }
         throw error;
       });
-      for await (const chunk of handle.events as AsyncIterable<StreamChunk>) {
-        active.assembler.push(chunk);
-        renderer.update(active.assembler.snapshot());
-        if (chunk.type === "finish") active.finishing = true;
+      for await (const _chunk of handle.events) {
+        active.snapshot = handle.snapshot();
+        renderer.update(active.snapshot);
       }
       await settled;
-      const snapshot = active.assembler.snapshot();
-      if (snapshot.finishReason) finishComplete(active);
-      else if (snapshot.error) finishError(active, snapshot.error);
+      active.snapshot = handle.snapshot();
+      renderer.update(active.snapshot);
+      if (active.snapshot.finishReason) finishComplete(active);
+      else if (active.snapshot.error) finishError(active, active.snapshot.error);
     } catch (error) {
       if (current === active) {
         finishError(active, toChatError(error));
-        renderer.update(active.assembler.snapshot());
+        renderer.update(active.snapshot);
       }
     }
   }
@@ -374,7 +332,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     el.append(chatRoot);
     paintSendButton();
     void ctx.llm.listEndpoints().then((settings: RedactedSettings) => {
-      if (!modelSelect) return;
+      if (disposed || !modelSelect) return;
       const models = settings.endpoints
         .filter((endpoint) => endpoint.kind === "chat")
         .flatMap((endpoint) => endpoint.models);
@@ -395,6 +353,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   });
 
   return () => {
+    disposed = true;
     void current?.handle.abort().catch(() => {});
     offWorkspace();
     offSlot();

@@ -258,6 +258,11 @@ export class LlmService {
       }
       queue.close();
     };
-    return { events: queue, settled: settle(), abort: () => this.#call<void>("llm_chat_abort", { id: streamId }) };
+    return {
+      events: queue,
+      snapshot: () => assembler.snapshot(),
+      settled: settle(),
+      abort: () => this.#call<void>("llm_chat_abort", { id: streamId }),
+    };
   }
 }

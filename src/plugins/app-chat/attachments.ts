@@ -18,7 +18,7 @@ export interface PendingAttachment {
  * @returns Attachment with base64 data, or null when the file is not supported media. */
 export async function fileToAttachment(file: File): Promise<PendingAttachment | null> {
   const isImage = file.type.startsWith("image/");
-  const isAudio = file.type.startsWith("audio/");
+  const isAudio = ["audio/mpeg", "audio/wav", "audio/x-wav"].includes(file.type);
   if (!isImage && !isAudio) return null;
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";

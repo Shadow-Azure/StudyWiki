@@ -18,7 +18,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### chunk 词表与组装
 
-取主流 agent 实现共识的最小集：`text-delta` / `reasoning-delta` / `tool-call-delta` / `usage` / `finish` / `error`。`tool-call-delta` 本期只定义不消费（m2-03 工具循环要用，协议不留返工）。reasoning 按 `reasoning_content` → `reasoning` → `reasoning_text` 取第一个非空字段（各家兼容端点词形不一）；请求带 `stream_options: {include_usage: true}`，容忍 usage 落在 choice 上。前端组装器是 chunk → 消息的唯一组装点，消费者渲染组装后的 partial 快照而非裸 delta；中断时半截 tool-call 丢弃（无法补伪造结果），text/reasoning 部分保留。
+取主流 agent 实现共识的最小集：`text-delta` / `reasoning-delta` / `tool-call-delta` / `usage` / `finish` / `error`。`tool-call-delta` 本期只定义不消费（m2-03 工具循环要用，协议不留返工）。reasoning 按 `reasoning_content` → `reasoning` → `reasoning_text` 取第一个非空字段（各家兼容端点词形不一）；请求带 `stream_options: {include_usage: true}`，容忍 usage 落在 choice 上。宿主流服务为每条流持有一个前端组装器，并经 `ChatStreamHandle.snapshot()` 暴露唯一 chunk → 消息快照；消费者只读渲染，不碰裸 delta，也不得复制组装器；中断时半截 tool-call 丢弃（无法补伪造结果），text/reasoning 部分保留。
 
 ### 多模态消息模型
 
@@ -28,7 +28,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 - 新增通用右栏槽位 `sidebar.right`；内置插件 `app-chat` 是其第一个注册者，后续 agent 插件与外置插件共用该槽位。宿主共享 markdown 渲染器住 `src/ui/markdown.ts`。
 - 流式渲染走 rAF 合帧 + markdown-it 全量重解析（`html: false` 不变）：一帧内多个 delta 只重渲一次。reasoning 块默认折叠，流完自动收起；中断保留部分内容并标注「已中断」。
-- app-chat 在插件层保存契约同形的快照组装器：插件层只可 type-import 宿主实现；要共享实例需宿主再暴露 assembler 工厂。
+- 快照消费走 `handle.snapshot()`；plugin 层只持有 UI 循环与渲染，不复制组装状态。
 - 上下文取材接口：activeFile / 工作区快照经 workspace facade 提供（wiki index 归 m2-04）。
 - 首版 📎 停用：宿主还没有文件选择对话框面，附件只走粘贴/拖拽的 inline 通道，按钮明示该限制。
 

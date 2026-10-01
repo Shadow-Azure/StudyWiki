@@ -18,7 +18,7 @@ The inference service landed in m2-01 only offers non-streaming chat: the full a
 
 ### Chunk vocabulary and assembly
 
-Take the minimal set mainstream agent implementations converged on: `text-delta` / `reasoning-delta` / `tool-call-delta` / `usage` / `finish` / `error`. `tool-call-delta` is defined but not consumed this round (the m2-03 tool loop will need it; the protocol carries no rework). Reasoning takes the first non-empty field among `reasoning_content` → `reasoning` → `reasoning_text` (compatible endpoints spell it differently); requests carry `stream_options: {include_usage: true}` and tolerate usage landing on the choice. The frontend assembler is the single chunk → message assembly point; consumers render the assembled partial snapshot, never raw deltas; on interruption a half-received tool call is dropped (no fabricated result can complete it) while text/reasoning parts are kept.
+Take the minimal set mainstream agent implementations converged on: `text-delta` / `reasoning-delta` / `tool-call-delta` / `usage` / `finish` / `error`. `tool-call-delta` is defined but not consumed this round (the m2-03 tool loop will need it; the protocol carries no rework). Reasoning takes the first non-empty field among `reasoning_content` → `reasoning` → `reasoning_text` (compatible endpoints spell it differently); requests carry `stream_options: {include_usage: true}` and tolerate usage landing on the choice. The host streaming service owns one frontend assembler per stream and exposes its single chunk → message snapshot through `ChatStreamHandle.snapshot()`; consumers render that read-only view, never raw deltas, and never duplicate assembly state; on interruption a half-received tool call is dropped (no fabricated result can complete it) while text/reasoning parts are kept.
 
 ### Multimodal message model
 
@@ -28,7 +28,7 @@ Message content grows from a plain string to a part array; the media wire tag is
 
 - Add the generic right-sidebar slot `sidebar.right`; the built-in `app-chat` plugin is its first registrant, and later agent plugins and external plugins share the slot. The host-shared markdown renderer lives in `src/ui/markdown.ts`.
 - Streaming rendering batches by rAF and re-parses the full text with markdown-it (`html: false` unchanged): multiple deltas in one frame trigger a single re-render. Reasoning blocks are collapsed by default and fold away once streamed; interruption keeps the partial content and marks it "interrupted".
-- app-chat keeps a contract-compatible snapshot assembler in the plugin layer: that layer may type-import host implementations only; sharing one instance will require a host assembler factory.
+- Snapshot consumption goes through `handle.snapshot()`; the plugin owns only its UI loop and rendering, not assembly state.
 - Context-sourcing interface: activeFile / workspace snapshot come through the workspace facade (the wiki index belongs to m2-04).
 - The first 📎 control is disabled: the host has no file-dialog surface yet, so attachments use only paste/drop into inline sources, and the button states that limit.
 

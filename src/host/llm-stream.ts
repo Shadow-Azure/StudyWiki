@@ -127,6 +127,8 @@ export class ChunkQueue implements AsyncIterable<StreamChunk> {
 /** 在途流句柄：events 逐 chunk；settled 在传输或 error chunk 后拒绝。 */
 export interface ChatStreamHandle {
   readonly events: AsyncIterable<StreamChunk>;
+  /** Current assembled view, owned by the stream service and advanced with chunks. */
+  readonly snapshot: () => PartialAssistant;
   readonly settled: Promise<void>;
   abort(): Promise<void>;
 }

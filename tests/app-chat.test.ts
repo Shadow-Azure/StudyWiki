@@ -1,13 +1,27 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import { apply } from "../src/plugins/app-chat/index";
-import type { StreamChunk } from "../src/host/llm-stream";
+import type { PartialAssistant, StreamChunk } from "../src/host/llm-stream";
 
 let aborted: boolean;
 let lastReq: unknown;
 
+function stagedSnapshots(script: StreamChunk[]): PartialAssistant[] {
+  let state: PartialAssistant = { reasoning: "", text: "", toolCalls: [] };
+  return script.map((chunk): PartialAssistant => {
+    state = { ...state };
+    if (chunk.type === "reasoning-delta") state.reasoning += chunk.text;
+    else if (chunk.type === "text-delta") state.text += chunk.text;
+    else if (chunk.type === "usage") state.usage = chunk.usage;
+    else if (chunk.type === "finish") state.finishReason = chunk.reason;
+    else if (chunk.type === "error") state.error = { code: chunk.code, message: chunk.message };
+    return { ...state };
+  });
+}
+
 function fakeCtx(script: StreamChunk[]) {
   let host: HTMLElement | null = null;
+  const snapshots = stagedSnapshots(script);
   const ctx = {
     slots: {
       register: (_slot: string, render: (el: HTMLElement) => void) => {
@@ -25,7 +39,13 @@ function fakeCtx(script: StreamChunk[]) {
       chatStream: async (req: unknown) => {
         lastReq = req;
         const events = (async function* () { for (const chunk of script) yield chunk; })();
-        return { events, settled: Promise.resolve(), abort: async () => { aborted = true; } };
+        let stage = 0;
+        return {
+          events,
+          snapshot: () => snapshots[Math.min(stage++, snapshots.length - 1)] ?? { reasoning: "", text: "", toolCalls: [] },
+          settled: Promise.resolve(),
+          abort: async () => { aborted = true; },
+        };
       },
     },
     workspace: {
@@ -110,7 +130,14 @@ describe("app-chat", () => {
       requests.push(req);
       const current = script;
       const events = (async function* () { for (const chunk of current) yield chunk; })();
-      return { events, settled: Promise.reject({ code: "RATE_LIMITED", message: "慢点" }), abort: async () => { aborted = true; } };
+      const snapshots = stagedSnapshots(current);
+      let stage = 0;
+      return {
+        events,
+        snapshot: () => snapshots[Math.min(stage++, snapshots.length - 1)] ?? { reasoning: "", text: "", toolCalls: [] },
+        settled: Promise.reject({ code: "RATE_LIMITED", message: "慢点" }),
+        abort: async () => { aborted = true; },
+      };
     };
     const dispose = apply(ctx as never, {}, syncDeps);
     document.querySelector("textarea")!.value = "重试我";
@@ -133,6 +160,20 @@ describe("app-chat", () => {
     expect(aborted).toBe(true);
   });
 
+  it("卸载后 late listEndpoints 不更新已拆离 DOM", async () => {
+    const { ctx, host } = fakeCtx([{ type: "finish", reason: "stop" }]);
+    ctx.llm.listEndpoints = async () => await new Promise((resolve) => {
+      setTimeout(() => resolve({
+        endpoints: [{ id: "late", kind: "chat", models: [{ id: "late-model", capabilities: ["text"] }] }],
+        defaultModel: "late-model",
+      }), 5);
+    });
+    const dispose = apply(ctx as never, {}, syncDeps);
+    dispose();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(host().textContent).not.toContain("late-model");
+  });
+
   it("fileToAttachment：图片 File → inline base64，文本 File → null", async () => {
     const { fileToAttachment } = await import("../src/plugins/app-chat/attachments");
     const img = new File([new Uint8Array([137, 80, 78, 71])], "截图.png", { type: "image/png" });
@@ -140,6 +181,8 @@ describe("app-chat", () => {
     expect(att?.part.type).toBe("image");
     expect(att?.part.source).toMatchObject({ kind: "inline", mimeType: "image/png" });
     const txt = new File(["hi"], "a.txt", { type: "text/plain" });
+    const ogg = new File([new Uint8Array([1])], "voice.ogg", { type: "audio/ogg" });
+    expect(await fileToAttachment(ogg)).toBeNull();
     expect(await fileToAttachment(txt)).toBeNull();
   });
 

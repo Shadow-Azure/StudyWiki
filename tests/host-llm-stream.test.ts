@@ -100,6 +100,30 @@ describe("LlmService.chatStream", () => {
     await h.settled;
   });
 
+  it("service-owned snapshot advances with chunks and stays readable after settle", async () => {
+    const { deps } = fakeDeps([
+      { type: "reasoning-delta", index: 0, text: "想" },
+      { type: "text-delta", index: 0, text: "答" },
+      { type: "usage", usage: { promptTokens: 2, completionTokens: 1 } },
+      { type: "finish", reason: "stop" },
+    ]);
+    const llm = new LlmService(deps);
+    const h = await llm.chatStream({ messages: [{ role: "user", content: "hi" }] });
+    let seen = 0;
+    for await (const _chunk of h.events) {
+      seen += 1;
+      if (seen === 1) expect(h.snapshot()).toMatchObject({ reasoning: "想" });
+      if (seen === 2) expect(h.snapshot()).toMatchObject({ reasoning: "想", text: "答" });
+    }
+    await h.settled;
+    expect(h.snapshot()).toMatchObject({
+      reasoning: "想",
+      text: "答",
+      usage: { promptTokens: 2, completionTokens: 1 },
+      finishReason: "stop",
+    });
+  });
+
   it("invoke args 带 streamId 与 channel", async () => {
     const { calls, deps } = fakeDeps([]);
     const llm = new LlmService(deps);
