@@ -22,7 +22,7 @@ Take the minimal set mainstream agent implementations converged on: `text-delta`
 
 ### Multimodal message model
 
-Message content grows from a plain string to a part array, and a media part's source is a union: `path` (local file; Rust reads it at egress, base64-encodes it into the request body, path validated by canonicalization against a root snapshot) / `inline` (base64 from clipboard paste and drag-drop, never persisted) / `url` (remote URL passed through verbatim for the provider to fetch; the client never downloads). Capability gating runs before sending: endpoint `capabilities` gains `audio`, and a message carrying image/audio to a model without the matching capability fails with `UNSUPPORTED_CONTENT` before sending.
+Message content grows from a plain string to a part array; the media wire tag is directly `image` / `audio` (Rust dispatches through enum variants, with no free-form string kind), and a media part's source is a union: `path` (local file; Rust reads it at egress, base64-encodes it into the request body, path canonicalized once, then that same path is root-checked and read) / `inline` (base64 from clipboard paste and drag-drop, never persisted) / `url` (remote URL passed through verbatim for the provider to fetch; the client never downloads). Capability gating runs before sending: endpoint `capabilities` gains `audio`, and a message carrying image/audio to a model without the matching capability fails with `UNSUPPORTED_CONTENT` before sending.
 
 ### Chat slot and rendering
 

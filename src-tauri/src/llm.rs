@@ -43,6 +43,7 @@ pub enum MessageContent {
 }
 
 /// 多模态 part：文本，或 image/audio 媒体（source 三源联合）。
+/// 媒体类别就是 wire tag 本身（image/audio），不用可伪造的自由字符串 kind。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ContentPart {
@@ -50,8 +51,11 @@ pub enum ContentPart {
         text: String,
     },
     #[serde(rename_all = "camelCase")]
-    Media {
-        kind: String,
+    Image {
+        source: MediaSource,
+    },
+    #[serde(rename_all = "camelCase")]
+    Audio {
         source: MediaSource,
     },
 }
@@ -136,16 +140,23 @@ fn stream_agent() -> ureq::Agent {
     ureq::AgentBuilder::new().timeout(STREAM_TIMEOUT).build()
 }
 
+/// wire tag 已判别的媒体类别；分类不走自由字符串。
+#[derive(Debug, Clone, Copy)]
+enum MediaKind {
+    Image,
+    Audio,
+}
+
 /// 按扩展名出 mime：image → png/jpg/jpeg/webp/gif；audio → mp3/wav。
-fn mime_of_path(path: &str, media_kind: &str) -> Result<String, LlmError> {
+fn mime_of_path(path: &str, kind: MediaKind) -> Result<String, LlmError> {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
-    let mime = match (media_kind, ext.as_str()) {
-        ("image", "png") => "image/png",
-        ("image", "jpg" | "jpeg") => "image/jpeg",
-        ("image", "webp") => "image/webp",
-        ("image", "gif") => "image/gif",
-        ("audio", "mp3") => "audio/mpeg",
-        ("audio", "wav") => "audio/wav",
+    let mime = match (kind, ext.as_str()) {
+        (MediaKind::Image, "png") => "image/png",
+        (MediaKind::Image, "jpg" | "jpeg") => "image/jpeg",
+        (MediaKind::Image, "webp") => "image/webp",
+        (MediaKind::Image, "gif") => "image/gif",
+        (MediaKind::Audio, "mp3") => "audio/mpeg",
+        (MediaKind::Audio, "wav") => "audio/wav",
         _ => {
             return Err(LlmError::new(
                 "UNSUPPORTED_CONTENT",
@@ -168,15 +179,15 @@ fn audio_format(mime: &str) -> Result<&'static str, LlmError> {
     }
 }
 
-/// 媒体 source → OpenAI content part JSON；path 在出口处读盘转 base64。
+/// 媒体 source → OpenAI content part JSON；path canonicalize 一次后授权并读取同一路径。
 fn resolve_media(
     source: &MediaSource,
-    media_kind: &str,
+    kind: MediaKind,
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<serde_json::Value, LlmError> {
     match source {
         MediaSource::Inline { data, mime_type } => {
-            if media_kind == "audio" {
+            if matches!(kind, MediaKind::Audio) {
                 Ok(serde_json::json!({
                     "type": "input_audio",
                     "input_audio": {
@@ -192,17 +203,25 @@ fn resolve_media(
             }
         }
         MediaSource::Path { path } => {
-            if !root_check(path) {
+            let original = path;
+            let canonical = std::fs::canonicalize(path).map_err(|_| {
+                LlmError::new(
+                    "UNSUPPORTED_CONTENT",
+                    format!("附件路径不在工作区内：{original}"),
+                )
+            })?;
+            let canonical = canonical.to_string_lossy().to_string();
+            if !root_check(&canonical) {
                 return Err(LlmError::new(
                     "UNSUPPORTED_CONTENT",
-                    format!("附件路径不在工作区内：{path}"),
+                    format!("附件路径不在工作区内：{original}"),
                 ));
             }
-            let bytes = std::fs::read(path)
+            let bytes = std::fs::read(&canonical)
                 .map_err(|e| LlmError::new("UNSUPPORTED_CONTENT", format!("附件读取失败：{e}")))?;
-            let mime = mime_of_path(path, media_kind)?;
+            let mime = mime_of_path(&canonical, kind)?;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            if media_kind == "audio" {
+            if matches!(kind, MediaKind::Audio) {
                 Ok(serde_json::json!({
                     "type": "input_audio",
                     "input_audio": {"data": b64, "format": audio_format(&mime)?}
@@ -215,7 +234,7 @@ fn resolve_media(
             }
         }
         MediaSource::Url { url } => {
-            if media_kind == "audio" {
+            if matches!(kind, MediaKind::Audio) {
                 return Err(LlmError::new("UNSUPPORTED_CONTENT", "音频不支持 url 来源"));
             }
             Ok(serde_json::json!({
@@ -243,8 +262,11 @@ fn build_chat_body(
                         ContentPart::Text { text } => {
                             serde_json::json!({"type": "text", "text": text})
                         }
-                        ContentPart::Media { kind, source } => {
-                            resolve_media(source, kind, root_check)?
+                        ContentPart::Image { source } => {
+                            resolve_media(source, MediaKind::Image, root_check)?
+                        }
+                        ContentPart::Audio { source } => {
+                            resolve_media(source, MediaKind::Audio, root_check)?
                         }
                     });
                 }
@@ -1071,8 +1093,7 @@ mod tests {
                     ContentPart::Text {
                         text: "看图".into(),
                     },
-                    ContentPart::Media {
-                        kind: "image".into(),
+                    ContentPart::Image {
                         source: MediaSource::Path { path: p },
                     },
                 ]),
@@ -1092,14 +1113,83 @@ mod tests {
     }
 
     #[test]
+    fn image_wire_part_deserializes_to_structural_image_variant() {
+        let wire = serde_json::json!({
+            "type": "image",
+            "source": {"kind": "path", "path": "/w/a.png"}
+        });
+        let part: ContentPart = serde_json::from_value(wire).unwrap();
+        assert!(matches!(
+            part,
+            ContentPart::Image {
+                source: MediaSource::Path { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn audio_part_serializes_audio_tag_and_camel_case_mime_type() {
+        let part = ContentPart::Audio {
+            source: MediaSource::Inline {
+                data: "ZA".into(),
+                mime_type: "audio/wav".into(),
+            },
+        };
+        let wire = serde_json::to_value(&part).unwrap();
+        assert_eq!(wire["type"], "audio");
+        assert_eq!(wire["source"]["kind"], "inline");
+        assert_eq!(wire["source"]["mimeType"], "audio/wav");
+    }
+
+    #[test]
+    fn path_attachment_authorizes_and_reads_canonical_path() {
+        let base = std::env::temp_dir().join(format!("sw-attach-canonical-{}", std::process::id()));
+        let root = base.join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("a.png");
+        std::fs::write(&file, b"\x89PNG").unwrap();
+        // macOS exposes /var as a symlink to /private/var; compare canonical forms.
+        let canonical_file = std::fs::canonicalize(&file).unwrap();
+        // A non-canonical request path proves authorization and read use one resolution.
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let link = root.join("sub").join("..").join("a.png");
+
+        let checked_path = std::cell::RefCell::new(String::new());
+        let req = ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![ContentPart::Image {
+                    source: MediaSource::Path {
+                        path: link.to_string_lossy().to_string(),
+                    },
+                }]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        };
+        let body = build_chat_body(&req, false, &|p| {
+            *checked_path.borrow_mut() = p.to_string();
+            p == canonical_file.to_string_lossy()
+        })
+        .unwrap();
+        assert!(body["messages"][0]["content"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert_eq!(checked_path.into_inner(), canonical_file.to_string_lossy());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
     fn root_outside_path_rejected() {
         let req = ChatRequest {
             endpoint_id: "e".into(),
             model: "m".into(),
             messages: vec![ChatMessage {
                 role: "user".into(),
-                content: MessageContent::Parts(vec![ContentPart::Media {
-                    kind: "image".into(),
+                content: MessageContent::Parts(vec![ContentPart::Image {
                     source: MediaSource::Path {
                         path: "/etc/passwd".into(),
                     },
@@ -1129,8 +1219,7 @@ mod tests {
             model: "m".into(),
             messages: vec![ChatMessage {
                 role: "user".into(),
-                content: MessageContent::Parts(vec![ContentPart::Media {
-                    kind: "audio".into(),
+                content: MessageContent::Parts(vec![ContentPart::Audio {
                     source: MediaSource::Url {
                         url: "https://x/a.mp3".into(),
                     },

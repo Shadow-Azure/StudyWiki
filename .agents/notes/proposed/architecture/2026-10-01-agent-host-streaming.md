@@ -22,7 +22,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### 多模态消息模型
 
-消息 content 从纯字符串扩为 part 数组，媒体 part 的 source 是联合类型：`path`（本地文件，Rust 出口读盘转 base64 注入请求体，路径经 root 快照 canonicalize 校验）/ `inline`（剪贴板粘贴与拖拽的 base64，不落盘）/ `url`（远程 URL 原样透传，由 provider 端拉取，客户端不下载）。模型能力门禁前置：endpoint 的 `capabilities` 增 `audio`，消息带图/音频而模型无对应能力时发送前报 `UNSUPPORTED_CONTENT`。
+消息 content 从纯字符串扩为 part 数组；媒体 wire tag 直接是 `image` / `audio`（Rust enum 结构化分派，不用自由字符串 kind），source 是联合类型：`path`（本地文件，Rust 出口读盘转 base64 注入请求体，路径 canonicalize 一次后对同一路径做 root 校验并读取）/ `inline`（剪贴板粘贴与拖拽的 base64，不落盘）/ `url`（远程 URL 原样透传，由 provider 端拉取，客户端不下载）。模型能力门禁前置：endpoint 的 `capabilities` 增 `audio`，消息带图/音频而模型无对应能力时发送前报 `UNSUPPORTED_CONTENT`。
 
 ### chat 槽位与渲染
 
