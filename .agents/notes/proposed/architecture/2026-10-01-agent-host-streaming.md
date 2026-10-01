@@ -26,7 +26,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### chat 槽位与渲染
 
-- 新增通用右栏槽位 `sidebar.right`；内置插件 `app-chat` 是其第一个注册者，后续 agent 插件与外置插件共用该槽位。
+- 新增通用右栏槽位 `sidebar.right`；内置插件 `app-chat` 是其第一个注册者，后续 agent 插件与外置插件共用该槽位。宿主共享 markdown 渲染器住 `src/ui/markdown.ts`。
 - 流式渲染走 rAF 合帧 + markdown-it 全量重解析（`html: false` 不变）：一帧内多个 delta 只重渲一次。reasoning 块默认折叠，流完自动收起；中断保留部分内容并标注「已中断」。
 - 上下文取材接口：activeFile / 工作区快照经 workspace facade 提供（wiki index 归 m2-04）。
 

@@ -26,7 +26,7 @@ Message content grows from a plain string to a part array; the media wire tag is
 
 ### Chat slot and rendering
 
-- Add the generic right-sidebar slot `sidebar.right`; the built-in `app-chat` plugin is its first registrant, and later agent plugins and external plugins share the slot.
+- Add the generic right-sidebar slot `sidebar.right`; the built-in `app-chat` plugin is its first registrant, and later agent plugins and external plugins share the slot. The host-shared markdown renderer lives in `src/ui/markdown.ts`.
 - Streaming rendering batches by rAF and re-parses the full text with markdown-it (`html: false` unchanged): multiple deltas in one frame trigger a single re-render. Reasoning blocks are collapsed by default and fold away once streamed; interruption keeps the partial content and marks it "interrupted".
 - Context-sourcing interface: activeFile / workspace snapshot come through the workspace facade (the wiki index belongs to m2-04).
 
