@@ -31,12 +31,15 @@ interface ChatMessage {
 
 /** An in-flight assistant response and its DOM target. */
 interface ActiveChat {
-  handle: ChatStreamHandle;
+  /** Set once chatStream resolves; null only in the invocation startup gap. */
+  handle: ChatStreamHandle | null;
   /** Latest read-only view returned by the host-owned stream assembler. */
   snapshot: PartialAssistant;
   wrapper: HTMLElement;
   stream: HTMLElement;
   finishing: boolean;
+  /** Retained when Stop is clicked before the stream handle exists. */
+  stopRequested: boolean;
 }
 
 /** Shape of the workspace facade consumed by this UI plugin. */
@@ -155,11 +158,12 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     transcript.append(wrapper);
     transcript.scrollTop = transcript.scrollHeight;
     return {
-      handle: null as unknown as ChatStreamHandle,
+      handle: null,
       snapshot: { reasoning: "", text: "", toolCalls: [] },
       stream,
       wrapper,
       finishing: false,
+      stopRequested: false,
     };
   };
 
@@ -174,6 +178,18 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     if (disposed) return;
     if (!active.snapshot.error) active.snapshot = { ...active.snapshot, error };
     if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
+    current = null;
+    paintSendButton();
+  };
+
+  const finishNeutralEnd = (active: ActiveChat): void => {
+    if (disposed || active.finishing) return;
+    active.finishing = true;
+    if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
+    const marker = document.createElement("div");
+    marker.className = "chat-interrupted";
+    marker.textContent = "已结束";
+    active.wrapper.append(marker);
     current = null;
     paintSendButton();
   };
@@ -193,7 +209,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   const stop = (): void => {
     if (!current) return;
     const active = current;
-    void active.handle.abort().then(() => markInterrupted(active)).catch(() => markInterrupted(active));
+    active.stopRequested = true;
+    void active.handle?.abort().then(() => markInterrupted(active)).catch(() => markInterrupted(active));
   };
 
   const retryLastUser = (): void => {
@@ -220,6 +237,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
         messages: [...messages],
       });
       active.handle = handle;
+      if (active.stopRequested) {
+        void handle.abort().then(() => markInterrupted(active)).catch(() => markInterrupted(active));
+      }
       const settled = handle.settled.catch((error: unknown) => {
         if (disposed) return;
         if (!active.snapshot.error) {
@@ -238,6 +258,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
       renderer.update(active.snapshot);
       if (active.snapshot.finishReason) finishComplete(active);
       else if (active.snapshot.error) finishError(active, active.snapshot.error);
+      else finishNeutralEnd(active);
     } catch (error) {
       if (disposed || current !== active) return;
       if (current === active) {
@@ -365,7 +386,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
 
   return () => {
     disposed = true;
-    void current?.handle.abort().catch(() => {});
+    void current?.handle?.abort().catch(() => {});
     offWorkspace();
     offSlot();
   };

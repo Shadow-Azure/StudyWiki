@@ -19,7 +19,7 @@ function stagedSnapshots(script: StreamChunk[]): PartialAssistant[] {
   });
 }
 
-function fakeCtx(script: StreamChunk[]) {
+function fakeCtx(script: StreamChunk[], settled: Promise<unknown> = Promise.resolve()) {
   let host: HTMLElement | null = null;
   const snapshots = stagedSnapshots(script);
   const ctx = {
@@ -43,7 +43,7 @@ function fakeCtx(script: StreamChunk[]) {
         return {
           events,
           snapshot: () => snapshots[Math.min(stage++, snapshots.length - 1)] ?? { reasoning: "", text: "", toolCalls: [] },
-          settled: Promise.resolve(),
+          settled,
           abort: async () => { aborted = true; },
         };
       },
@@ -85,7 +85,10 @@ describe("app-chat", () => {
   });
 
   it("流式中发送键变停止，点击调 abort 并标已中断", async () => {
-    const { ctx } = fakeCtx([{ type: "text-delta", index: 0, text: "半截" }]);
+    const { ctx } = fakeCtx(
+      [{ type: "text-delta", index: 0, text: "半截" }],
+      new Promise(() => {}),
+    );
     const dispose = apply(ctx as never, {}, syncDeps);
     document.querySelector("textarea")!.value = "q";
     document.querySelector<HTMLButtonElement>(".chat-send")!.click();
@@ -96,6 +99,39 @@ describe("app-chat", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(aborted).toBe(true);
     expect(document.body.textContent).toContain("已中断");
+    dispose();
+  });
+
+  it("handle 建立前的停止请求不丢失", async () => {
+    const { ctx } = fakeCtx([{ type: "text-delta", index: 0, text: "半截" }]);
+    let abortCount = 0;
+    ctx.llm.chatStream = () => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        events: (async function* () {})(),
+        snapshot: () => ({ reasoning: "", text: "半截", toolCalls: [] }),
+        settled: new Promise(() => {}),
+        abort: async () => { abortCount += 1; aborted = true; },
+      }), 1);
+    });
+    const dispose = apply(ctx as never, {}, syncDeps);
+    document.querySelector("textarea")!.value = "q";
+    document.querySelector<HTMLButtonElement>(".chat-send")!.click();
+    expect(document.querySelector<HTMLButtonElement>(".chat-send")!.textContent).toContain("停止");
+    expect(() => document.querySelector<HTMLButtonElement>(".chat-send")!.click()).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(abortCount).toBe(1);
+    expect(document.body.textContent).toContain("已中断");
+    dispose();
+  });
+
+  it("EOF 无 finish 时也复位发送键并标注已结束", async () => {
+    const { ctx } = fakeCtx([{ type: "text-delta", index: 0, text: "半截" }]);
+    const dispose = apply(ctx as never, {}, syncDeps);
+    document.querySelector("textarea")!.value = "q";
+    document.querySelector<HTMLButtonElement>(".chat-send")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(document.querySelector<HTMLButtonElement>(".chat-send")!.textContent).toBe("发送");
+    expect(document.body.textContent).toContain("已结束");
     dispose();
   });
 
@@ -151,7 +187,10 @@ describe("app-chat", () => {
   });
 
   it("卸载中止在途流", async () => {
-    const { ctx } = fakeCtx([{ type: "text-delta", index: 0, text: "x" }]);
+    const { ctx } = fakeCtx(
+      [{ type: "text-delta", index: 0, text: "x" }],
+      new Promise(() => {}),
+    );
     const dispose = apply(ctx as never, {}, syncDeps);
     document.querySelector("textarea")!.value = "q";
     document.querySelector<HTMLButtonElement>(".chat-send")!.click();
