@@ -327,6 +327,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         llm::llm_list_endpoints,
         llm::llm_upsert_endpoint,
         llm::llm_remove_endpoint,
+        llm::llm_reveal_key,
         llm::llm_probe,
         llm::llm_set_default_model,
         llm::llm_chat

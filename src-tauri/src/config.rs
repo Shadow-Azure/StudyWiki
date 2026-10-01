@@ -60,6 +60,10 @@ pub struct Endpoint {
     pub base_url: String,
     #[serde(rename = "apiKey", default)]
     pub api_key: String,
+    /// 编辑态 dirty 标记（IPC 入线专用，绝不持久化）：true = apiKey 为显式新值
+    /// 或显式清空；false/缺省 = 空 apiKey 表示保留已存 key（见 llm.rs upsert_into）。
+    #[serde(default, rename = "apiKeyDirty", skip_serializing)]
+    pub api_key_dirty: bool,
     #[serde(default)]
     pub models: Vec<ModelEntry>,
 }
@@ -276,11 +280,21 @@ mod tests {
             kind: "chat".into(),
             base_url: "https://api.deepseek.com/v1".into(),
             api_key: "sk-1234567890abcdef".into(),
+            api_key_dirty: false,
             models: vec![ModelEntry {
                 id: "deepseek-v4-flash".into(),
                 capabilities: vec!["text".into()],
             }],
         }
+    }
+
+    #[test]
+    fn endpoint_serialization_skips_dirty_flag() {
+        let mut e = sample_endpoint();
+        e.api_key_dirty = true;
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("apiKey"));
+        assert!(!json.contains("apiKeyDirty"));
     }
 
     #[test]

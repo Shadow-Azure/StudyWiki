@@ -63,6 +63,8 @@ export interface EndpointInput {
   kind: string;
   baseUrl: string;
   apiKey: string;
+  /** 编辑态 dirty：true = apiKey 为显式值（空串 = 显式清空）；缺省 = 空 apiKey 表示保留已存 key。 */
+  apiKeyDirty?: boolean;
   models: ModelEntry[];
 }
 
@@ -131,6 +133,12 @@ export class LlmService {
   /** 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达；未知模型 INVALID_CONFIG）。 */
   setDefaultModel(model: string | null): Promise<void> {
     return this.#call<void>("llm_set_default_model", { model });
+  }
+
+  /** 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；
+   * 仅内置插件面——guard 外置白名单不含本方法）。 */
+  revealKey(id: string): Promise<string> {
+    return this.#call<string>("llm_reveal_key", { id });
   }
 
   /** 探测 endpoint（GET /models），成功返回延迟 ms。 */

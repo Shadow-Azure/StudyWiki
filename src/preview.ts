@@ -52,6 +52,7 @@ class PreviewLlm {
   listEndpoints() { return Promise.resolve(this.#endpoints); }
   upsertEndpoint(e: unknown) { this.#endpoints.endpoints.push(e); return Promise.resolve(); }
   removeEndpoint() { return Promise.resolve(); }
+  revealKey() { return Promise.resolve("preview-key"); }
   probe() { return Promise.resolve(12); }
 }
 

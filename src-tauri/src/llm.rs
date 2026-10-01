@@ -251,12 +251,13 @@ fn find_endpoint(s: &Settings, id: &str) -> Result<Endpoint, LlmError> {
 }
 
 /// upsert 本体：先校验（INVALID_CONFIG），再按 id 替换或追加。
-/// 编辑态保护：key 只进不出（前端永远拿不到完整 key），incoming 空 apiKey 时
-/// 保留既有同 id endpoint 的 key——避免"改个名字顺手清掉密钥"。
+/// key 语义由 dirty 标记区分（编辑表单回填掩码，\“没动\”与\“删空\”在 wire 上
+/// 曾无法区分）：apiKeyDirty false/缺省且空 apiKey = 保留已存 key（安全默认，
+/// 避免"改个名字顺手清掉密钥"）；dirty true = 按传入值更新，空即显式清空。
 fn upsert_into(s: &mut Settings, mut e: Endpoint) -> Result<(), LlmError> {
     config::validate_endpoint(&e).map_err(|m| LlmError::new("INVALID_CONFIG", m))?;
     if let Some(slot) = s.endpoints.iter_mut().find(|x| x.id == e.id) {
-        if e.api_key.is_empty() {
+        if !e.api_key_dirty && e.api_key.is_empty() {
             e.api_key = slot.api_key.clone();
         }
         *slot = e;
@@ -264,6 +265,11 @@ fn upsert_into(s: &mut Settings, mut e: Endpoint) -> Result<(), LlmError> {
         s.endpoints.push(e);
     }
     Ok(())
+}
+
+/// 按 id 返回完整 apiKey 明文（编辑态眼睛揭示用；纯函数便于测试）。
+fn reveal_key(s: &Settings, id: &str) -> Result<String, LlmError> {
+    Ok(find_endpoint(s, id)?.api_key)
 }
 
 /// 默认模型本体：Some(id) 须是任一 endpoint 已声明模型（INVALID_CONFIG）；None 清除。
@@ -340,6 +346,15 @@ pub fn llm_remove_endpoint(app: AppHandle, id: String) -> Result<(), LlmError> {
             format!("endpoint 不存在：{id}"),
         ))
     }
+}
+
+/// 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；
+/// 命令面仅内置插件可达——guard.ts 外置白名单不含本命令）。
+#[tauri::command]
+pub fn llm_reveal_key(app: AppHandle, id: String) -> Result<String, LlmError> {
+    let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+    let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+    reveal_key(&s, &id)
 }
 
 /// 探测：GET /models，成功返回延迟 ms。async 命令 + spawn_blocking：
@@ -449,6 +464,7 @@ mod tests {
             kind: "chat".into(),
             base_url: base_url.into(),
             api_key: key.into(),
+            api_key_dirty: false,
             models: vec![ModelEntry {
                 id: "m1".into(),
                 capabilities: vec!["text".into()],
@@ -561,6 +577,45 @@ mod tests {
         assert_eq!(json["finishReason"], "stop");
         assert_eq!(json["usage"]["promptTokens"], 3);
         assert_eq!(json["usage"]["completionTokens"], 2);
+    }
+
+    #[test]
+    fn upsert_dirty_empty_clears_existing_key() {
+        let mut s = Settings {
+            version: 1,
+            endpoints: vec![ep("https://h", "secret")],
+            default_model: None,
+        };
+        let mut incoming = ep("https://h", "");
+        incoming.id = "e1".into();
+        incoming.api_key_dirty = true;
+        upsert_into(&mut s, incoming).unwrap();
+        assert_eq!(s.endpoints[0].api_key, "");
+    }
+
+    #[test]
+    fn upsert_dirty_new_key_replaces() {
+        let mut s = Settings {
+            version: 1,
+            endpoints: vec![ep("https://h", "secret")],
+            default_model: None,
+        };
+        let mut incoming = ep("https://h", "new-key");
+        incoming.id = "e1".into();
+        incoming.api_key_dirty = true;
+        upsert_into(&mut s, incoming).unwrap();
+        assert_eq!(s.endpoints[0].api_key, "new-key");
+    }
+
+    #[test]
+    fn reveal_key_returns_full_secret_and_unknown_fails() {
+        let s = Settings {
+            version: 1,
+            endpoints: vec![ep("https://h", "secret")],
+            default_model: None,
+        };
+        assert_eq!(reveal_key(&s, "e1").unwrap(), "secret");
+        assert_eq!(reveal_key(&s, "nope").unwrap_err().code, "ENDPOINT_UNKNOWN");
     }
 
     #[test]

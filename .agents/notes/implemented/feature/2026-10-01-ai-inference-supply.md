@@ -24,7 +24,7 @@ Status: implemented
 
 ### 用户配置根 `~/.studywiki/`
 
-统一用户配置目录：Tauri `app.path().home_dir()` + `.studywiki`（零新 Cargo 依赖），三端同形（Windows 为 `C:\Users\<name>\.studywiki\`），无环境变量分支，对标 `~/.claude` / `~/.codex` 的可发现性。现有 `app_config_dir()` 下的 `plugins.json` 与 `plugins/` 一并迁入；`plugin_dir` / `read_manifest` / `write_manifest` 三处切到新模块 `config.rs` 的 `studywiki_dir()`。启动一次性迁移：老目录有条目且新目录缺席则 move；两边都有以新目录为准，老条目保留不删（迁移幂等可重入）。
+统一用户配置目录：Tauri `app.path().home_dir()` + `.studywiki`（零新 Cargo 依赖），三端同形（Windows 为 `C:\Users\<name>\.studywiki`），无环境变量分支，对标 `~/.claude` / `~/.codex` 的可发现性。现有 `app_config_dir()` 下的 `plugins.json` 与 `plugins/` 一并迁入；`plugin_dir` / `read_manifest` / `write_manifest` 三处切到新模块 `config.rs` 的 `studywiki_dir()`。启动一次性迁移：老目录有条目且新目录缺席则 move；两边都有以新目录为准，老条目保留不删（迁移幂等可重入）。
 
 ### 配置契约 `~/.studywiki/settings.json`
 
@@ -74,7 +74,7 @@ Status: implemented
 
 ### 密钥立场
 
-settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件白名单不含写命令。仓库不存密钥的约束不受影响（用户目录）。
+settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件白名单不含写命令，也不含 `llm_reveal_key`（编辑态眼睛按需揭示明文的专用命令，仅内置插件可达）。编辑表单回填掩码（keyPreview）+ 眼睛切换明文；保存语义由 dirty 标记区分：未动掩码 = 保留已存 key，动过（新 key / 删空 / 揭示后明文）= 按现值更新，删空即显式清空——“没动 key 栏”与“故意清空”自此在 wire 上可区分。仓库不存密钥的约束不受影响（用户目录）。
 
 ### 门禁与文档
 

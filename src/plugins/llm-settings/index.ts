@@ -1,6 +1,6 @@
 import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
-import type { LlmPreset, RedactedEndpoint } from "../../host/llm";
+import type { EndpointInput, LlmPreset, RedactedEndpoint } from "../../host/llm";
 import { blankDraft, CUSTOM_VENDOR, instantiatePreset, validateDraft, type EndpointDraft } from "./model";
 
 /** Plugin id in the manifest and the static module table. */
@@ -244,7 +244,7 @@ function endpointRow(ctx: Context, e: RedactedEndpoint, rerender: () => Promise<
         apiKey: "",
         models: e.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
       };
-      void renderForm(ctx, presets, rerender, draft);
+      void renderForm(ctx, presets, rerender, draft, e);
     });
   });
   const remove = document.createElement("button");
@@ -271,6 +271,7 @@ async function renderForm(
   presets: LlmPreset[],
   rerender: () => Promise<void>,
   initial?: EndpointDraft,
+  endpoint?: RedactedEndpoint,
 ): Promise<void> {
   const overlay = document.querySelector(".llm-panel");
   if (!overlay) return;
@@ -372,13 +373,39 @@ async function renderForm(
       }
       if (name === "id" || name === "baseUrl") input.classList.add("llm-mono");
       if (name === "apiKey") {
-        input.type = "password";
         input.autocomplete = "off";
-        input.placeholder = initial ? "留空 = 保留已存 key" : "粘贴厂商控制台签发的 API Key（自托管可留空）";
+        input.placeholder = initial
+          ? "已存 key 以掩码显示；输入即替换，删空 = 清除"
+          : "粘贴厂商控制台签发的 API Key（自托管可留空）";
+        // 编辑态回填掩码（完整 key 从不随列表出 Rust）；眼睛按需换明文，输入即明文编辑。
+        if (initial && endpoint) input.value = endpoint.keyPreview;
+        const row = document.createElement("div");
+        row.className = "llm-key-row";
+        row.append(input);
+        if (initial && endpoint?.hasKey) {
+          const eye = labelButton("eye", "", { className: "btn btn-ghost icon-btn", ariaLabel: "显示密钥" });
+          eye.type = "button";
+          eye.dataset.action = "toggle-key";
+          eye.title = "显示/隐藏完整密钥";
+          let revealed = false;
+          eye.addEventListener("click", () => {
+            void (async () => {
+              if (revealed) {
+                input.value = endpoint.keyPreview;
+                revealed = false;
+              } else {
+                input.value = await ctx.llm.revealKey(endpoint.id);
+                revealed = true;
+              }
+              setField("apiKey", input.value);
+            })();
+          });
+          row.append(eye);
+        }
         const keyHint = document.createElement("span");
         keyHint.className = "llm-hint";
         keyHint.textContent = "仅保存在本机 ~/.studywiki/settings.json（0600）";
-        f.append(l, input, keyHint);
+        f.append(l, row, keyHint);
       } else {
         f.append(l, input);
       }
@@ -458,8 +485,17 @@ async function renderForm(
       return;
     }
     error.textContent = "";
+    // key 保存语义：编辑态未动掩码 = 保留（空 + 无 dirty，Rust 安全默认）；
+    // 动过（新 key / 删空 / 眼睛揭示后明文）= 按现值更新，dirty 标记区分显式清空。
+    const keyDirty = Boolean(initial && endpoint && draft.apiKey !== endpoint.keyPreview);
+    const payload: EndpointInput = {
+      ...draft,
+      // 新增态原样传（空 key 合法）；编辑态未动掩码 = 保留（空 + 无 dirty）。
+      apiKey: keyDirty || !initial ? draft.apiKey : "",
+    };
+    if (keyDirty) payload.apiKeyDirty = true;
     void ctx.llm
-      .upsertEndpoint(draft)
+      .upsertEndpoint(payload)
       .then(() => rerender())
       .catch((err) => (error.textContent = errorMessage(err)));
   });

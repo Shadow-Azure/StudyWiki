@@ -74,7 +74,7 @@ The list view uses a scrollable card layout with vendor summary chips at the top
 
 ### Key-storage stance
 
-Plaintext in settings.json, at the same water level as Claude Code (plaintext token in `~/.claude/settings.json` env), Codex (`~/.codex/auth.json`), and dsh (literal `apiKey` as a first-class citizen). Hardening: 0600 file permissions; the command surface is write-only for keys (list is redacted); the external-plugin whitelist excludes write commands. The "no secrets in the repo" constraint is unaffected (user directory).
+Plaintext in settings.json, at the same water level as Claude Code (plaintext token in `~/.claude/settings.json` env), Codex (`~/.codex/auth.json`), and dsh (literal `apiKey` as a first-class citizen). Hardening: file mode 0600; the command surface is in-only (list is redacted); the external-plugin allowlist excludes write commands and also `llm_reveal_key` (the dedicated command behind the edit-form eye toggle that reveals the plaintext on demand — built-in plugin only). The edit form refills the mask (keyPreview) with an eye toggle for plaintext; save semantics are distinguished by a dirty flag: untouched mask = keep the stored key, touched (new key / cleared / revealed plaintext) = save as-is, so an empty value is an explicit clear — "untouched" and "deliberately cleared" are now distinguishable on the wire.
 
 ### Gates and docs
 

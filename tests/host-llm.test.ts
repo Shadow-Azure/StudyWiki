@@ -119,6 +119,18 @@ describe("LlmService", () => {
     ]);
   });
 
+  it("reveals the full key through llm_reveal_key (built-in only)", async () => {
+    const calls: { cmd: string; args?: unknown }[] = [];
+    const llm = new LlmService({
+      invoke: (cmd, args) => {
+        calls.push({ cmd, args });
+        return Promise.resolve("sk-full-secret");
+      },
+    });
+    await expect(llm.revealKey("e1")).resolves.toBe("sk-full-secret");
+    expect(calls).toEqual([{ cmd: "llm_reveal_key", args: { id: "e1" } }]);
+  });
+
   it("exposes presets, upsert, remove and probe as thin command wrappers", async () => {
     const calls: { cmd: string; args?: unknown }[] = [];
     const llm = new LlmService(depsWith(calls));
