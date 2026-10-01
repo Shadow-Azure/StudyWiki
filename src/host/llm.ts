@@ -25,11 +25,11 @@ export class LlmError extends Error {
   }
 }
 
-/** One model entry inside an endpoint (capabilities: text / vision). */
+/** One model entry inside an endpoint (capabilities: text / vision / audio). */
 export interface ModelEntry {
   /** Model id sent as the OpenAI-compatible `model` field. */
   id: string;
-  /** Declared capabilities, e.g. ["text", "vision"]. */
+  /** Declared capabilities, e.g. ["text", "vision", "audio"]. */
   capabilities: string[];
 }
 

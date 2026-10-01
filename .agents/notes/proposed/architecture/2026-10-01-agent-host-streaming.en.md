@@ -43,4 +43,5 @@ Message content grows from a plain string to a part array; the media wire tag is
 ## Consequences
 
 - The guard whitelist for `llm` gains `chatStream`; `SlotName` gains `sidebar.right`; the commands.md generated section gains `llm_chat_stream` / `llm_chat_abort`; the normalized error vocabulary gains `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`.
+- Final semantics: abort is the explicit `llm_chat_abort` command plus a send-failure backstop, not literal Channel-drop GC; the sole assembly point lives in host `llm_stream.ts`, and `ChatStreamHandle.snapshot()` also resolves the earlier "partial snapshot" wording.
 - Debts: `tool-call-delta` has no consumer this round; sessions are not persisted (reopening clears them); block-level incremental rendering remains a performance optimization; remote url sources depend on provider reachability, and a self-hosted endpoint that cannot reach the public internet reports through the transport error semantics.

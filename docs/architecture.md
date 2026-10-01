@@ -34,7 +34,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/app-chat/attachments.ts  app-chat 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收
   plugins/app-chat/index.ts        app-chat 插件：右侧栏内存会话 + chat 流式请求/渲染/停止/重试 + 模型选择与多模态附件 chips（→ llm-stream.ts、llm.ts、attachments.ts、render.ts）
   plugins/app-chat/render.ts       app-chat 渲染：rAF 合帧 partial 快照 → reasoning/Markdown/工具/usage/error 视图（→ llm-stream.ts、markdown.ts）
-  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
+  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts     doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
   plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存重试/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）
@@ -88,23 +88,25 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat` / `ctx.llm.chatStream` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat` / `llm_chat_stream` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization）；流式 chunk 经 Channel 回调，`llm_chat_abort` 置停；归一错误码原路返回。
+数据流：树读取——选文件夹→`read_tree` 定 kind→view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file`+markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown/excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat`/`ctx.llm.chatStream` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN`/`MODEL_AMBIGUOUS`/`MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat`/`llm_chat_stream` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization）；流式经 Channel，`llm_chat_abort` 置停；错误同路。
 
 ## 关键决策点
 
-- **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS` / `VIDEO_EXTS` / `EXCEL_EXTS`）：单一决策点。
+- **扩展名分派在 Rust 侧**（`MARKDOWN_EXTS`/`VIDEO_EXTS`/`EXCEL_EXTS`）：单一决策点。
 - **xlsx 语义在前端 ExcelJS，Rust 只作字节边界**：`ctx.excel` 持 workbook 并强制 1_000_000 声明维度单元格上限；Rust 只搬运与原子写。
 - **切换守卫住宿主 `WorkspaceService`，Context 只挂 `WorkspaceFacade`**：文件 / 换根共用守卫；脏同路径重开 no-op；windows 绑定内部 controller，Rust 授权前先确认。
 - **关窗先主进程取消**：macOS `_close:`/红点/`terminate:` 入守卫，确认才 `destroy()`。
-- **vendored cordis，取契约弃装载器**：静态模块表 + 清单装载，组合是数据；升级 = 手动 diff + [vendor/VENDORED.md](../vendor/VENDORED.md) 登记。
+- **vendored cordis，取契约弃装载器**：静态模块表+清单装载，组合是数据；升级 = 手动 diff+[vendor/VENDORED.md](../vendor/VENDORED.md) 登记。
 - **分层纪律**：`src/plugins/` 禁 import `@tauri-apps/*`（`pnpm verify:layering` 校验）；全局状态住 Rust，窗口状态住 Context。
 - **assetProtocol 配置 scope 为空，运行期动态授权**：选中/建窗/启动携带 root 时 Rust `allow_directory`（recursive）注入——视频与图片仍走 asset protocol，但配置面不再预开任意目录。
 - **markdown-it 构建期打包，`html: false`**：环境无关（见下）推论，兼降 XSS 面。
-- **系统 webview 做渲染与视频解码**（WKWebView / WebView2 / webkit2gtk）：体积与依赖取舍，见 [environment-independence.md](environment-independence.md)。
+- **系统 webview 做渲染与视频解码**（WKWebView/WebView2/webkit2gtk）：体积与依赖取舍，见 [environment-independence.md](environment-independence.md)。
 - **`~/.studywiki` 为用户配置根**：三端同形，老 `app_config_dir` 数据启动一次性迁移（幂等可重入）。
-- **密钥明文存 settings.json + 0600**：与 Claude Code / Codex / dsh 同水位；命令面只进不出（list 脱敏），外置插件白名单不含写操作。
-- **Rust 为薄能力层（持久化 + egress）**：模型路由与未来 agent 循环均在前端（对照 dsh：native 只做能力隔离）；厂商预设 baseUrl 只存在于 Rust 侧。
-- **外置插件装载走 blob URL**：Rust 命令读入口源码 → JS Blob → 动态 import；单文件零依赖契约使 blob 的常见弱点（相对导入、URL 生命周期）归零，且通道可在 vitest 注入假 import 全链路测试；自定义协议 ESM 只能真实 webview 验证，留作备选（Phase 2 Note 决策 1 落定记录）。
+- **密钥明文存 settings.json + 0600**：与 Claude Code/Codex/dsh 同水位；命令面只进不出（list 脱敏），外置插件白名单不含写操作。
+- **Rust 为薄能力层（持久化+egress）**：模型路由与未来 agent 循环均在前端（对照 dsh：native 只做能力隔离）；厂商预设 baseUrl 只存在于 Rust 侧。
+- **外置插件装载走 blob URL**：Rust 命令读入口源码→JS Blob→动态 import；单文件零依赖契约使 blob 的常见弱点（相对导入、URL 生命周期）归零，且通道可在 vitest 注入假 import 全链路测试；自定义协议 ESM 只能真实 webview 验证，留作备选（Phase 2 Note 决策 1 落定记录）。
+- **流式走 `ipc::Channel` 而非事件广播**：单消费者有序/多窗口隔离；`llm_chat_abort` 显式置停。
+- **附件三源联合**：path 由 Rust 出口读盘转 base64/inline 不落盘/url 透传 provider。
 - **npm 当仓库用、不当运行时用**：联网只发生在 Rust 安装命令（ureq+rustls 纯 Rust 栈），运行全程离线（[environment-independence.md](environment-independence.md) 豁免登记）。
 
 ## 环境无关性

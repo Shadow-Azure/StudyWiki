@@ -44,3 +44,11 @@ Plugging an AI agent into external plugins needs host-side inference, a chat UI 
 
 - External plugins can run inference, render chat, and read context through host services without touching `@tauri-apps/*`.
 - `pnpm verify:layering` and `pnpm verify:env-independence` are green.
+
+Landing record (2026-10-01):
+
+- Pipeline: external plugins call `ctx.llm.chatStream` through the guard whitelist; host `src/host/llm-stream.ts` owns the FIFO queue and chunk-to-message assembly, while consumers read only `ChatStreamHandle.snapshot()`; Rust hand-rolled SSE parsing feeds `ipc::Channel`, with explicit `llm_chat_abort` stopping and a send-failure backstop.
+- Commands and errors: the generated command catalog registers `llm_chat_stream` / `llm_chat_abort`; the external `llm` surface is `listEndpoints`/`probe`/`chat`/`chatStream`; the error vocabulary adds `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`.
+- UI: `sidebar.right` is the fourth slot and registers `app-chat`, with rAF streaming Markdown/reasoning, stop, failure retry, and model selection; pasted/dropped image/audio become inline sources; llm-settings gains an audio capability checkbox.
+- Attachments and context: media sources union path (Rust reads and base64-encodes at egress)/inline (never persisted)/url (passed through to the provider); the workspace facade exposes activeFile/events/openFile/guardSwitch, chat shows the active filename, and the wiki index remains m2-04. The first 📎 is disabled because the host has no file-dialog seam yet.
+- Gates: `vitest run` is green across 63 files / 461 tests; `cargo test` is 76/76 green; `verify:layering` / `verify:env-independence` / `verify:dep-audit` / `verify:flow` / `verify:commands` are green; after recording this issue, `lint:docs` and `verify:docs` are rerun to confirm.

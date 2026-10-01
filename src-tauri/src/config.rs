@@ -42,7 +42,7 @@ pub fn migrate_legacy<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), Strin
     migrate_legacy_dirs(&legacy, &app_studywiki_dir(app)?)
 }
 
-/// 单个模型的声明（能力：text / vision）。
+/// 单个模型的声明（能力：text / vision / audio）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ModelEntry {
     pub id: String,
