@@ -8,6 +8,11 @@ milestone: m2
 priority: P0
 status: done
 scope:
+  - .agents/flow/issues/m2-01-ai-inference-supply.*
+  - .agents/flow/milestones/m2-ai-agent-host.*
+  - .agents/plans/**
+  - src/**
+  - tests/**
   - src-tauri/**
   - src/host/**
   - src/plugins/**
@@ -16,6 +21,8 @@ scope:
   - docs/commands.*
   - package.json
   - scripts/dep-allowlist.json
+  - scripts/code-map.manifest.json
+  - scripts/doc-budgets.manifest.json
   - .agents/notes/**
 adr:
   - ../../notes/proposed/architecture/2026-09-19-ai-inference-supply.md
