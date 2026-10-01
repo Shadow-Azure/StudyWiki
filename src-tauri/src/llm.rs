@@ -10,7 +10,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// chat 超时：大模型生成可达数分钟，给满 300s。
 const CHAT_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// 归一错误：code 为全链路共享词表（前端路由层另有 MODEL_* 三码）。
+/// 归一错误：code 为全链路共享词表（前端路由层另有 MODEL_* 三码；
+/// INTERNAL 仅由 async 命令的后台任务 JoinError 产生，正常路径不可达）。
 #[derive(Debug, Serialize)]
 pub struct LlmError {
     pub code: String,
@@ -341,13 +342,20 @@ pub fn llm_remove_endpoint(app: AppHandle, id: String) -> Result<(), LlmError> {
     }
 }
 
-/// 探测：GET /models，成功返回延迟 ms。
+/// 探测：GET /models，成功返回延迟 ms。async 命令 + spawn_blocking：
+/// ureq 是阻塞调用，留在同步命令里会随 tauri-macros 的 body_blocking
+/// 在主线程执行，探测卡住（最长 10s）期间全窗口冻结。
 #[tauri::command]
-pub fn llm_probe(app: AppHandle, id: String) -> Result<u64, LlmError> {
-    let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
-    let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
-    let ep = find_endpoint(&s, &id)?;
-    probe_with(&probe_agent(), &ep)
+pub async fn llm_probe(app: AppHandle, id: String) -> Result<u64, LlmError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir =
+            config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let ep = find_endpoint(&s, &id)?;
+        probe_with(&probe_agent(), &ep)
+    })
+    .await
+    .map_err(|e| LlmError::new("INTERNAL", format!("探测后台任务异常终止：{e}")))?
 }
 
 /// 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达）。
@@ -359,13 +367,20 @@ pub fn llm_set_default_model(app: AppHandle, model: Option<String>) -> Result<()
     config::save_settings(&dir, &s).map_err(|e| LlmError::new("INVALID_CONFIG", e))
 }
 
-/// 非流式 chat：endpointId + model 由前端路由，Rust 纯传输。
+/// 非流式 chat：endpointId + model 由前端路由，Rust 纯传输。async 命令 +
+/// spawn_blocking：大模型生成可达数分钟，同步命令会让主线程冻结整个事件循环
+/// （所有窗口 UI 与关窗守卫失效），必须下放 worker 线程。
 #[tauri::command]
-pub fn llm_chat(app: AppHandle, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-    let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
-    let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
-    let ep = find_endpoint(&s, &req.endpoint_id)?;
-    chat_with(&chat_agent(), &ep, &req)
+pub async fn llm_chat(app: AppHandle, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir =
+            config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let ep = find_endpoint(&s, &req.endpoint_id)?;
+        chat_with(&chat_agent(), &ep, &req)
+    })
+    .await
+    .map_err(|e| LlmError::new("INTERNAL", format!("chat 后台任务异常终止：{e}")))?
 }
 
 #[cfg(test)]
@@ -594,5 +609,21 @@ mod tests {
         let mut e = ep("https://h", "");
         e.id = String::new();
         assert_eq!(upsert_into(&mut s, e).unwrap_err().code, "INVALID_CONFIG");
+    }
+}
+
+#[cfg(test)]
+mod async_command_tests {
+    use super::*;
+
+    /// tauri-macros 对同步命令生成 body_blocking（IPC 处理器内联执行 → 主线程）；
+    /// 网络命令必须是 async fn（宏走 respond_async 挂 async runtime），
+    /// 否则一次推理（最长 300s）期间所有窗口冻结、关窗守卫失效。
+    #[test]
+    fn chat_and_probe_commands_are_async() {
+        fn assert_async_chat<F: std::future::Future>(_f: fn(AppHandle, ChatRequest) -> F) {}
+        fn assert_async_probe<F: std::future::Future>(_f: fn(AppHandle, String) -> F) {}
+        assert_async_chat(llm_chat);
+        assert_async_probe(llm_probe);
     }
 }

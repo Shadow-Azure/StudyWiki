@@ -18,7 +18,7 @@ Status: implemented
 | 前端宿主服务 `ctx.llm`（第七服务） | 模型路由（`chat({model})` 解析归属 endpoint）、脱敏列表、inject 白名单 | 直接持 key、直接发网络请求 |
 | 内置 `llm-settings` 插件 | 纯 UI：厂商预设实例化、填 key、探测 | 业务逻辑 |
 
-调用形态：插件调 `ctx.llm.chat({model, messages})` → 前端路由出 `(endpointId, model)` → invoke Rust `llm_chat` → 复用既有 `ureq`（rustls）发 HTTPS → 归一错误后原路返回。非流式一趟 IPC；流式在 m2-02 用 Tauri `ipc::Channel` 增量加入，调用形状不变。
+调用形态：插件调 `ctx.llm.chat({model, messages})` → 前端路由出 `(endpointId, model)` → invoke Rust `llm_chat` → 复用既有 `ureq`（rustls）发 HTTPS → 归一错误后原路返回。`llm_chat` / `llm_probe` 为 async 命令 + `spawn_blocking`（同步命令会随 tauri-macros `body_blocking` 在主线程执行，推理最长 300s 期间全窗口冻结）。非流式一趟 IPC；流式在 m2-02 用 Tauri `ipc::Channel` 增量加入，调用形状不变。
 
 论据（与 dsh 对照）：dsh 的 agent/llm/tools 全在 TS 侧（`ctx.llm` / `ctx.tools` / `ctx.agents` 三正交服务，agent-loop 也只是插件），native 只做能力隔离（landlock-run）；m2-02 issue scope 已排除 `src-tauri/**`；插件契约是单文件零依赖 JS。
 
@@ -62,7 +62,7 @@ Status: implemented
 | `llm_probe(endpoint_id)` | OpenAI 兼容 `GET /models` 轻量探测，成功返回延迟 ms |
 | `llm_chat({endpointId, model, messages, …})` | 非流式 chat/completions，纯传输 |
 
-归一错误码（全链路共享词表）：Rust 传输层 `UNREACHABLE` / `UNAUTHORIZED` / `TIMEOUT` / `RATE_LIMITED` / `BAD_RESPONSE` / `ENDPOINT_UNKNOWN`；upsert 校验 `INVALID_CONFIG`；前端路由层 `MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED`。插件只处理同一套码。
+归一错误码（全链路共享词表）：Rust 传输层 `UNREACHABLE` / `UNAUTHORIZED` / `TIMEOUT` / `RATE_LIMITED` / `BAD_RESPONSE` / `ENDPOINT_UNKNOWN`（`INTERNAL` 仅由 async 命令后台任务异常终止产生，正常路径不可达）；upsert 校验 `INVALID_CONFIG`；前端路由层 `MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED`。插件只处理同一套码。
 
 ### 前端宿主服务与内置插件
 

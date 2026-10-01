@@ -113,17 +113,21 @@ pub fn llm_upsert_endpoint(app: AppHandle, endpoint: Endpoint) -> Result<(), Llm
 #[tauri::command]
 pub fn llm_remove_endpoint(app: AppHandle, id: String) -> Result<(), LlmError>;
 
-/// 探测：GET /models，成功返回延迟 ms。
+/// 探测：GET /models，成功返回延迟 ms。async 命令 + spawn_blocking：
+/// ureq 是阻塞调用，留在同步命令里会随 tauri-macros 的 body_blocking
+/// 在主线程执行，探测卡住（最长 10s）期间全窗口冻结。
 #[tauri::command]
-pub fn llm_probe(app: AppHandle, id: String) -> Result<u64, LlmError>;
+pub async fn llm_probe(app: AppHandle, id: String) -> Result<u64, LlmError>;
 
 /// 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达）。
 #[tauri::command]
 pub fn llm_set_default_model(app: AppHandle, model: Option<String>) -> Result<(), LlmError>;
 
-/// 非流式 chat：endpointId + model 由前端路由，Rust 纯传输。
+/// 非流式 chat：endpointId + model 由前端路由，Rust 纯传输。async 命令 +
+/// spawn_blocking：大模型生成可达数分钟，同步命令会让主线程冻结整个事件循环
+/// （所有窗口 UI 与关窗守卫失效），必须下放 worker 线程。
 #[tauri::command]
-pub fn llm_chat(app: AppHandle, req: ChatRequest) -> Result<ChatResponse, LlmError>;
+pub async fn llm_chat(app: AppHandle, req: ChatRequest) -> Result<ChatResponse, LlmError>;
 
 ```
 <!-- END GENERATED commands-catalog -->

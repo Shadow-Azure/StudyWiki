@@ -18,7 +18,7 @@ The [AI inference supply ADR](../../proposed/architecture/2026-09-19-ai-inferenc
 | Frontend host service `ctx.llm` (seventh service) | Model routing (`chat({model})` resolves the owning endpoint), redacted listing, inject whitelist | Holding keys, sending network requests |
 | Built-in `llm-settings` plugin | Pure UI: vendor preset instantiation, key entry, probing | Business logic |
 
-Call shape: a plugin calls `ctx.llm.chat({model, messages})` → the frontend routes to `(endpointId, model)` → invokes the Rust `llm_chat` command → the already-vendored `ureq` (rustls) sends HTTPS → normalized errors returned along the same path. Non-streaming is one IPC round trip; streaming arrives in m2-02 via a Tauri `ipc::Channel` as an incremental change with the call shape unchanged.
+Call shape: a plugin calls `ctx.llm.chat({model, messages})` → the frontend routes to `(endpointId, model)` → invokes the Rust `llm_chat` command → the already-vendored `ureq` (rustls) sends HTTPS → normalized errors returned along the same path. `llm_chat` / `llm_probe` are async commands on `spawn_blocking` (a sync command would run via the tauri-macros `body_blocking` path on the main thread, freezing every window for up to 300 s of inference). Non-streaming is one IPC round trip; streaming arrives in m2-02 via a Tauri `ipc::Channel` as an incremental change with the call shape unchanged.
 
 Rationale (compared with dsh): dsh keeps agent/llm/tools entirely in TS (`ctx.llm` / `ctx.tools` / `ctx.agents` as three orthogonal services; even the agent loop is just a plugin), with native code only for capability isolation (landlock-run); the m2-02 issue scope already excludes `src-tauri/**`; the plugin contract is single-file zero-dependency JS.
 
@@ -62,7 +62,7 @@ One unified user config directory: Tauri `app.path().home_dir()` + `.studywiki` 
 | `llm_probe(endpoint_id)` | Lightweight probe via the OpenAI-compatible `GET /models`; success returns latency in ms |
 | `llm_chat({endpointId, model, messages, …})` | Non-streaming chat/completions, pure transport |
 
-Normalized error codes (one shared vocabulary across the whole chain): Rust transport layer — `UNREACHABLE` / `UNAUTHORIZED` / `TIMEOUT` / `RATE_LIMITED` / `BAD_RESPONSE` / `ENDPOINT_UNKNOWN`; upsert validation — `INVALID_CONFIG`; frontend routing layer — `MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED`. Plugins handle a single set of codes.
+Normalized error codes (one shared vocabulary across the whole chain): Rust transport layer — `UNREACHABLE` / `UNAUTHORIZED` / `TIMEOUT` / `RATE_LIMITED` / `BAD_RESPONSE` / `ENDPOINT_UNKNOWN` (`INTERNAL` only arises from an aborted async-command background task and is unreachable on normal paths); upsert validation — `INVALID_CONFIG`; frontend routing layer — `MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED`. Plugins handle a single set of codes.
 
 ### Frontend host service and built-in plugin
 
