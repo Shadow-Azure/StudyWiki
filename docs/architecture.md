@@ -17,7 +17,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
-  host/llm.ts                      LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat，deps 可注入）
+  host/llm-stream.ts               LLM 流式契约：chunk 词表、partial 快照组装器、FIFO 异步 chunk 队列与流句柄形状（→ llm.ts）
+  host/llm.ts                      LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）（→ llm-stream.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
@@ -83,7 +84,7 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat({model})` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat` / `llm_chat_stream` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization）；流式 chunk 经 Channel 回调，`llm_chat_abort` 置停；归一错误码原路返回。
+数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat` / `ctx.llm.chatStream` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat` / `llm_chat_stream` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization）；流式 chunk 经 Channel 回调，`llm_chat_abort` 置停；归一错误码原路返回。
 
 ## 关键决策点
 

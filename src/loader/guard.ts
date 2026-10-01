@@ -65,8 +65,8 @@ function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
 const publicServiceMembers: Record<string, Set<string>> = {
   workspace: new Set(["root", "activeFile", "events", "openFile", "guardSwitch"]),
   windows: new Set(["currentLabel", "fetchRoot", "confirmDialog", "guardClose"]),
-  // LLM：外置插件可调用/列举/探测，配置写面（upsert/remove）与预设表仅内置插件可用。
-  llm: new Set(["listEndpoints", "probe", "chat"]),
+  // LLM：外置插件可列举/探测/调用非流式与流式推理，配置写面（upsert/remove）与预设表仅内置插件可用。
+  llm: new Set(["listEndpoints", "probe", "chat", "chatStream"]),
 };
 
 /** 服务对象包装：方法以原 receiver 调用，返回值（含 Promise 解包）拒 Context。 */

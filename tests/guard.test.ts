@@ -257,3 +257,22 @@ test("门面：workspace 放行面的 openFile Promise 与 events.on 可用", as
   expect(workspace.events.on).toHaveBeenCalledWith("file-opened", expect.any(Function));
   expect(offEvent).toHaveBeenCalled();
 });
+
+test("门面：llm 放行 chatStream 并继续拒绝 revealKey", () => {
+  const llm = {
+    chatStream: () => "stream-handle",
+    revealKey: async () => "sk-full-secret",
+  };
+  const mod = guardExternalModule({
+    name: "ext-demo",
+    inject: ["llm"],
+    apply: (ctx: any) => {
+      expect(ctx.llm.chatStream({ messages: [] })).toBe("stream-handle");
+      expect(() => ctx.llm.revealKey("e1")).toThrow(
+        /llm 私有成员 "revealKey"/,
+      );
+      return () => {};
+    },
+  });
+  (mod.apply as any)({ llm }, {});
+});
