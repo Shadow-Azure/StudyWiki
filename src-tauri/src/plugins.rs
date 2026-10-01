@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// 目录扫描出的插件条目：健康行带元数据，坏行带点名问题（面板据此标"待清理"）。
 #[derive(Serialize)]

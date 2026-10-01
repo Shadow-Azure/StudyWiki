@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 /// 老配置域里需要搬家的条目（插件清单 + 外置插件目录）。
@@ -12,8 +13,8 @@ pub fn studywiki_dir(home: &Path) -> PathBuf {
     home.join(".studywiki")
 }
 
-/// App 态配置根：home 解析失败即 fail-loud。
-pub fn app_studywiki_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// App 态配置根：home 解析失败即 fail-loud（泛 Runtime 供 MockRuntime 测试复用）。
+pub fn app_studywiki_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(studywiki_dir(
         &app.path().home_dir().map_err(|e| e.to_string())?,
     ))
@@ -36,11 +37,10 @@ pub fn migrate_legacy_dirs(legacy: &Path, new: &Path) -> Result<(), String> {
 }
 
 /// 启动入口：解析两个目录后委托纯函数（空转成本可忽略）。
-pub fn migrate_legacy(app: &AppHandle) -> Result<(), String> {
+pub fn migrate_legacy<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let legacy = app.path().app_config_dir().map_err(|e| e.to_string())?;
     migrate_legacy_dirs(&legacy, &app_studywiki_dir(app)?)
 }
-
 
 /// 单个模型的声明（能力：text / vision）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -79,7 +79,11 @@ pub const SUPPORTED_SETTINGS_VERSION: u32 = 1;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { version: SUPPORTED_SETTINGS_VERSION, endpoints: Vec::new(), default_model: None }
+        Self {
+            version: SUPPORTED_SETTINGS_VERSION,
+            endpoints: Vec::new(),
+            default_model: None,
+        }
     }
 }
 
@@ -115,20 +119,52 @@ pub fn load_settings(dir: &Path) -> Result<Settings, String> {
     Ok(s)
 }
 
-/// 原子写 settings.json：先写同目录 tmp（0600）再 rename，杜绝半截文件与宽松权限窗口。
+/// 原子写 settings.json：唯一 tmp 名（pid+纳秒）+ 创建即 0600（OpenOptions，
+/// 不存在"先 0644 后 chmod"的窗口）+ rename，杜绝半截文件、权限窗口与并发覆盖 tmp。
 pub fn save_settings(dir: &Path, s: &Settings) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let path = dir.join("settings.json");
-    let tmp = dir.join("settings.json.tmp");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!(
+        "settings.json.{}.{}.tmp",
+        std::process::id(),
+        nanos
+    ));
     let json = serde_json::to_string_pretty(s).map_err(|e| format!("序列化失败：{e}"))?;
-    fs::write(&tmp, json).map_err(|e| format!("写 {}: {e}", tmp.display()))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod {}: {e}", tmp.display()))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
+        f.write_all(json.as_bytes())
+            .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
     }
+    #[cfg(not(unix))]
+    fs::write(&tmp, json).map_err(|e| format!("写 {}: {e}", tmp.display()))?;
     fs::rename(&tmp, &path).map_err(|e| format!("rename → {}: {e}", path.display()))
+}
+
+/// 配置域判定：路径位于用户配置根内（含 plugins/、settings.json）即 true。
+/// 文件树/读写命令据此拒绝——用户配置域不是工作区数据，外置插件不可经 files 服务触达。
+/// `root` 由调用方传入（App 态为 app_studywiki_dir），纯函数便于测试。
+pub fn is_config_domain_in(p: &Path, root: &Path) -> bool {
+    // 双轨比较：canonical（解析符号链接）与词法各比一次，任一命中即域内。
+    // macOS /var→/private 等符号链接会让单轨比较漏判；安全侧取"宁可过度拒绝"。
+    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let cand_canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    cand_canon.starts_with(&root_canon)
+        || cand_canon.starts_with(root)
+        || p.starts_with(&root_canon)
+        || p.starts_with(root)
 }
 
 /// 脱敏投影：掩码规则 = 前 4 + … + 后 2；短 key 统一 ****；空 key 无预览。
@@ -137,7 +173,11 @@ pub fn redact(e: &Endpoint) -> RedactedEndpoint {
     let preview = if chars.is_empty() {
         String::new()
     } else if chars.len() > 7 {
-        format!("{}…{}", chars[..4].iter().collect::<String>(), chars[chars.len() - 2..].iter().collect::<String>())
+        format!(
+            "{}…{}",
+            chars[..4].iter().collect::<String>(),
+            chars[chars.len() - 2..].iter().collect::<String>()
+        )
     } else {
         "****".into()
     };
@@ -187,7 +227,10 @@ mod tests {
 
     #[test]
     fn studywiki_dir_joins_dot_dir() {
-        assert_eq!(studywiki_dir(Path::new("/home/u")), PathBuf::from("/home/u/.studywiki"));
+        assert_eq!(
+            studywiki_dir(Path::new("/home/u")),
+            PathBuf::from("/home/u/.studywiki")
+        );
     }
 
     #[test]
@@ -215,7 +258,10 @@ mod tests {
         std::fs::write(legacy.join("plugins.json"), "old").unwrap();
         std::fs::write(new.join("plugins.json"), "new").unwrap();
         migrate_legacy_dirs(&legacy, &new).unwrap();
-        assert_eq!(std::fs::read_to_string(new.join("plugins.json")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(new.join("plugins.json")).unwrap(),
+            "new"
+        );
         assert!(legacy.join("plugins.json").exists()); // 老条目保留不删
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -227,7 +273,10 @@ mod tests {
             kind: "chat".into(),
             base_url: "https://api.deepseek.com/v1".into(),
             api_key: "sk-1234567890abcdef".into(),
-            models: vec![ModelEntry { id: "deepseek-v4-flash".into(), capabilities: vec!["text".into()] }],
+            models: vec![ModelEntry {
+                id: "deepseek-v4-flash".into(),
+                capabilities: vec!["text".into()],
+            }],
         }
     }
 
@@ -245,16 +294,27 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("settings.json"), "{not json").unwrap();
         assert!(load_settings(&dir).is_err());
-        std::fs::write(dir.join("settings.json"), r#"{"version":99,"endpoints":[]}"#).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"version":99,"endpoints":[]}"#,
+        )
+        .unwrap();
         assert!(load_settings(&dir).is_err());
-        assert_eq!(std::fs::read_to_string(dir.join("settings.json")).unwrap(), r#"{"version":99,"endpoints":[]}"#);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json")).unwrap(),
+            r#"{"version":99,"endpoints":[]}"#
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn atomic_write_roundtrip_with_0600_and_no_tmp_residue() {
         let dir = std::env::temp_dir().join(format!("sw-set3-{}", std::process::id()));
-        let mut s = Settings { version: 1, endpoints: vec![sample_endpoint()], default_model: Some("deepseek-v4-flash".into()) };
+        let mut s = Settings {
+            version: 1,
+            endpoints: vec![sample_endpoint()],
+            default_model: Some("deepseek-v4-flash".into()),
+        };
         save_settings(&dir, &s).unwrap();
         s.endpoints.push(sample_endpoint());
         save_settings(&dir, &s).unwrap(); // 交错二次写，结果必须仍是完整 JSON
@@ -263,7 +323,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(dir.join("settings.json")).unwrap().permissions().mode();
+            let mode = std::fs::metadata(dir.join("settings.json"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
         assert!(!dir.join("settings.json.tmp").exists());
@@ -279,6 +342,20 @@ mod tests {
         let mut no_key = sample_endpoint();
         no_key.api_key = String::new();
         assert!(!redact(&no_key).has_key);
+    }
+
+    #[test]
+    fn is_config_domain_flags_studywiki_paths() {
+        let tmp = std::env::temp_dir().join(format!("sw-domain-{}", std::process::id()));
+        let root = studywiki_dir(&tmp);
+        std::fs::create_dir_all(root.join("plugins")).unwrap();
+        assert!(is_config_domain_in(&root.join("settings.json"), &root));
+        assert!(is_config_domain_in(
+            &root.join("plugins/a/package.json"),
+            &root
+        ));
+        assert!(!is_config_domain_in(&tmp.join("elsewhere/note.md"), &root));
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

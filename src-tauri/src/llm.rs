@@ -19,7 +19,10 @@ pub struct LlmError {
 
 impl LlmError {
     fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into() }
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 }
 
@@ -43,8 +46,9 @@ pub struct ChatRequest {
     pub temperature: Option<f64>,
 }
 
-/// chat 响应：拼好首个 choice 的纯文本 + 结束原因 + 可选用量。
+/// chat 响应：拼好首个 choice 的纯文本 + 结束原因 + 可选用量（camelCase 对齐 TS ChatResult）。
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatResponse {
     pub content: String,
     pub finish_reason: String,
@@ -52,12 +56,13 @@ pub struct ChatResponse {
     pub usage: Option<Usage>,
 }
 
-/// token 用量（上游缺席时为 None）。
+/// token 用量（上游缺席时为 None；出线 camelCase，入线吃上游 snake_case）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Usage {
-    #[serde(rename = "prompt_tokens", default)]
+    #[serde(default, alias = "prompt_tokens")]
     pub prompt_tokens: u64,
-    #[serde(rename = "completion_tokens", default)]
+    #[serde(default, alias = "completion_tokens")]
     pub completion_tokens: u64,
 }
 
@@ -102,13 +107,19 @@ fn presets() -> Vec<LlmPreset> {
             vendor: "zhipu".into(),
             name: "智谱 GLM".into(),
             base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
-            models: vec![m("glm-5.3", &["text", "vision"]), m("glm-5.3-flash", &["text"])],
+            models: vec![
+                m("glm-5.3", &["text", "vision"]),
+                m("glm-5.3-flash", &["text"]),
+            ],
         },
         LlmPreset {
             vendor: "deepseek".into(),
             name: "DeepSeek".into(),
             base_url: "https://api.deepseek.com/v1".into(),
-            models: vec![m("deepseek-v4-pro", &["text"]), m("deepseek-v4-flash", &["text"])],
+            models: vec![
+                m("deepseek-v4-pro", &["text"]),
+                m("deepseek-v4-flash", &["text"]),
+            ],
         },
         LlmPreset {
             vendor: "moonshot".into(),
@@ -184,7 +195,11 @@ fn probe_with(agent: &ureq::Agent, ep: &Endpoint) -> Result<u64, LlmError> {
 }
 
 /// 非流式 chat：POST chat/completions，解析 choices[0].message.content（必须是字符串）。
-fn chat_with(agent: &ureq::Agent, ep: &Endpoint, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
+fn chat_with(
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &ChatRequest,
+) -> Result<ChatResponse, LlmError> {
     let url = join_url(&ep.base_url, "chat/completions");
     let mut body = serde_json::json!({
         "model": req.model,
@@ -202,16 +217,27 @@ fn chat_with(agent: &ureq::Agent, ep: &Endpoint, req: &ChatRequest) -> Result<Ch
         .set("Content-Type", "application/json")
         .send_bytes(body.to_string().as_bytes())
         .map_err(map_transport)?;
-    let wire: WireChat = serde_json::from_reader(resp.into_reader())
-        .map_err(|e| LlmError::new("BAD_RESPONSE", format!("响应不是合法 chat/completions 回包：{e}")))?;
-    let choice = wire.choices.first().ok_or_else(|| LlmError::new("BAD_RESPONSE", "choices 为空"))?;
+    let wire: WireChat = serde_json::from_reader(resp.into_reader()).map_err(|e| {
+        LlmError::new(
+            "BAD_RESPONSE",
+            format!("响应不是合法 chat/completions 回包：{e}"),
+        )
+    })?;
+    let choice = wire
+        .choices
+        .first()
+        .ok_or_else(|| LlmError::new("BAD_RESPONSE", "choices 为空"))?;
     let content = choice
         .message
         .content
         .as_str()
         .ok_or_else(|| LlmError::new("BAD_RESPONSE", "content 不是字符串（多模态分段暂不支持）"))?
         .to_string();
-    Ok(ChatResponse { content, finish_reason: choice.finish_reason.clone(), usage: wire.usage })
+    Ok(ChatResponse {
+        content,
+        finish_reason: choice.finish_reason.clone(),
+        usage: wire.usage,
+    })
 }
 
 /// 按 id 找 endpoint；缺席 → ENDPOINT_UNKNOWN。
@@ -224,13 +250,33 @@ fn find_endpoint(s: &Settings, id: &str) -> Result<Endpoint, LlmError> {
 }
 
 /// upsert 本体：先校验（INVALID_CONFIG），再按 id 替换或追加。
-fn upsert_into(s: &mut Settings, e: Endpoint) -> Result<(), LlmError> {
+/// 编辑态保护：key 只进不出（前端永远拿不到完整 key），incoming 空 apiKey 时
+/// 保留既有同 id endpoint 的 key——避免"改个名字顺手清掉密钥"。
+fn upsert_into(s: &mut Settings, mut e: Endpoint) -> Result<(), LlmError> {
     config::validate_endpoint(&e).map_err(|m| LlmError::new("INVALID_CONFIG", m))?;
     if let Some(slot) = s.endpoints.iter_mut().find(|x| x.id == e.id) {
+        if e.api_key.is_empty() {
+            e.api_key = slot.api_key.clone();
+        }
         *slot = e;
     } else {
         s.endpoints.push(e);
     }
+    Ok(())
+}
+
+/// 默认模型本体：Some(id) 须是任一 endpoint 已声明模型（INVALID_CONFIG）；None 清除。
+fn set_default_into(s: &mut Settings, model: Option<String>) -> Result<(), LlmError> {
+    if let Some(id) = &model {
+        let known = s
+            .endpoints
+            .iter()
+            .any(|e| e.models.iter().any(|m| &m.id == id));
+        if !known {
+            return Err(LlmError::new("INVALID_CONFIG", format!("未知模型：{id}")));
+        }
+    }
+    s.default_model = model;
     Ok(())
 }
 
@@ -269,7 +315,10 @@ pub fn llm_remove_endpoint(app: AppHandle, id: String) -> Result<(), LlmError> {
         s.endpoints.retain(|e| e.id != id);
         config::save_settings(&dir, &s).map_err(|e| LlmError::new("INVALID_CONFIG", e))
     } else {
-        Err(LlmError::new("ENDPOINT_UNKNOWN", format!("endpoint 不存在：{id}")))
+        Err(LlmError::new(
+            "ENDPOINT_UNKNOWN",
+            format!("endpoint 不存在：{id}"),
+        ))
     }
 }
 
@@ -280,6 +329,15 @@ pub fn llm_probe(app: AppHandle, id: String) -> Result<u64, LlmError> {
     let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
     let ep = find_endpoint(&s, &id)?;
     probe_with(&probe_agent(), &ep)
+}
+
+/// 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达）。
+#[tauri::command]
+pub fn llm_set_default_model(app: AppHandle, model: Option<String>) -> Result<(), LlmError> {
+    let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+    let mut s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+    set_default_into(&mut s, model)?;
+    config::save_settings(&dir, &s).map_err(|e| LlmError::new("INVALID_CONFIG", e))
 }
 
 /// 非流式 chat：endpointId + model 由前端路由，Rust 纯传输。
@@ -345,7 +403,9 @@ mod tests {
     }
 
     fn agent() -> ureq::Agent {
-        ureq::AgentBuilder::new().timeout(Duration::from_millis(1500)).build()
+        ureq::AgentBuilder::new()
+            .timeout(Duration::from_millis(1500))
+            .build()
     }
 
     fn ep(base_url: &str, key: &str) -> Endpoint {
@@ -355,7 +415,10 @@ mod tests {
             kind: "chat".into(),
             base_url: base_url.into(),
             api_key: key.into(),
-            models: vec![ModelEntry { id: "m1".into(), capabilities: vec!["text".into()] }],
+            models: vec![ModelEntry {
+                id: "m1".into(),
+                capabilities: vec!["text".into()],
+            }],
         }
     }
 
@@ -378,9 +441,15 @@ mod tests {
     #[test]
     fn probe_maps_401_429_and_unreachable() {
         let (base, _rx) = mock_server(401, "{}");
-        assert_eq!(probe_with(&agent(), &ep(&base, "k")).unwrap_err().code, "UNAUTHORIZED");
+        assert_eq!(
+            probe_with(&agent(), &ep(&base, "k")).unwrap_err().code,
+            "UNAUTHORIZED"
+        );
         let (base2, _rx2) = mock_server(429, "{}");
-        assert_eq!(probe_with(&agent(), &ep(&base2, "k")).unwrap_err().code, "RATE_LIMITED");
+        assert_eq!(
+            probe_with(&agent(), &ep(&base2, "k")).unwrap_err().code,
+            "RATE_LIMITED"
+        );
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = closed.local_addr().unwrap().port();
         drop(closed);
@@ -399,7 +468,10 @@ mod tests {
         let req = ChatRequest {
             endpoint_id: "x".into(),
             model: "m1".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             max_tokens: None,
             temperature: None,
         };
@@ -408,7 +480,9 @@ mod tests {
         assert_eq!(resp.finish_reason, "stop");
         let sent = rx.recv().unwrap();
         assert!(sent.starts_with("POST /v1/chat/completions HTTP/1.1"));
-        assert!(sent.to_lowercase().contains("authorization: bearer secret-key"));
+        assert!(sent
+            .to_lowercase()
+            .contains("authorization: bearer secret-key"));
         assert!(sent.contains(r#""model":"m1""#));
     }
 
@@ -422,13 +496,71 @@ mod tests {
             max_tokens: None,
             temperature: None,
         };
-        assert_eq!(chat_with(&agent(), &ep(&base, ""), &req).unwrap_err().code, "BAD_RESPONSE");
+        assert_eq!(
+            chat_with(&agent(), &ep(&base, ""), &req).unwrap_err().code,
+            "BAD_RESPONSE"
+        );
+    }
+
+    #[test]
+    fn chat_response_serializes_camel_case_for_ts() {
+        let resp = ChatResponse {
+            content: "ok".into(),
+            finish_reason: "stop".into(),
+            usage: Some(Usage {
+                prompt_tokens: 3,
+                completion_tokens: 2,
+            }),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["finishReason"], "stop");
+        assert_eq!(json["usage"]["promptTokens"], 3);
+        assert_eq!(json["usage"]["completionTokens"], 2);
+    }
+
+    #[test]
+    fn upsert_preserves_existing_key_when_incoming_empty() {
+        let mut s = Settings {
+            version: 1,
+            endpoints: vec![ep("https://h", "secret")],
+            default_model: None,
+        };
+        let mut incoming = ep("https://h", "");
+        incoming.id = "e1".into();
+        upsert_into(&mut s, incoming).unwrap();
+        assert_eq!(s.endpoints[0].api_key, "secret");
+    }
+
+    #[test]
+    fn set_default_into_validates_known_model() {
+        let mut s = Settings {
+            version: 1,
+            endpoints: vec![ep("https://h", "")],
+            default_model: None,
+        };
+        set_default_into(&mut s, Some("m1".into())).unwrap();
+        assert_eq!(s.default_model.as_deref(), Some("m1"));
+        assert_eq!(
+            set_default_into(&mut s, Some("nope".into()))
+                .unwrap_err()
+                .code,
+            "INVALID_CONFIG"
+        );
+        set_default_into(&mut s, None).unwrap();
+        assert!(s.default_model.is_none());
     }
 
     #[test]
     fn upsert_validation_errors_are_invalid_config_and_find_endpoint_miss() {
-        let mut s = Settings { version: 1, endpoints: vec![], default_model: None };
-        assert_eq!(find_endpoint(&s, "nope").unwrap_err().code, "ENDPOINT_UNKNOWN");
+        let mut s = Settings {
+            version: 1,
+            endpoints: vec![],
+            default_model: None,
+        };
+        assert_eq!(
+            find_endpoint(&s, "nope").unwrap_err().code,
+            "ENDPOINT_UNKNOWN"
+        );
         let mut e = ep("https://h", "");
         e.id = String::new();
         assert_eq!(upsert_into(&mut s, e).unwrap_err().code, "INVALID_CONFIG");

@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
-#[cfg(target_os = "macos")]
 pub mod config;
 pub mod llm;
 pub mod native_close;
@@ -197,15 +196,31 @@ fn request_path(request: &Request<'_>) -> Result<String, String> {
     decode_path_header(encoded)
 }
 
+/// 拒绝触达用户配置域（~/.studywiki）：配置不是工作区数据，防外置插件经 files 服务读到明文 key。
+fn ensure_not_config_domain<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    path: &Path,
+) -> Result<(), String> {
+    if config::is_config_domain_in(path, &config::app_studywiki_dir(app)?) {
+        return Err(format!(
+            "路径位于用户配置域，禁止经文件服务访问：{}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
 /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
 /// 命令面与 assetProtocol 运行期授权同源收口）。
 #[tauri::command]
 fn read_tree(
+    app: tauri::AppHandle,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
     root: String,
 ) -> Result<Vec<FileNode>, String> {
     ensure_authorized(&state, &root)?;
+    ensure_not_config_domain(&app, Path::new(&root))?;
     walk_dir(Path::new(&root))
 }
 
@@ -279,7 +294,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
     )
     .setup(|app| {
         // 用户配置根一次性迁移：老 app_config_dir 的插件清单/目录搬入 ~/.studywiki。
-        config::migrate_legacy(&app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+        config::migrate_legacy(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
         Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -307,6 +322,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         llm::llm_upsert_endpoint,
         llm::llm_remove_endpoint,
         llm::llm_probe,
+        llm::llm_set_default_model,
         llm::llm_chat
     ])
 }
