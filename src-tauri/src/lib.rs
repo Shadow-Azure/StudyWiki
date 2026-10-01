@@ -9,7 +9,10 @@ use tauri::{Emitter, Manager};
 
 pub mod config;
 pub mod llm;
+
+#[cfg(target_os = "macos")]
 pub mod native_close;
+
 pub mod plugins;
 #[cfg(not(target_os = "macos"))]
 mod native_close {
