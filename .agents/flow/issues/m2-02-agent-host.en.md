@@ -6,15 +6,25 @@ English | [中文](m2-02-agent-host.md)
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - src/host/**
   - src/plugins/**
   - src/loader/**
+  - src-tauri/**
+  - src/styles.css
+  - tests/**
+  - package.json
+  - .agents/notes/**
+  - .agents/plans/**
+  - scripts/code-map.manifest.json
+  - scripts/doc-budgets.manifest.json
+  - scripts/dep-allowlist.json
   - docs/architecture.*
   - docs/commands.*
   - docs/plugins/*
-adr: []
+adr:
+  - ../../notes/proposed/architecture/2026-10-01-agent-host-streaming.md
 github:
   number: 29
   url: https://github.com/Shadow-Azure/StudyWiki/issues/29
