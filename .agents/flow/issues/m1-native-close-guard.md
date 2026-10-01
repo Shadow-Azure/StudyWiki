@@ -6,7 +6,7 @@
 kind: issue
 milestone: m1
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m1-native-close-guard.*
   - .agents/flow/issues/m1-serial-quit.*
