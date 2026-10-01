@@ -9,6 +9,7 @@ use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "macos")]
 pub mod config;
+pub mod llm;
 pub mod native_close;
 pub mod plugins;
 #[cfg(not(target_os = "macos"))]
@@ -300,7 +301,13 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         plugins::list_plugin_versions,
         plugins::restore_plugin_version,
         plugins::install_plugin,
-        plugins::import_plugin
+        plugins::import_plugin,
+        llm::llm_list_presets,
+        llm::llm_list_endpoints,
+        llm::llm_upsert_endpoint,
+        llm::llm_remove_endpoint,
+        llm::llm_probe,
+        llm::llm_chat
     ])
 }
 
