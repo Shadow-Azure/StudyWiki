@@ -12,11 +12,12 @@
 ```text
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
-  bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：六个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
+  host/context.d.ts                cordis Context 声明合并：六个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
+  host/llm.ts                      LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat，deps 可注入）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
@@ -50,7 +51,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   ui/icons.ts                      内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）
   ui/viewer.ts                     共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                         Rust 壳
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ native_close.rs、plugins.rs、windows.rs）
+  config.rs                        用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、native_close.rs、plugins.rs、windows.rs）
+  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 非流式 chat 出口（唯一联网点，ureq rustls）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
