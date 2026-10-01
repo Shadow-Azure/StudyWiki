@@ -24,6 +24,7 @@ scope:
   - scripts/code-map.manifest.json
   - scripts/doc-budgets.manifest.json
   - .agents/notes/**
+  - .agents/skills/**
 adr:
   - ../../notes/proposed/architecture/2026-09-19-ai-inference-supply.md
 github:
