@@ -130,11 +130,7 @@ pub fn set_close_guard_ready<R: tauri::Runtime>(
 /// 读插件清单（app 配置目录 plugins.json）；不存在返回 None，由前端生成默认。
 #[tauri::command]
 pub fn read_manifest(app: AppHandle) -> Result<Option<String>, String> {
-    let path = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?
-        .join("plugins.json");
+    let path = crate::config::app_studywiki_dir(&app)?.join("plugins.json");
     fs::read_to_string(&path).map(Some).or_else(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             Ok(None)
@@ -147,7 +143,7 @@ pub fn read_manifest(app: AppHandle) -> Result<Option<String>, String> {
 /// 原子写插件清单（tmp + rename，避免半截 JSON）。
 #[tauri::command]
 pub fn write_manifest(app: AppHandle, json: String) -> Result<(), String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let dir = crate::config::app_studywiki_dir(&app)?;
     let path = dir.join("plugins.json");
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let tmp = path.with_extension("json.tmp");

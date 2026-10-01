@@ -12,11 +12,12 @@
 ```text
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
-  bootstrap.ts                     每窗口启动流程：六宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：六个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  bootstrap.ts                     每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
+  host/context.d.ts                cordis Context 声明合并：七个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
+  host/llm.ts                      LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat，deps 可注入）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
@@ -39,6 +40,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts  doc-markdown 纯函数：markdown-it 渲染（html:false，内嵌 HTML 转义）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）（→ viewer.ts）
+  plugins/llm-settings/index.ts    llm-settings 插件：厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、dom.ts）
+  plugins/llm-settings/model.ts    llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）
   plugins/plugin-manager/index.ts  plugin-manager 插件：顶栏入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
   plugins/plugin-manager/model.ts  plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts   view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
@@ -50,7 +53,9 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   ui/icons.ts                      内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）
   ui/viewer.ts                     共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                         Rust 壳
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ native_close.rs、plugins.rs、windows.rs）
+  config.rs                        用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、native_close.rs、plugins.rs、windows.rs）
+  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 非流式 chat 出口（唯一联网点，ureq rustls）
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
@@ -77,7 +82,7 @@ export type FileNode = {
 
 命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
 
-数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）。
+数据流：树读取——选文件夹 → `read_tree` 定 kind → view-filetree 渲染；打开——`workspace.openFile` 过切换守卫后按 kind 分派：markdown 走 `read_text_file` + markdown-it，excel 走 `ctx.excel.read`，视频走 `files.assetUrl` 喂 webview `<video>`，other 由 shell 提示；保存——markdown / excel 共用 `Mod-S` 与保存按钮，写入后广播 `fs://changed`；换根——`windows.changeRoot` 依序做守卫确认、Rust 授权登记、前端切根；建窗——`create_window` 登记并建 WebviewWindow，新窗 bootstrap 领 root 后按清单激活；外置插件——安装/导入/启停/重载/回退/移除经 plugin-manager，`ext:` 行走唯一 blob 装载缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理——插件经 `ctx.llm.chat({model})` 发起，宿主按模型路由归属 endpoint（`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` 在本层抛出），Rust `llm_chat` 读 `~/.studywiki/settings.json` 发 HTTPS（空 apiKey 不带 Authorization），归一错误码原路返回。
 
 ## 关键决策点
 
@@ -90,6 +95,9 @@ export type FileNode = {
 - **assetProtocol 配置 scope 为空，运行期动态授权**：选中/建窗/启动携带 root 时 Rust `allow_directory`（recursive）注入——视频与图片仍走 asset protocol，但配置面不再预开任意目录。
 - **markdown-it 构建期打包，`html: false`**：环境无关（见下）推论，兼降 XSS 面。
 - **系统 webview 做渲染与视频解码**（WKWebView / WebView2 / webkit2gtk）：体积与依赖取舍，见 [environment-independence.md](environment-independence.md)。
+- **`~/.studywiki` 为用户配置根**：三端同形，老 `app_config_dir` 数据启动一次性迁移（幂等可重入）。
+- **密钥明文存 settings.json + 0600**：与 Claude Code / Codex / dsh 同水位；命令面只进不出（list 脱敏），外置插件白名单不含写操作。
+- **Rust 为薄能力层（持久化 + egress）**：模型路由与未来 agent 循环均在前端（对照 dsh：native 只做能力隔离）；厂商预设 baseUrl 只存在于 Rust 侧。
 - **外置插件装载走 blob URL**：Rust 命令读入口源码 → JS Blob → 动态 import；单文件零依赖契约使 blob 的常见弱点（相对导入、URL 生命周期）归零，且通道可在 vitest 注入假 import 全链路测试；自定义协议 ESM 只能真实 webview 验证，留作备选（Phase 2 Note 决策 1 落定记录）。
 - **npm 当仓库用、不当运行时用**：联网只发生在 Rust 安装命令（ureq+rustls 纯 Rust 栈），运行全程离线（[environment-independence.md](environment-independence.md) 豁免登记）。
 

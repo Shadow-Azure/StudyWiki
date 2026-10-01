@@ -828,6 +828,207 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   font-variant-numeric: tabular-nums;
 }
 
+/* ============ 模型配置面板（llm-settings 内置插件） ============ */
+
+.llm-box { display: flex; flex-direction: column; }
+
+/* —— 厂商摘要条（点击筛选；品牌色圆点） —— */
+.llm-summary { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.llm-vchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 999px;
+  background: var(--raise);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.llm-vchip:hover { border-color: var(--hairline); color: var(--ink); }
+.llm-vchip[aria-pressed="true"] {
+  border-color: var(--azurite);
+  background: var(--azurite-wash);
+  color: var(--azurite);
+  font-weight: 550;
+}
+.llm-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.llm-dot[data-vendor="zhipu"] { background: #2563eb; }
+.llm-dot[data-vendor="deepseek"] { background: #7c5cf0; }
+.llm-dot[data-vendor="moonshot"] { background: #0d9488; }
+.llm-dot[data-vendor="minimax"] { background: #ea8c3c; }
+
+/* —— 默认模型行（quiet 块，替代细分隔线行） —— */
+.llm-default-row {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+  border-top: 0;
+  background: var(--code-bg);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-m);
+  font-size: 12.5px;
+}
+.llm-default-row > span { color: var(--ink-2); flex: none; }
+.llm-default-row select { flex: 1; min-width: 0; height: 26px; font-size: 12.5px; }
+
+/* —— 卡片列表（独立滚动区；标题/摘要/新增常驻） —— */
+.llm-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 2px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+.llm-empty { color: var(--ink-3); font-size: 12.5px; text-align: center; padding: 24px 0; margin: 0; }
+
+.llm-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-m);
+}
+.llm-card:hover { border-color: var(--hairline); }
+.llm-card-main { flex: 1; min-width: 0; }
+.llm-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 3px; }
+.llm-card-name { font-size: 13px; font-weight: 550; }
+.llm-vendor { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); }
+.llm-idchip {
+  padding: 1px 6px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.llm-url {
+  margin-bottom: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.llm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.llm-badge { padding: 2px 9px; border-radius: 999px; background: var(--wash); color: var(--ink-2); font-size: 11px; }
+.llm-badge-key { background: var(--azurite-wash); color: var(--azurite); }
+.llm-badge-nokey { background: transparent; border: 1px dashed var(--hairline); color: var(--ink-3); }
+.llm-probe-result {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.llm-probe-result:empty { display: none; }
+.llm-probe-ok { background: var(--azurite-wash); color: var(--azurite); }
+.llm-probe-err { background: var(--cinnabar-wash); color: var(--cinnabar); }
+.llm-card-actions { display: flex; flex: none; gap: 2px; }
+
+.llm-panel-foot { flex: none; padding-top: 10px; }
+.llm-add {
+  width: 100%;
+  height: 32px;
+  justify-content: center;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--r-m);
+  background: transparent;
+  color: var(--ink-2);
+}
+.llm-add:hover {
+  border-color: var(--azurite);
+  background: var(--azurite-wash);
+  color: var(--azurite);
+}
+
+/* —— 表单态：预设置顶 + 字段网格 + 模型 fieldset + sticky 操作栏 —— */
+.llm-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  margin: 0 -22px;
+  padding: 0 22px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+.llm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-bottom: 14px; }
+.llm-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.llm-field-wide { grid-column: 1 / -1; }
+.llm-field > label { color: var(--ink-2); font-size: 12px; }
+.llm-field input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--raise);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.llm-field input:focus-visible { outline: 2px solid var(--azurite); outline-offset: -1px; }
+.llm-field input::placeholder { color: var(--ink-3); }
+.llm-mono { font-family: var(--font-mono); font-size: 12px; }
+.llm-hint { margin: 0; color: var(--ink-3); font-size: 11px; }
+.llm-error { color: var(--cinnabar); font-size: 12.5px; }
+
+.llm-fieldset { min-width: 0; margin: 0 0 14px; padding: 12px 14px 14px; border: 1px solid var(--hairline-soft); border-radius: var(--r-m); }
+.llm-fieldset legend { padding: 0 6px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.llm-model-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.llm-model-row input { flex: 1; min-width: 0; }
+.llm-vision {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.llm-key-row { display: flex; align-items: center; gap: 6px; }
+.llm-key-row input { flex: 1; min-width: 0; }
+.llm-model-add {
+  width: 100%;
+  height: 28px;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.llm-model-add:hover { border-color: var(--azurite); color: var(--azurite); }
+
+.llm-form-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px -22px 0;
+  padding: 12px 22px 16px;
+  border-top: 1px solid var(--hairline-soft);
+  background: var(--raise);
+}
+.llm-form-foot .llm-error { flex: 1; }
+
 /* ============ 启动错误面板（boot-error.ts）：白屏的最小可见出口 ============ */
 
 .boot-error {

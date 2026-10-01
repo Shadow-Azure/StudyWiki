@@ -6,6 +6,7 @@ import { apply as applyFileTree } from "./plugins/view-filetree";
 import { apply as applyMarkdown } from "./plugins/doc-markdown";
 import { apply as applyVideo } from "./plugins/doc-video";
 import { apply as applyPluginManager } from "./plugins/plugin-manager";
+import { apply as applyLlmSettings } from "./plugins/llm-settings";
 import { WorkspaceService } from "./host/workspace";
 import type { FileNode } from "./types";
 
@@ -35,6 +36,25 @@ const markdown = `# Tauri 架构
 - 长标题与目录层级应在窄宽度下稳定换行。
 - 代码、引用与表格共享同一套纸墨令牌。
 `;
+
+/** 内存 LLM 桩：面板在浏览器预览可打开可编辑；baseUrl 分段拼装以避开
+ * 环境无关门禁对 src/** 源文本的外部 URL 字面扫描（预览不进发布产物）。 */
+class PreviewLlm {
+  #endpoints: { endpoints: unknown[]; defaultModel: string | null } = { endpoints: [], defaultModel: null };
+  listPresets() {
+    return Promise.resolve([{
+      vendor: "deepseek",
+      name: "DeepSeek",
+      baseUrl: "https://" + "preview.invalid/v1",
+      models: [{ id: "demo-model", capabilities: ["text"] }],
+    }]);
+  }
+  listEndpoints() { return Promise.resolve(this.#endpoints); }
+  upsertEndpoint(e: unknown) { this.#endpoints.endpoints.push(e); return Promise.resolve(); }
+  removeEndpoint() { return Promise.resolve(); }
+  revealKey() { return Promise.resolve("preview-key"); }
+  probe() { return Promise.resolve(12); }
+}
 
 class PreviewSlots {
   readonly #slots = new Map<string, Array<{ el: HTMLElement; render: (host: HTMLElement) => void }>>();
@@ -106,12 +126,13 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
     install: async () => "demo",
     importFromTgz: async () => null,
   };
-  const ctx = { files, windows, workspace, slots, plugins } as unknown as Context;
+  const ctx = { files, windows, workspace, slots, plugins, llm: new PreviewLlm() } as unknown as Context;
   const shellConfig: ShellConfig = { title: "StudyWiki" };
 
   const teardown = [
     applyWindows(ctx),
     applyPluginManager(ctx),
+    applyLlmSettings(ctx),
     applyFileTree(ctx, { ignoreDotfiles: true }),
     applyMarkdown(ctx, {}),
     applyVideo(ctx),

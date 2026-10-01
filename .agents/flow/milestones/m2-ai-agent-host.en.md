@@ -6,7 +6,7 @@ English | [中文](m2-ai-agent-host.md)
 kind: milestone
 id: m2
 title: AI agent 宿主
-status: planned
+status: active
 github:
   number: 3
   url: https://github.com/Shadow-Azure/StudyWiki/milestone/3

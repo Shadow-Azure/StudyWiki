@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// 目录扫描出的插件条目：健康行带元数据，坏行带点名问题（面板据此标"待清理"）。
 #[derive(Serialize)]
@@ -114,13 +114,9 @@ pub fn parse_package_json(raw: &str) -> Result<(String, Option<String>, StudyWik
     Ok((pkg.name, pkg.version, block))
 }
 
-/// 插件根目录（app 配置目录下 plugins/）。
+/// 插件根目录（用户配置根 ~/.studywiki 下 plugins/）。
 pub fn plugin_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?
-        .join("plugins"))
+    Ok(crate::config::app_studywiki_dir(app)?.join("plugins"))
 }
 
 /// 目录扫描（可测）：子目录逐个读 package.json；坏目录降级为 problem 行，

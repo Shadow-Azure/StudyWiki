@@ -9,6 +9,7 @@ import { WindowsService, defaultWindowsDeps } from "./host/windows";
 import { WorkspaceService } from "./host/workspace";
 import { SlotsService } from "./host/slots";
 import { PluginsService, defaultPluginsDeps } from "./host/plugins";
+import { LlmService } from "./host/llm";
 import { loadExternalModule } from "./loader/external";
 import { loadManifest } from "./loader/manifest";
 import { boot } from "./loader/boot";
@@ -64,12 +65,14 @@ export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context
     loadExternal: env.loadExternal ?? loadExternalModule,
     pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
   });
+  const llm = new LlmService({ invoke: env.invoke });
   ctx.reflect.provide("files", files);
   ctx.reflect.provide("excel", excel);
   ctx.reflect.provide("windows", windows);
   ctx.reflect.provide("workspace", workspace.facade);
   ctx.reflect.provide("slots", slots);
   ctx.reflect.provide("plugins", plugins);
+  ctx.reflect.provide("llm", llm);
   await files.start();
   // 持久 root 启动即重授权（配置 scope 已收空，运行期动态注入是唯一通道）。
   const root = await windows.fetchRoot(windows.currentLabel());
