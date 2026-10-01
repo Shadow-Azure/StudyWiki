@@ -28,4 +28,4 @@ macOS 26 + Tauri 2.12 / tao 0.37.1 下，红点、Close Window、Cmd+W 与 Cmd+Q
 
 - 干净窗口的关闭也由前端聚合回调显式 `destroy()`；`core:window:allow-destroy` 继续是硬依赖。
 - 多脏文档同关时按注册序逐个确认；一个取消后，下一次关闭会重新询问所有仍脏守卫。
-- macOS 26 需要用真实鼠标 / 键盘人工回归四条原生出口（红点 / Close Window / Cmd+W / Cmd+Q）与干净窗口直关；AX 自动化会绕过红点 target/action，不能替代真实输入。自动化覆盖聚合、确认/取消、ready 注册武装/退订与全退订。
+- 2026-10-01 在 macOS 26 正式包上用 Computer Use 工具输入完成 8 项原生出口回归：干净红点、脏 Markdown 红点取消/确认、Close Window 取消、Cmd+W 确认、Cmd+Q 取消、脏 Excel 红点取消、Cmd+Q 确认退出，全部 PASS；丢弃后磁盘夹具保持原值，用户认可该结果作为 #45 验收。多窗口串行与混合退出缺口不由本结论覆盖，另由 m1-serial-quit 收口。

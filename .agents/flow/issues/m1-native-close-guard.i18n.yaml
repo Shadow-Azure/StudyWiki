@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m1-native-close-guard.md
-m1-native-close-guard.md: 799dcfb27dccf05bce2f61a1203e9faa7604fe09
-m1-native-close-guard.en.md: 7f478a746d38b1875e797abd6fff9a4f806daccf
+m1-native-close-guard.md: 6e21bf6f5f41fd3337144fa941785d03e05b5d75
+m1-native-close-guard.en.md: a072e48cf2f5fd1bbed4cb33cab1041a1bdeab9d
