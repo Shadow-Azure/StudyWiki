@@ -106,4 +106,55 @@ describe("panel", () => {
       models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }],
     });
   });
+
+  // 固化 2026-10-01 GUI 人工冒烟旅程：保存后的列表行（含 🔑）+ 行内探测延迟。
+  it("renders a saved endpoint row with key badge and probes latency inline", async () => {
+    const { ctx, renders } = fakeCtx();
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "mock", name: "Local Mock", kind: "chat",
+          baseUrl: "http://127.0.0.1:18042/v1", hasKey: true, keyPreview: "sk-…ef",
+          models: [{ id: "glm-5.3", capabilities: ["text", "vision"] }] }],
+        defaultModel: null,
+      });
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const row = document.querySelector(".llm-row") as HTMLElement;
+    expect(row.textContent).toContain("Local Mock");
+    expect(row.textContent).toContain("127.0.0.1:18042");
+    expect(row.textContent).toContain("🔑");
+    const probeBtn = row.querySelectorAll("button")[0] as HTMLButtonElement; // 顺序：探测/编辑/删除
+    probeBtn.click();
+    await new Promise((r) => setTimeout(r));
+    expect(row.querySelector(".llm-probe-result")?.textContent).toBe("42ms");
+  });
+
+  // 固化探测失败路径：LlmError 以 code: message 归一内联展示（人工冒烟对应 UNAUTHORIZED: HTTP 401）。
+  it("shows a normalized error code when probe fails", async () => {
+    const { ctx, renders } = fakeCtx();
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "mock", name: "Local Mock", kind: "chat",
+          baseUrl: "https://api.deepseek.com/v1", hasKey: true, keyPreview: "sk-…ef",
+          models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }] }],
+        defaultModel: null,
+      });
+    (ctx.llm as { probe: () => Promise<never> }).probe = () =>
+      Promise.reject({ code: "UNAUTHORIZED", message: "HTTP 401" });
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const row = document.querySelector(".llm-row") as HTMLElement;
+    const probeBtn = row.querySelectorAll("button")[0] as HTMLButtonElement;
+    probeBtn.click();
+    await new Promise((r) => setTimeout(r));
+    expect(row.querySelector(".llm-probe-result")?.textContent).toBe("UNAUTHORIZED: HTTP 401");
+  });
 });

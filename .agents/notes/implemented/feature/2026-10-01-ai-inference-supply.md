@@ -76,6 +76,10 @@ settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明
 
 `docs/environment-independence.md` 豁免表登记「AI 推理经用户显式配置的远程 endpoint」并链 ADR；ADR note（即上文 Problem 所链）转 implemented。`docs/architecture.md` 更新组成树、数据流、关键决策（`~/.studywiki`、密钥明文 + 0600、Rust 薄能力层）。常驻文档中英三件套配对重录；`pnpm gen:commands` 重建命令目录；门禁 `verify:env-independence` / `verify:dep-audit` / `verify:layering` / `verify:docs` 全绿。
 
+### GUI 冒烟与测试固化
+
+冒烟以本地 mock HTTP server + debug bundle 人工走查：零配置调用返回归一错误码（不弹窗）、预设表单实例化、保存后列表行带 🔑 徽标、探测显示延迟（82ms）、错误 baseUrl 探测显示 `UNAUTHORIZED: HTTP 401`；settings.json 落盘 0600 且字段 camelCase。该旅程固化为 `tests/llm-settings.test.ts` 两个面板集成用例（真实面板 DOM + 脚本化 `ctx.llm`，端点 wire 形状与 Rust 脱敏投影一致）；Rust 侧探测/chat 路径另有 mock HTTP server 单测（`cargo test` 50/50）。
+
 ### 范围裁剪
 
 `llm_chat` 非流式（流式归 m2-02）；ASR 只落契约与探测（工具归 m3-01）；不做多协议适配器层、故障转移、用量统计。

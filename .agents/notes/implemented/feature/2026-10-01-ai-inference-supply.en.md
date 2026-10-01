@@ -76,6 +76,10 @@ Plaintext in settings.json, at the same water level as Claude Code (plaintext to
 
 Register the exemption "AI inference via user-explicitly-configured remote endpoints" in `docs/environment-independence.md` with a link to the ADR; the ADR note (linked in Problem above) moves to implemented. Update `docs/architecture.md`: component tree, data flow, key decisions (`~/.studywiki`, plaintext keys + 0600, thin Rust capability layer). Persistent docs are re-recorded as bilingual triples; `pnpm gen:commands` rebuilds the command catalog; gates `verify:env-independence` / `verify:dep-audit` / `verify:layering` / `verify:docs` all green.
 
+### GUI smoke and test fixation
+
+The smoke run used a local mock HTTP server plus the debug bundle and walked through manually: zero-config calls return a normalized error code (no popup), preset form instantiation, the 🔑 badge on the saved list row, probe latency display (82ms), and a wrong-baseUrl probe showing `UNAUTHORIZED: HTTP 401`; settings.json lands 0600 with camelCase fields. That journey is fixed as two panel integration cases in `tests/llm-settings.test.ts` (real panel DOM + scripted `ctx.llm`, endpoint wire shape matching the Rust redacted projection); the Rust-side probe/chat paths are additionally covered by mock HTTP server unit tests (`cargo test` 50/50).
+
 ### Scope cuts
 
 `llm_chat` is non-streaming (streaming belongs to m2-02); ASR lands only the contract and probing (the tool belongs to m3-01); no multi-protocol adapter layer, no failover, no usage metering.
