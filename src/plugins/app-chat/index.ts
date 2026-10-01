@@ -164,12 +164,14 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   };
 
   const finishComplete = (active: ActiveChat): void => {
+    if (disposed) return;
     messages.push({ role: "assistant", content: active.snapshot.text });
     current = null;
     paintSendButton();
   };
 
   const finishError = (active: ActiveChat, error: { code: string; message: string }): void => {
+    if (disposed) return;
     if (!active.snapshot.error) active.snapshot = { ...active.snapshot, error };
     if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
     current = null;
@@ -177,7 +179,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   };
 
   const markInterrupted = (active: ActiveChat): void => {
-    if (active.finishing) return;
+    if (disposed || active.finishing) return;
     active.finishing = true;
     if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
     const marker = document.createElement("div");
@@ -208,7 +210,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     if (!active) return;
     current = active;
     paintSendButton();
-    const renderer = createStreamRenderer(active.stream, deps.raf, retryLastUser);
+    const renderer = createStreamRenderer(active.stream, (callback) => deps.raf(() => {
+      if (disposed) return;
+      callback();
+    }), retryLastUser);
     try {
       const handle = await ctx.llm.chatStream({
         ...(selectedModel ? { model: selectedModel } : {}),
@@ -216,21 +221,25 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
       });
       active.handle = handle;
       const settled = handle.settled.catch((error: unknown) => {
+        if (disposed) return;
         if (!active.snapshot.error) {
           active.snapshot = { ...active.snapshot, error: toChatError(error) };
         }
         throw error;
       });
       for await (const _chunk of handle.events) {
+        if (disposed) return;
         active.snapshot = handle.snapshot();
         renderer.update(active.snapshot);
       }
       await settled;
+      if (disposed) return;
       active.snapshot = handle.snapshot();
       renderer.update(active.snapshot);
       if (active.snapshot.finishReason) finishComplete(active);
       else if (active.snapshot.error) finishError(active, active.snapshot.error);
     } catch (error) {
+      if (disposed || current !== active) return;
       if (current === active) {
         finishError(active, toChatError(error));
         renderer.update(active.snapshot);
@@ -253,6 +262,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
 
   const addFiles = async (files: FileList | File[]): Promise<void> => {
     const converted = await Promise.all([...files].map(fileToAttachment));
+    if (disposed) return;
     attachments.push(...converted.filter((item): item is PendingAttachment => item !== null));
     renderChips();
   };
@@ -348,6 +358,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
       if (!selectedModel) selectedModel = modelSelect.options[0]?.value ?? null;
       if (selectedModel) modelSelect.value = selectedModel;
     }).catch((error: unknown) => {
+      if (disposed) return;
       if (contextRow) contextRow.textContent = `模型配置不可用：${toChatError(error).code}`;
     });
   });

@@ -174,6 +174,21 @@ describe("app-chat", () => {
     expect(host().textContent).not.toContain("late-model");
   });
 
+  it("卸载后 late listEndpoints rejection 不更新 DOM 且不抛出", async () => {
+    const { ctx, host } = fakeCtx([{ type: "finish", reason: "stop" }]);
+    let rejectEndpoints: (error: unknown) => void = () => {};
+    ctx.llm.listEndpoints = async () => new Promise((_resolve, reject) => {
+      rejectEndpoints = reject;
+    });
+    const dispose = apply(ctx as never, {}, syncDeps);
+    const htmlBefore = host().innerHTML;
+    dispose();
+    rejectEndpoints({ code: "MODEL_CONFIG_UNAVAILABLE", message: "late" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(host().innerHTML).toBe(htmlBefore);
+    expect(host().textContent).not.toContain("MODEL_CONFIG_UNAVAILABLE");
+  });
+
   it("fileToAttachment：图片 File → inline base64，文本 File → null", async () => {
     const { fileToAttachment } = await import("../src/plugins/app-chat/attachments");
     const img = new File([new Uint8Array([137, 80, 78, 71])], "截图.png", { type: "image/png" });
