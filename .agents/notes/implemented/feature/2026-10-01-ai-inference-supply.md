@@ -102,3 +102,5 @@ settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明
 - `~/.studywiki/` 成为所有未来用户级配置（主题、快捷键等）的固定 home；迁移逻辑只服务老版本一次，之后幂等空转。
 - key 明文文件被整机拷走即泄露，与对标工具同水位；若未来上调安全水位，钥匙串方案可作为后续 note 重开。
 - ASR endpoint 的 `kind: "asr"` 配置本期即可写入 settings.json 并探测，但无消费方，直到 m3-01。
+- 已知弱点（接受）：`TIMEOUT` 归一按 ureq 错误消息文本判别（ureq 2 无独立 Timeout 变体）；文案不含 "timed out" 的平台（如 Windows WSA 超时）会把真实超时归为 `UNREACHABLE`，无功能实害，触发再评估（ureq 3 或超时结构改造）。
+- 已知弱点（接受）：`0600` 仅 unix 分支生效；Windows 依赖用户 profile 目录默认 ACL，与 Claude Code / Codex 在 Windows 的水位一致，无实害。

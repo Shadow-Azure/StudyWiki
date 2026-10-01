@@ -102,3 +102,5 @@ The smoke run used a local mock HTTP server plus the debug bundle and walked thr
 - `~/.studywiki/` becomes the fixed home for all future user-level config (themes, keybindings, etc.); the migration logic serves old installs once and then idles idempotently.
 - A plaintext key file leaks if the whole machine is copied — the same water level as the reference tools; if the security bar ever rises, the keychain option can be reopened in a later note.
 - ASR endpoints (`kind: "asr"`) can be written into settings.json and probed this round, but have no consumer until m3-01.
+- Known weakness (accepted): `TIMEOUT` normalization keys off the ureq error message text (ureq 2 has no dedicated Timeout variant); platforms whose message lacks "timed out" (e.g. Windows WSA timeouts) will report a real timeout as `UNREACHABLE` — no functional harm, revisit on occurrence (ureq 3 or a timeout-structure change).
+- Known weakness (accepted): `0600` only applies on the unix branch; Windows relies on the user-profile directory's default ACL, matching Claude Code / Codex on Windows — no harm.
