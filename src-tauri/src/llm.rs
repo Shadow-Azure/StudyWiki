@@ -692,6 +692,7 @@ fn run_chat_stream(
     sink: &mut dyn FnMut(StreamChunk) -> bool,
     stream_id: &str,
     aborts: &AbortRegistry,
+    event_limit: u64,
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), LlmError> {
     let _guard = AbortGuard::new(aborts, stream_id);
@@ -702,7 +703,7 @@ fn run_chat_stream(
         .send_bytes(body.to_string().as_bytes())
         .map_err(map_transport)?;
     let reader = BufReader::new(resp.into_reader());
-    let result = parse_sse_lines(reader, &mut |chunk| {
+    let result = parse_sse_lines(reader, event_limit, &mut |chunk| {
         if aborts.lock().unwrap().contains(stream_id) {
             return false;
         }
@@ -719,10 +720,11 @@ fn run_chat_stream_checked(
     sink: &mut dyn FnMut(StreamChunk) -> bool,
     stream_id: &str,
     aborts: &AbortRegistry,
+    event_limit: u64,
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), LlmError> {
     ensure_media_caps(req, ep)?;
-    run_chat_stream(agent, ep, req, sink, stream_id, aborts, root_check)
+    run_chat_stream(agent, ep, req, sink, stream_id, aborts, event_limit, root_check)
 }
 
 /// 流式 chat：chunk 经 Channel 增量投递，Promise 在流终结时 resolve。
@@ -746,6 +748,7 @@ pub async fn llm_chat_stream(
             config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
         let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
         let ep = find_endpoint(&s, &req.base.endpoint_id)?;
+        let event_limit = config::stream_event_limit(&s);
         let sid = req.stream_id.clone();
         let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
         run_chat_stream_checked(
@@ -755,6 +758,7 @@ pub async fn llm_chat_stream(
             &mut |chunk| on_chunk.send(chunk).is_ok(),
             &sid,
             abort_registry(),
+            event_limit,
             &root_check,
         )
     })
@@ -958,6 +962,7 @@ mod tests {
             version: 1,
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
+            stream_event_limit_bytes: None,
         };
         let mut incoming = ep("https://h", "");
         incoming.id = "e1".into();
@@ -972,6 +977,7 @@ mod tests {
             version: 1,
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
+            stream_event_limit_bytes: None,
         };
         let mut incoming = ep("https://h", "new-key");
         incoming.id = "e1".into();
@@ -986,6 +992,7 @@ mod tests {
             version: 1,
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
+            stream_event_limit_bytes: None,
         };
         assert_eq!(reveal_key(&s, "e1").unwrap(), "secret");
         assert_eq!(reveal_key(&s, "nope").unwrap_err().code, "ENDPOINT_UNKNOWN");
@@ -997,6 +1004,7 @@ mod tests {
             version: 1,
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
+            stream_event_limit_bytes: None,
         };
         let mut incoming = ep("https://h", "");
         incoming.id = "e1".into();
@@ -1010,6 +1018,7 @@ mod tests {
             version: 1,
             endpoints: vec![ep("https://h", "")],
             default_model: None,
+            stream_event_limit_bytes: None,
         };
         set_default_into(&mut s, Some("m1".into())).unwrap();
         assert_eq!(s.default_model.as_deref(), Some("m1"));
@@ -1113,6 +1122,7 @@ mod tests {
             },
             "s1",
             &aborts,
+            u64::MAX,
             &|_| false,
         );
         assert!(r.is_ok());
@@ -1144,6 +1154,7 @@ mod tests {
             },
             "s2",
             &aborts,
+            u64::MAX,
             &|_| false,
         );
         assert!(r.is_ok());
@@ -1310,6 +1321,7 @@ mod tests {
             version: 1,
             endpoints: vec![],
             default_model: None,
+            stream_event_limit_bytes: None,
         };
         assert_eq!(
             find_endpoint(&s, "nope").unwrap_err().code,
@@ -1396,6 +1408,7 @@ mod tests {
             &mut |_| true,
             "caps",
             &aborts,
+            u64::MAX,
             &|_| false,
         );
         assert_eq!(result.unwrap_err().code, "UNSUPPORTED_CONTENT");
@@ -1420,6 +1433,7 @@ mod tests {
             &mut |_| true,
             "send-failure",
             &aborts,
+            u64::MAX,
             &|_| false,
         );
         assert_eq!(result.unwrap_err().code, "UNREACHABLE");

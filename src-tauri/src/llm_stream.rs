@@ -50,12 +50,16 @@ struct WireError {
 /// 解析 SSE 字节流：按 \n 字节聚合行（半个 UTF-8 序列不可能含 \n，完整行再
 /// 严格解码，跨 read 拆包天然安全）；事件空行分派；多 data 行 \n 拼接；
 /// `:` 注释跳过；EOF 前未见 [DONE] = STREAM_CLOSED。
+/// max_event_bytes 限制单事件（多 data 行拼接后）的载荷字节数，超限断流报
+/// BAD_RESPONSE——这是流内唯一无界缓冲，不设上限会被畸形/恶意端点撑爆内存。
 /// on_chunk 返回 false 立即停止（中止/对端消失）。
 pub fn parse_sse_lines(
     reader: impl BufRead,
+    max_event_bytes: u64,
     on_chunk: &mut dyn FnMut(StreamChunk) -> bool,
 ) -> Result<(), LlmError> {
     let mut data_lines: Vec<String> = Vec::new();
+    let mut payload_bytes: u64 = 0;
     let mut seen_done = false;
     let mut stopped = false;
     let mut lines = reader.split(b'\n');
@@ -75,6 +79,7 @@ pub fn parse_sse_lines(
             if !data_lines.is_empty() {
                 let payload = data_lines.join("\n");
                 data_lines.clear();
+                payload_bytes = 0;
                 if payload == "[DONE]" { seen_done = true; break; }
                 if !dispatch(&payload, on_chunk)? { stopped = true; break; }
             }
@@ -82,7 +87,15 @@ pub fn parse_sse_lines(
         }
         if line.starts_with(':') { continue; }
         if let Some(rest) = line.strip_prefix("data:") {
-            data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
+            let rest = rest.strip_prefix(' ').unwrap_or(rest);
+            payload_bytes += rest.len() as u64 + 1; // +1 计入拼接分隔符，宁紧勿松
+            if payload_bytes > max_event_bytes {
+                return Err(LlmError {
+                    code: "BAD_RESPONSE".into(),
+                    message: format!("SSE 事件载荷超过上限 {max_event_bytes} 字节，断流"),
+                });
+            }
+            data_lines.push(rest.to_string());
         }
     }
     if !seen_done && !stopped {
@@ -155,8 +168,12 @@ mod tests {
     use std::io::Cursor;
 
     fn collect(bytes: &[u8]) -> (Vec<StreamChunk>, Result<(), LlmError>) {
+        collect_with(bytes, u64::MAX)
+    }
+
+    fn collect_with(bytes: &[u8], limit: u64) -> (Vec<StreamChunk>, Result<(), LlmError>) {
         let mut out = Vec::new();
-        let r = parse_sse_lines(Cursor::new(bytes), &mut |c| { out.push(c); true });
+        let r = parse_sse_lines(Cursor::new(bytes), limit, &mut |c| { out.push(c); true });
         (out, r)
     }
 
@@ -200,7 +217,7 @@ mod tests {
         }
         let f = Fragmented { bytes: body, pos: 0, cuts: &[1, 3, 7] };
         let mut out = Vec::new();
-        let r = parse_sse_lines(std::io::BufReader::new(f), &mut |c| { out.push(c); true });
+        let r = parse_sse_lines(std::io::BufReader::new(f), u64::MAX, &mut |c| { out.push(c); true });
         assert!(r.is_ok());
         assert!(matches!(&out[0], StreamChunk::TextDelta { text, .. } if text == "特征值"));
     }
@@ -253,10 +270,26 @@ mod tests {
     }
 
     #[test]
+    fn event_exceeding_limit_fails_bad_response() {
+        let big = "x".repeat(64);
+        let body = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{big}\"}}}}]}}\n\ndata: [DONE]\n\n");
+        let (_, r) = collect_with(body.as_bytes(), 32);
+        assert_eq!(r.unwrap_err().code, "BAD_RESPONSE");
+    }
+
+    #[test]
+    fn multiline_data_accumulates_toward_limit() {
+        // 两条 data 行各 20 字节，拼接后 41 字节 > 40：跨行也计入同一事件上限
+        let body = b"data: {\"a\":\"aaaaaaaaaaaaaaaaaaaa\"\ndata: \"b\"}\n\ndata: [DONE]\n\n";
+        let (_, r) = collect_with(body, 40);
+        assert_eq!(r.unwrap_err().code, "BAD_RESPONSE");
+    }
+
+    #[test]
     fn callback_false_stops_parsing() {
         let body = b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\ndata: [DONE]\n\n";
         let mut n = 0;
-        let r = parse_sse_lines(Cursor::new(body), &mut |_c| { n += 1; false });
+        let r = parse_sse_lines(Cursor::new(body), u64::MAX, &mut |_c| { n += 1; false });
         assert!(r.is_ok());
         assert_eq!(n, 1, "回调返回 false 后立即停止投递");
     }
