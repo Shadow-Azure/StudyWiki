@@ -1243,9 +1243,14 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 /* 视觉语言对齐 claude.ai 消息规范：中性软气泡、竖线折叠推理、带语言头的
    代码块、容器化 composer；全部走既有 token，跟随明暗主题。 */
 
+/* SlotsService 会给槽位包一层 .slot div（display:contents 只在 slot-host 上，
+   穿不穿得到它）——右栏这层必须是 flex column，.chat 的 flex:1 才生效，
+   composer 才能钉底、消息区上方滚动。 */
+.slot-sidebar-right { display: flex; flex-direction: column; }
 .chat {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  flex: 1;
   min-height: 0;
   background: var(--paper);
 }
