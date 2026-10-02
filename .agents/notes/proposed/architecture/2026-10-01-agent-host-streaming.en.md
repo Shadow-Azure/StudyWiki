@@ -30,6 +30,7 @@ Message content grows from a plain string to a part array; the media wire tag is
 - Streaming rendering batches by rAF and re-parses the full text with markdown-it (`html: false` unchanged): multiple deltas in one frame trigger a single re-render. Reasoning blocks are collapsed by default and fold away once streamed; interruption keeps the partial content and marks it "interrupted".
 - Snapshot consumption goes through `handle.snapshot()`; the plugin owns only its UI loop and rendering, not assembly state.
 - Context-sourcing interface: activeFile / workspace snapshot come through the workspace facade (the wiki index belongs to m2-04).
+- The panel's visual language follows the claude.ai message conventions: neutral soft bubbles (no border), rule-marked collapsible reasoning, code blocks with a language header, a containerized composer, and a pill model selector — all on existing tokens, following light/dark.
 - The first 📎 control is disabled: the host has no file-dialog surface yet, so attachments use only paste/drop into inline sources, and the button states that limit.
 
 ## Alternatives considered

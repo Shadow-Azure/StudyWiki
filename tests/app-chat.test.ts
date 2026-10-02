@@ -186,6 +186,22 @@ describe("app-chat", () => {
     dispose();
   });
 
+  it("代码围栏渲染为带语言头的代码容器", async () => {
+    const { ctx } = fakeCtx([
+      { type: "text-delta", index: 0, text: "```python\nprint(1)\n```" },
+      { type: "finish", reason: "stop" },
+    ]);
+    const dispose = apply(ctx as never, {}, syncDeps);
+    document.querySelector("textarea")!.value = "q";
+    document.querySelector<HTMLButtonElement>(".chat-send")!.click();
+    await new Promise((r) => setTimeout(r, 10));
+    const box = document.querySelector(".chat-code");
+    expect(box).toBeTruthy();
+    expect(box!.querySelector(".chat-code-bar")!.textContent).toContain("python");
+    expect(box!.querySelector("pre")!.textContent).toContain("print(1)");
+    dispose();
+  });
+
   it("卸载中止在途流", async () => {
     const { ctx } = fakeCtx(
       [{ type: "text-delta", index: 0, text: "x" }],

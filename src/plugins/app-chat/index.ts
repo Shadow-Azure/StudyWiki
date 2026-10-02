@@ -97,7 +97,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   let contextRow: HTMLElement | null = null;
   let modelSelect: HTMLSelectElement | null = null;
   const offWorkspace = workspace.events.on("file-opened", (file) => {
-    if (contextRow) contextRow.textContent = file?.name ? `上下文：${file.name}` : "上下文：未选择文件";
+    if (contextRow) paintContext(contextRow, file?.name ?? null);
   });
 
   const paintSendButton = (): void => {
@@ -149,12 +149,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     if (!transcript || !modelSelect) return null;
     const wrapper = document.createElement("div");
     wrapper.className = "chat-message chat-assistant";
-    const label = document.createElement("div");
-    label.className = "chat-model";
-    label.textContent = modelSelect.value || "assistant";
+    wrapper.dataset.model = modelSelect.value || "assistant";
     const stream = document.createElement("div");
     stream.className = "chat-stream";
-    wrapper.append(label, stream);
+    wrapper.append(stream);
     transcript.append(wrapper);
     transcript.scrollTop = transcript.scrollHeight;
     return {
@@ -326,7 +324,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     modelSelect.setAttribute("aria-label", "对话模型");
     contextRow = document.createElement("div");
     contextRow.className = "chat-context";
-    contextRow.textContent = workspace.activeFile?.name ? `上下文：${workspace.activeFile.name}` : "上下文：未选择文件";
+    paintContext(contextRow, workspace.activeFile?.name ?? null);
     header.append(title, modelSelect);
     transcript = document.createElement("div");
     transcript.className = "chat-transcript";
@@ -337,7 +335,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     composer.className = "chat-composer";
     const attach = document.createElement("button");
     attach.type = "button";
-    attach.className = "btn btn-ghost icon-btn chat-attach";
+    attach.className = "chat-attach";
     attach.textContent = "📎";
     attach.title = "本版不支持系统文件选择；请直接粘贴或拖入图片/音频。";
     attach.disabled = true;
@@ -345,10 +343,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     input = document.createElement("textarea");
     input.className = "chat-input";
     input.rows = 3;
-    input.placeholder = "提问…（Enter 发送，Shift+Enter 换行）";
+    input.placeholder = "就当前文档提问…";
     sendButton = document.createElement("button");
     sendButton.type = "button";
-    sendButton.className = "btn btn-primary chat-send";
+    sendButton.className = "chat-send";
     sendButton.textContent = "发送";
     sendButton.addEventListener("click", () => {
       if (current) stop();
@@ -356,7 +354,13 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     });
     input.addEventListener("keydown", onKeyDown);
     input.addEventListener("paste", onPaste);
-    composer.append(attach, input, sendButton);
+    const row = document.createElement("div");
+    row.className = "chat-composer-row";
+    const hint = document.createElement("span");
+    hint.className = "chat-hint";
+    hint.textContent = "Enter 发送 · Shift+Enter 换行";
+    row.append(attach, hint, sendButton);
+    composer.append(input, row);
     chatRoot.append(header, contextRow, transcript, chips, composer);
     chatRoot.addEventListener("dragover", onDragOver);
     chatRoot.addEventListener("drop", onDrop);
@@ -390,4 +394,18 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     offWorkspace();
     offSlot();
   };
+}
+
+/** 渲染上下文行：azurite 圆点 + 活动文件名；未选择时只留弱化文案。 */
+function paintContext(row: HTMLElement, name: string | null): void {
+  if (!name) {
+    row.textContent = "未选择文件";
+    return;
+  }
+  const dot = document.createElement("span");
+  dot.className = "chat-ctx-dot";
+  dot.textContent = "●";
+  const label = document.createElement("span");
+  label.textContent = name;
+  row.replaceChildren(dot, label);
 }

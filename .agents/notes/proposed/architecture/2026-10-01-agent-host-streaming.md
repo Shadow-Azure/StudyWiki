@@ -30,6 +30,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 - 流式渲染走 rAF 合帧 + markdown-it 全量重解析（`html: false` 不变）：一帧内多个 delta 只重渲一次。reasoning 块默认折叠，流完自动收起；中断保留部分内容并标注「已中断」。
 - 快照消费走 `handle.snapshot()`；plugin 层只持有 UI 循环与渲染，不复制组装状态。
 - 上下文取材接口：activeFile / 工作区快照经 workspace facade 提供（wiki index 归 m2-04）。
+- 面板视觉语言对齐 claude.ai 消息规范：中性软气泡（无边框）、竖线折叠推理、带语言头的代码块、容器化 composer、胶囊模型选择器；全部走既有 token，跟随明暗主题。
 - 首版 📎 停用：宿主还没有文件选择对话框面，附件只走粘贴/拖拽的 inline 通道，按钮明示该限制。
 
 ## Alternatives considered

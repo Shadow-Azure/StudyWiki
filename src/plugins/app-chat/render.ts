@@ -29,7 +29,8 @@ export function createStreamRenderer(
   };
 }
 
-/** Paint one assistant snapshot: collapsible reasoning, markdown, usage, and errors.
+/** Paint one assistant snapshot: collapsible reasoning, markdown with headed code
+ * blocks, a model·usage footer, and errors.
  * Reasoning stays open while streaming and folds when finish or error is present.
  * @param el Assistant stream container to replace.
  * @param snapshot Current immutable view of the assembled response.
@@ -41,7 +42,7 @@ export function paint(el: HTMLElement, snapshot: PartialAssistant, onRetry: Retr
     reason.className = "chat-reason";
     reason.open = !snapshot.finishReason && !snapshot.error;
     const summary = document.createElement("summary");
-    summary.textContent = "推理过程";
+    summary.textContent = "思考过程";
     const reasonText = document.createElement("div");
     reasonText.className = "chat-reason-text";
     reasonText.textContent = snapshot.reasoning;
@@ -52,6 +53,7 @@ export function paint(el: HTMLElement, snapshot: PartialAssistant, onRetry: Retr
     const markdown = document.createElement("div");
     markdown.className = "chat-md";
     markdown.innerHTML = renderMarkdown(snapshot.text);
+    wrapCodeBlocks(markdown);
     el.append(markdown);
   }
   if (snapshot.toolCalls.length > 0) {
@@ -63,7 +65,9 @@ export function paint(el: HTMLElement, snapshot: PartialAssistant, onRetry: Retr
   if (snapshot.usage) {
     const usage = document.createElement("div");
     usage.className = "chat-usage";
-    usage.textContent = `tokens 输入 ${snapshot.usage.promptTokens} · 输出 ${snapshot.usage.completionTokens}` +
+    const model = el.closest(".chat-message")?.getAttribute("data-model") ?? "assistant";
+    const fmt = (count: number): string => count.toLocaleString("en-US");
+    usage.textContent = `${model} · ${fmt(snapshot.usage.promptTokens)} → ${fmt(snapshot.usage.completionTokens)} tokens` +
       (snapshot.finishReason ? ` · finish ${snapshot.finishReason}` : "");
     el.append(usage);
   }
@@ -80,5 +84,53 @@ export function paint(el: HTMLElement, snapshot: PartialAssistant, onRetry: Retr
     retry.addEventListener("click", onRetry);
     error.append(text, retry);
     el.append(error);
+  }
+}
+
+/** 把 markdown 渲染出的裸 pre 包进带语言头与复制钮的代码容器。
+ * 语言名取自围栏 info string（language-* 类），无标注时显示「代码」。 */
+function wrapCodeBlocks(container: HTMLElement): void {
+  for (const pre of [...container.querySelectorAll("pre")]) {
+    const code = pre.querySelector("code");
+    const lang = /language-([\w-]+)/.exec(code?.className ?? "")?.[1] ?? "代码";
+    const box = document.createElement("div");
+    box.className = "chat-code";
+    const bar = document.createElement("div");
+    bar.className = "chat-code-bar";
+    const name = document.createElement("span");
+    name.textContent = lang;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "chat-code-copy";
+    copy.textContent = "复制";
+    copy.addEventListener("click", () => {
+      void copyText(code?.textContent ?? "", copy);
+    });
+    bar.append(name, copy);
+    const next = pre.nextSibling;
+    box.append(bar, pre); // append 即移动：pre 离开原容器
+    if (next) container.insertBefore(box, next);
+    else container.append(box);
+  }
+}
+
+/** 复制文本到剪贴板：优先 Clipboard API，降级隐藏 textarea + execCommand；
+ * 无权限环境静默失败（按钮不反馈成功）。 */
+async function copyText(text: string, button: HTMLButtonElement): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const helper = document.createElement("textarea");
+      helper.value = text;
+      document.body.append(helper);
+      helper.select();
+      document.execCommand?.("copy");
+      helper.remove();
+    }
+    button.textContent = "已复制";
+    setTimeout(() => { button.textContent = "复制"; }, 1200);
+  } catch {
+    // 剪贴板不可用：保持原样，不打断对话
   }
 }
