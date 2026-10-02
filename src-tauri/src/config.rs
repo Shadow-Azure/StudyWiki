@@ -77,7 +77,11 @@ pub struct Settings {
     #[serde(rename = "defaultModel", default)]
     pub default_model: Option<String>,
     /// 流式单事件载荷字节上限；缺省用 DEFAULT_STREAM_EVENT_LIMIT_BYTES，0 在加载时拒绝。
-    #[serde(rename = "streamEventLimitBytes", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "streamEventLimitBytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub stream_event_limit_bytes: Option<u64>,
 }
 

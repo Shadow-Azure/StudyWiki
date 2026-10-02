@@ -424,12 +424,9 @@ fn probe_with(agent: &ureq::Agent, ep: &Endpoint) -> Result<u64, LlmError> {
 /// TS 侧同类门禁保留，本函数是 Rust 出口的最后防线。
 fn ensure_media_caps(req: &ChatRequest, ep: &Endpoint) -> Result<(), LlmError> {
     let has_cap = |wanted: &str| {
-        ep.models
-            .iter()
-            .any(|model| {
-                model.id == req.model
-                    && model.capabilities.iter().any(|cap| cap == wanted)
-            })
+        ep.models.iter().any(|model| {
+            model.id == req.model && model.capabilities.iter().any(|cap| cap == wanted)
+        })
     };
     for message in &req.messages {
         let MessageContent::Parts(parts) = &message.content else {
@@ -724,7 +721,16 @@ fn run_chat_stream_checked(
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), LlmError> {
     ensure_media_caps(req, ep)?;
-    run_chat_stream(agent, ep, req, sink, stream_id, aborts, event_limit, root_check)
+    run_chat_stream(
+        agent,
+        ep,
+        req,
+        sink,
+        stream_id,
+        aborts,
+        event_limit,
+        root_check,
+    )
 }
 
 /// 流式 chat：chunk 经 Channel 增量投递，Promise 在流终结时 resolve。
