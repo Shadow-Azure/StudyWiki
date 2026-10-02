@@ -4,7 +4,9 @@ import { ChunkQueue, StreamAssembler, type ChatStreamHandle, type StreamChunk } 
 /** Tauri channel factory for streaming callbacks; injectable with the invoke seam. */
 export type LlmChannel = { onmessage: ((chunk: StreamChunk) => void) | null };
 
-/** Tauri bindings this service wraps; injectable so tests fake exactly one seam. */
+/** Tauri bindings this service wraps; injectable so tests fake exactly one seam.
+ * createChannel 可选：缺省回落 defaultLlmDeps 的真实 Tauri Channel（构造时统一合并，
+ * 部分注入时 console.warn 提醒）——测试注入假依赖时请一并提供假工厂。 */
 export interface LlmDeps {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   createChannel?: () => LlmChannel;
@@ -113,7 +115,12 @@ export class LlmService {
   readonly #deps: LlmDeps;
 
   constructor(deps: LlmDeps = defaultLlmDeps) {
-    this.#deps = deps;
+    if (deps !== defaultLlmDeps && !deps.createChannel) {
+      console.warn(
+        "[llm] deps 未提供 createChannel，回落真实 Tauri Channel——测试环境请在 deps 注入假工厂",
+      );
+    }
+    this.#deps = { ...defaultLlmDeps, ...deps };
   }
 
   /** Single IPC seam; rejections normalize into LlmError(code). */
@@ -220,7 +227,7 @@ export class LlmService {
     }
 
     const streamId = crypto.randomUUID();
-    const channel = this.#deps.createChannel?.() ?? defaultLlmDeps.createChannel!();
+    const channel = this.#deps.createChannel!();
     const queue = new ChunkQueue();
     const assembler = new StreamAssembler();
     let seenError: Extract<StreamChunk, { type: "error" }> | null = null;

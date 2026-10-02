@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LlmError, LlmService } from "../src/host/llm";
 import { ChunkQueue, StreamAssembler, type StreamChunk } from "../src/host/llm-stream";
 
@@ -46,6 +46,21 @@ describe("StreamAssembler", () => {
     const s2 = a.snapshot();
     expect(s2.toolCalls[0].name).toBe("read");
     expect(s2.usage?.promptTokens).toBe(3);
+  });
+  it("deps 缺 createChannel：构造时告警（回落默认真实通道）", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    void new LlmService({ invoke: async () => undefined });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("createChannel"));
+    warn.mockRestore();
+  });
+
+  it("deps 完整注入假工厂：不告警", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { deps } = fakeDeps([]);
+    void new LlmService(deps);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
