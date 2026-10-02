@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/notes/proposed/architecture/2026-10-01-agent-host-streaming.md
-2026-10-01-agent-host-streaming.md: 1401c209d65b1f6f98b97c0f4293d1a41c9c564e
-2026-10-01-agent-host-streaming.en.md: 7f71f8426b559d7d3c95776df8224d1cb2ef1587
+2026-10-01-agent-host-streaming.md: 5a9d68d1fe672347ed27f3d6396071aef176abef
+2026-10-01-agent-host-streaming.en.md: 64df6169e07887967d108d94152d4d7318e31144

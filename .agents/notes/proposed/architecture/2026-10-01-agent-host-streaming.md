@@ -45,4 +45,5 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 - guard 白名单 `llm` 增 `chatStream`；`SlotName` 增 `sidebar.right`；commands.md 生成区增 `llm_chat_stream` / `llm_chat_abort`；归一错误词表增 `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`。
 - 终态语义：中止是显式 `llm_chat_abort` 命令加 send-failure 兜底，不是字面 Channel-drop GC；组装点唯一住宿主 `llm_stream.ts`，`ChatStreamHandle.snapshot()` 同时消除「partial 快照」歧义。
 - 流式单事件载荷设字节上限：`settings.json` 可选 `streamEventLimitBytes`，缺省 100 MiB，超限断流报 `BAD_RESPONSE`（流内唯一无界缓冲的防线）。
+- 附件 path 的 canonicalize 授权与读取之间保留本机竞态窗口（触发需本机恶意进程，桌面单用户威胁模型下接受）；canonicalize 失败统一报「不在工作区内」，诊断粒度粗但 fail-closed——错误词表细分与 open 级防符号链接留 m2-03 工具落盘硬化窗口。
 - 欠账：`tool-call-delta` 本期无消费方；会话不持久化（重开即清）；块级增量渲染留作性能优化；远程 url 来源依赖 provider 可达性，自托管 endpoint 够不到公网时按传输错误语义报错。
