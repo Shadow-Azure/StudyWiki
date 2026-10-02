@@ -127,7 +127,10 @@ fn dispatch(payload: &str, on_chunk: &mut dyn FnMut(StreamChunk) -> bool) -> Res
     }
     if let Some(calls) = d.get("tool_calls").and_then(|v| v.as_array()) {
         for call in calls {
-            let index = call.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            // 上游 index 语义是 u32；畸形超大值钳到 u32::MAX（不静默变小值误归并），
+            // m2-03 工具执行落地时应改为显式拒绝或独立处理。
+            let index = u32::try_from(call.get("index").and_then(|v| v.as_u64()).unwrap_or(0))
+                .unwrap_or(u32::MAX);
             let id = call.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let name = call.pointer("/function/name").and_then(|v| v.as_str()).map(str::to_string);
             let args = call.pointer("/function/arguments").and_then(|v| v.as_str()).unwrap_or("");
@@ -232,6 +235,14 @@ mod tests {
         let (chunks, _) = collect(body);
         assert!(matches!(&chunks[0], StreamChunk::ToolCallDelta { index: 0, id, name: Some(n), arguments_delta } if id == "c1" && n == "read" && arguments_delta == "{\"pa"));
         assert!(matches!(&chunks[1], StreamChunk::ToolCallDelta { index: 0, name: None, arguments_delta, .. } if arguments_delta == "th\"}"));
+    }
+
+    #[test]
+    fn oversized_tool_call_index_clamps_to_max() {
+        let body = b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":5000000000,\"id\":\"c1\",\"function\":{\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n";
+        let (chunks, r) = collect(body);
+        assert!(r.is_ok());
+        assert!(matches!(&chunks[0], StreamChunk::ToolCallDelta { index: u32::MAX, .. }));
     }
 
     #[test]
