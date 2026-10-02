@@ -62,15 +62,18 @@ export class StreamAssembler {
     }
   }
 
-  /** 当前快照（toolCalls 按 index 升序）。 */
+  /** 当前快照（toolCalls 按 index 升序）。返回隔离副本（toolCalls 条目与
+   * usage 均浅拷贝），消费者突变快照不会污染组装器内部状态。 */
   snapshot(): PartialAssistant {
     return {
       reasoning: this.#reasoning,
       text: this.#text,
-      toolCalls: [...this.#tools.values()].sort((a, b) => a.index - b.index),
-      ...(this.#usage ? { usage: this.#usage } : {}),
+      toolCalls: [...this.#tools.values()]
+        .sort((a, b) => a.index - b.index)
+        .map((t) => ({ ...t })),
+      ...(this.#usage ? { usage: { ...this.#usage } } : {}),
       ...(this.#finish ? { finishReason: this.#finish } : {}),
-      ...(this.#error ? { error: this.#error } : {}),
+      ...(this.#error ? { error: { ...this.#error } } : {}),
     };
   }
 }

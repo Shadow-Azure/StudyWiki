@@ -36,6 +36,17 @@ describe("StreamAssembler", () => {
       error: { code: "RATE_LIMITED", message: "慢点" },
     });
   });
+  it("snapshot 返回隔离副本：突变快照不污染组装器内部状态", () => {
+    const a = new StreamAssembler();
+    a.push({ type: "tool-call-delta", index: 0, id: "c1", name: "read", argumentsDelta: "{}" });
+    a.push({ type: "usage", usage: { promptTokens: 3, completionTokens: 5 } });
+    const s1 = a.snapshot();
+    s1.toolCalls[0].name = "mutated";
+    s1.usage!.promptTokens = 999;
+    const s2 = a.snapshot();
+    expect(s2.toolCalls[0].name).toBe("read");
+    expect(s2.usage?.promptTokens).toBe(3);
+  });
 });
 
 describe("ChunkQueue", () => {
