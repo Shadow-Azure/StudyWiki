@@ -91,9 +91,12 @@ describe("ChunkQueue", () => {
 function fakeDeps(script: StreamChunk[], caps = ["text", "vision"]) {
   let onmessage: ((c: StreamChunk) => void) | null = null;
   const calls: string[] = [];
+  const invocations: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const channels: unknown[] = [];
   const deps = {
-    invoke: async (cmd: string, _args?: Record<string, unknown>) => {
+    invoke: async (cmd: string, args?: Record<string, unknown>) => {
       calls.push(cmd);
+      invocations.push({ cmd, args });
       if (cmd === "llm_list_endpoints") {
         return { endpoints: [{ id: "e1", name: "E", kind: "chat", baseUrl: "https://x", vendor: "custom", hasKey: true, keyPreview: "sk-…", models: [{ id: "m1", capabilities: caps }] }], defaultModel: "m1" };
       }
@@ -104,12 +107,16 @@ function fakeDeps(script: StreamChunk[], caps = ["text", "vision"]) {
       if (cmd === "llm_chat_abort") return undefined;
       throw new Error(`unexpected ${cmd}`);
     },
-    createChannel: () => ({
-      set onmessage(f: ((c: StreamChunk) => void) | null) { onmessage = f; },
-      get onmessage() { return onmessage; },
-    }),
+    createChannel: () => {
+      const ch = {
+        set onmessage(f: ((c: StreamChunk) => void) | null) { onmessage = f; },
+        get onmessage() { return onmessage; },
+      };
+      channels.push(ch);
+      return ch;
+    },
   };
-  return { calls, deps };
+  return { calls, invocations, channels, deps };
 }
 
 describe("LlmService.chatStream", () => {
@@ -150,13 +157,29 @@ describe("LlmService.chatStream", () => {
     });
   });
 
-  it("invoke args 带 streamId 与 channel", async () => {
-    const { calls, deps } = fakeDeps([]);
+  it("invoke args 带 streamId、路由字段与注入的 channel", async () => {
+    const { invocations, channels, deps } = fakeDeps([
+      { type: "text-delta", index: 0, text: "好" },
+      { type: "finish", reason: "stop" },
+    ]);
     const llm = new LlmService(deps);
-    await llm.chatStream({ messages: [{ role: "user", content: "hi" }], maxTokens: 8, temperature: 0.2 });
-    const streamCall = calls.indexOf("llm_chat_stream");
-    expect(streamCall).toBe(1);
-    expect(calls[0]).toBe("llm_list_endpoints");
+    const h = await llm.chatStream({ messages: [{ role: "user", content: "hi" }], maxTokens: 8, temperature: 0.2 });
+    const call = invocations.find((c) => c.cmd === "llm_chat_stream");
+    expect(call).toBeDefined();
+    expect(invocations[0].cmd).toBe("llm_list_endpoints");
+    const args = call!.args as {
+      req: { streamId: string; endpointId: string; model: string; messages: unknown[]; maxTokens?: number; temperature?: number };
+      onChunk: unknown;
+    };
+    expect(typeof args.req.streamId).toBe("string");
+    expect(args.req.streamId.length).toBeGreaterThan(0);
+    expect(args.req.endpointId).toBe("e1");
+    expect(args.req.model).toBe("m1");
+    expect(args.req.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(args.req.maxTokens).toBe(8);
+    expect(args.req.temperature).toBe(0.2);
+    expect(args.onChunk).toBe(channels[0]);
+    await h.settled;
   });
 
   it("无 vision 能力带图被拦（UNSUPPORTED_CONTENT，不出网）", async () => {
