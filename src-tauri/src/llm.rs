@@ -681,27 +681,32 @@ impl Drop for AbortGuard<'_> {
     }
 }
 
+/// 流式读循环的运行参数包：收敛参数个数（clippy too_many_arguments）。
+struct StreamCtx<'a> {
+    stream_id: &'a str,
+    aborts: &'a AbortRegistry,
+    event_limit: u64,
+    root_check: &'a dyn Fn(&str) -> bool,
+}
+
 /// 流式读循环（纯缝：sink 可测）：abort 置位或 sink 返回 false 即停；结束或失败都清理登记。
 fn run_chat_stream(
     agent: &ureq::Agent,
     ep: &Endpoint,
     req: &ChatRequest,
     sink: &mut dyn FnMut(StreamChunk) -> bool,
-    stream_id: &str,
-    aborts: &AbortRegistry,
-    event_limit: u64,
-    root_check: &dyn Fn(&str) -> bool,
+    ctx: &StreamCtx<'_>,
 ) -> Result<(), LlmError> {
-    let _guard = AbortGuard::new(aborts, stream_id);
+    let _guard = AbortGuard::new(ctx.aborts, ctx.stream_id);
     let url = join_url(&ep.base_url, "chat/completions");
-    let body = build_chat_body(req, true, root_check)?;
+    let body = build_chat_body(req, true, ctx.root_check)?;
     let resp = with_auth(agent.post(&url), ep)
         .set("Content-Type", "application/json")
         .send_bytes(body.to_string().as_bytes())
         .map_err(map_transport)?;
     let reader = BufReader::new(resp.into_reader());
-    let result = parse_sse_lines(reader, event_limit, &mut |chunk| {
-        if aborts.lock().unwrap().contains(stream_id) {
+    let result = parse_sse_lines(reader, ctx.event_limit, &mut |chunk| {
+        if ctx.aborts.lock().unwrap().contains(ctx.stream_id) {
             return false;
         }
         sink(chunk)
@@ -715,22 +720,10 @@ fn run_chat_stream_checked(
     ep: &Endpoint,
     req: &ChatRequest,
     sink: &mut dyn FnMut(StreamChunk) -> bool,
-    stream_id: &str,
-    aborts: &AbortRegistry,
-    event_limit: u64,
-    root_check: &dyn Fn(&str) -> bool,
+    ctx: &StreamCtx<'_>,
 ) -> Result<(), LlmError> {
     ensure_media_caps(req, ep)?;
-    run_chat_stream(
-        agent,
-        ep,
-        req,
-        sink,
-        stream_id,
-        aborts,
-        event_limit,
-        root_check,
-    )
+    run_chat_stream(agent, ep, req, sink, ctx)
 }
 
 /// 流式 chat：chunk 经 Channel 增量投递，Promise 在流终结时 resolve。
@@ -757,15 +750,18 @@ pub async fn llm_chat_stream(
         let event_limit = config::stream_event_limit(&s);
         let sid = req.stream_id.clone();
         let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
+        let ctx = StreamCtx {
+            stream_id: &sid,
+            aborts: abort_registry(),
+            event_limit,
+            root_check: &root_check,
+        };
         run_chat_stream_checked(
             &stream_agent(),
             &ep,
             &req.base,
             &mut |chunk| on_chunk.send(chunk).is_ok(),
-            &sid,
-            abort_registry(),
-            event_limit,
-            &root_check,
+            &ctx,
         )
     })
     .await
@@ -1126,10 +1122,12 @@ mod tests {
                 got.push(c);
                 true
             },
-            "s1",
-            &aborts,
-            u64::MAX,
-            &|_| false,
+            &StreamCtx {
+                stream_id: "s1",
+                aborts: &aborts,
+                event_limit: u64::MAX,
+                root_check: &|_| false,
+            },
         );
         assert!(r.is_ok());
         assert!(got
@@ -1158,10 +1156,12 @@ mod tests {
                 }
                 n == 0 // 恒 false：模拟中止后停止。
             },
-            "s2",
-            &aborts,
-            u64::MAX,
-            &|_| false,
+            &StreamCtx {
+                stream_id: "s2",
+                aborts: &aborts,
+                event_limit: u64::MAX,
+                root_check: &|_c| false,
+            },
         );
         assert!(r.is_ok());
         assert_eq!(n, 1, "回调停止后不得再投递 chunk");
@@ -1412,10 +1412,12 @@ mod tests {
             &endpoint,
             &req,
             &mut |_| true,
-            "caps",
-            &aborts,
-            u64::MAX,
-            &|_| false,
+            &StreamCtx {
+                stream_id: "caps",
+                aborts: &aborts,
+                event_limit: u64::MAX,
+                root_check: &|_| false,
+            },
         );
         assert_eq!(result.unwrap_err().code, "UNSUPPORTED_CONTENT");
         assert!(
@@ -1437,10 +1439,12 @@ mod tests {
             &endpoint,
             &text_request(),
             &mut |_| true,
-            "send-failure",
-            &aborts,
-            u64::MAX,
-            &|_| false,
+            &StreamCtx {
+                stream_id: "send-failure",
+                aborts: &aborts,
+                event_limit: u64::MAX,
+                root_check: &|_p| false,
+            },
         );
         assert_eq!(result.unwrap_err().code, "UNREACHABLE");
         assert!(!aborts.lock().unwrap().contains("send-failure"));
