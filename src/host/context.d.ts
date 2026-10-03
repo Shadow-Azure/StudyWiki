@@ -21,7 +21,7 @@ declare module "cordis" {
     slots: SlotsService;
     /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */
     plugins: PluginsService;
-    /** LLM 推理服务（endpoint 列表/探测/非流式 chat；模型路由在本层）。 */
+    /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
     llm: LlmService;
   }
 }

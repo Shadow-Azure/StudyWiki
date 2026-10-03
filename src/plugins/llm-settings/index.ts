@@ -483,6 +483,18 @@ async function renderForm(
       const visionLabel = document.createElement("label");
       visionLabel.className = "llm-vision";
       visionLabel.append(vision, document.createTextNode("vision"));
+      const audio = document.createElement("input");
+      audio.type = "checkbox";
+      audio.name = "audio";
+      audio.checked = m.capabilities.includes("audio");
+      audio.addEventListener("change", () => {
+        m.capabilities = audio.checked
+          ? [...m.capabilities.filter((c) => c !== "audio"), "audio"]
+          : m.capabilities.filter((c) => c !== "audio");
+      });
+      const audioLabel = document.createElement("label");
+      audioLabel.className = "llm-vision";
+      audioLabel.append(audio, document.createTextNode("audio"));
       const del = document.createElement("button");
       del.type = "button";
       del.className = "btn btn-ghost";
@@ -491,7 +503,7 @@ async function renderForm(
         draft.models.splice(i, 1);
         drawFields();
       });
-      row.append(id, visionLabel, del);
+      row.append(id, visionLabel, audioLabel, del);
       fieldset.append(row);
     }
     const addModel = document.createElement("button");

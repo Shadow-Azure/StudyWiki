@@ -159,3 +159,17 @@ test("shell: other 文件显示不支持预览，支持类型恢复查看器", (
   teardown();
   root.remove();
 });
+
+test("shell: mounts the sidebar.right slot container", () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const mounted: string[] = [];
+  const slots = { mount: (slot: string, host: HTMLElement) => { mounted.push(slot); host.replaceChildren(); } };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  expect(mounted).toContain("sidebar.right");
+  expect(root.querySelector(".slot-host.sidebar-right")).toBeTruthy();
+  teardown();
+  root.remove();
+});

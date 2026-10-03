@@ -42,7 +42,7 @@ pub fn migrate_legacy<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), Strin
     migrate_legacy_dirs(&legacy, &app_studywiki_dir(app)?)
 }
 
-/// 单个模型的声明（能力：text / vision）。
+/// 单个模型的声明（能力：text / vision / audio）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ModelEntry {
     pub id: String,
@@ -76,10 +76,26 @@ pub struct Settings {
     pub endpoints: Vec<Endpoint>,
     #[serde(rename = "defaultModel", default)]
     pub default_model: Option<String>,
+    /// 流式单事件载荷字节上限；缺省用 DEFAULT_STREAM_EVENT_LIMIT_BYTES，0 在加载时拒绝。
+    #[serde(
+        rename = "streamEventLimitBytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stream_event_limit_bytes: Option<u64>,
 }
 
 /// 本客户端支持的 settings 版本；高于此值拒绝加载。
 pub const SUPPORTED_SETTINGS_VERSION: u32 = 1;
+
+/// 流式单事件载荷缺省上限：100 MiB——正常 chunk 是 KB 级，上限只拦畸形/恶意流。
+pub const DEFAULT_STREAM_EVENT_LIMIT_BYTES: u64 = 100 * 1024 * 1024;
+
+/// 读生效的流式事件上限：未配置用缺省。
+pub fn stream_event_limit(s: &Settings) -> u64 {
+    s.stream_event_limit_bytes
+        .unwrap_or(DEFAULT_STREAM_EVENT_LIMIT_BYTES)
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -87,6 +103,7 @@ impl Default for Settings {
             version: SUPPORTED_SETTINGS_VERSION,
             endpoints: Vec::new(),
             default_model: None,
+            stream_event_limit_bytes: None,
         }
     }
 }
@@ -121,6 +138,9 @@ pub fn load_settings(dir: &Path) -> Result<Settings, String> {
             "settings.json 版本 {} 高于本客户端支持的 {}，请升级客户端",
             s.version, SUPPORTED_SETTINGS_VERSION
         ));
+    }
+    if s.stream_event_limit_bytes == Some(0) {
+        return Err("settings.json 的 streamEventLimitBytes 不能为 0".into());
     }
     Ok(s)
 }
@@ -325,12 +345,37 @@ mod tests {
     }
 
     #[test]
+    fn stream_event_limit_defaults_and_overrides() {
+        let s = Settings::default();
+        assert_eq!(stream_event_limit(&s), DEFAULT_STREAM_EVENT_LIMIT_BYTES);
+        let custom = Settings {
+            stream_event_limit_bytes: Some(1024),
+            ..Settings::default()
+        };
+        assert_eq!(stream_event_limit(&custom), 1024);
+    }
+
+    #[test]
+    fn stream_event_limit_zero_fails_loud_on_load() {
+        let dir = std::env::temp_dir().join(format!("sw-sel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"version":1,"endpoints":[],"streamEventLimitBytes":0}"#,
+        )
+        .unwrap();
+        assert!(load_settings(&dir).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn atomic_write_roundtrip_with_0600_and_no_tmp_residue() {
         let dir = std::env::temp_dir().join(format!("sw-set3-{}", std::process::id()));
         let mut s = Settings {
             version: 1,
             endpoints: vec![sample_endpoint()],
             default_model: Some("deepseek-v4-flash".into()),
+            stream_event_limit_bytes: None,
         };
         save_settings(&dir, &s).unwrap();
         s.endpoints.push(sample_endpoint());

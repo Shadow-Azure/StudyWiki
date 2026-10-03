@@ -17,7 +17,8 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
-  host/llm.ts                      LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat，deps 可注入）
+  host/llm-stream.ts               LLM 流式契约：chunk 词表、partial 快照组装器、FIFO 异步 chunk 队列与流句柄形状（→ llm.ts）
+  host/llm.ts                      LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）（→ llm-stream.ts）
   host/plugins.ts                  宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                    类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
   host/windows.ts                  窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
@@ -30,7 +31,10 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
-  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 三槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
+  plugins/app-chat/attachments.ts  app-chat 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
+  plugins/app-chat/index.ts        app-chat 插件：右侧栏内存会话 + chat 流式请求/渲染/停止/重试 + 模型选择与多模态附件 chips（→ llm-stream.ts、llm.ts、attachments.ts、render.ts）
+  plugins/app-chat/render.ts       app-chat 渲染：rAF 合帧 partial 快照 → reasoning/Markdown/工具/usage/error 视图（→ llm-stream.ts、markdown.ts）
+  plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
   plugins/app-windows/index.ts     app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts     doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
   plugins/doc-excel/index.ts       doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存重试/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）
@@ -38,7 +42,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   plugins/doc-markdown/editor.ts   doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂
   plugins/doc-markdown/index.ts    doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 加载/错误态 + 乱序读取防护 + 脏标记/保存重试 + 全局 Mod-S + 关窗/切换守卫（file-opened 挂渲染，kind 不符清空）（→ editor.ts、mode.ts、preview.ts、types.ts、dom.ts、viewer.ts）
   plugins/doc-markdown/mode.ts     doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
-  plugins/doc-markdown/preview.ts  doc-markdown 纯函数：markdown-it 渲染（html:false，内嵌 HTML 转义）
+  plugins/doc-markdown/preview.ts  doc-markdown 兼容 re-export：消费方保留原导入路径并使用宿主共享 markdown 渲染器（→ markdown.ts）
   plugins/doc-video/index.ts       doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）（→ viewer.ts）
   plugins/llm-settings/index.ts    llm-settings 插件：厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、dom.ts）
   plugins/llm-settings/model.ts    llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）
@@ -51,11 +55,13 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   types.ts                         FileNode —— 前后端共享的唯一形状
   ui/dom.ts                        DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）（→ icons.ts）
   ui/icons.ts                      内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）
+  ui/markdown.ts                   宿主共享 markdown-it 渲染器：html/linkify/typographer 全关，doc-markdown 与 chat 共用同一安全策略
   ui/viewer.ts                     共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                         Rust 壳
   config.rs                        用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
-  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、native_close.rs、plugins.rs、windows.rs）
-  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 非流式 chat 出口（唯一联网点，ureq rustls）
+  lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、windows.rs）
+  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口 + 附件大小门禁（单件 20 MB / 聚合 100 MB）（唯一联网点，ureq rustls）
+  llm_stream.rs                    流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                       插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
@@ -82,23 +88,25 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder → `read_tree` assigns kind → view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file` + markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown / excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)); LLM inference — plugins call `ctx.llm.chat({model})`, the host service routes the model to its owning endpoint (`MODEL_UNKNOWN` / `MODEL_AMBIGUOUS` / `MODEL_UNSPECIFIED` are thrown here), and the Rust `llm_chat` reads `~/.studywiki/settings.json` and sends HTTPS (an empty apiKey carries no Authorization header), returning normalized error codes along the same path.
+Data flows: tree reading — pick a folder→`read_tree` assigns kind→view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file`+markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown/excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)); LLM inference — plugins call `ctx.llm.chat`/`ctx.llm.chatStream`, the host service routes the model to its owning endpoint (`MODEL_UNKNOWN`/`MODEL_AMBIGUOUS`/`MODEL_UNSPECIFIED` are thrown here), and the Rust `llm_chat`/`llm_chat_stream` read `~/.studywiki/settings.json` and send HTTPS (an empty apiKey carries no Authorization header); streaming goes through a Channel, `llm_chat_abort` sets the stop flag, and errors return on the same path.
 
 ## Key decision points
 
-- **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS` / `VIDEO_EXTS` / `EXCEL_EXTS`): a single decision point.
+- **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS`/`VIDEO_EXTS`/`EXCEL_EXTS`): a single decision point.
 - **xlsx semantics live in frontend ExcelJS; Rust stays a byte boundary**: `ctx.excel` owns the workbook and enforces the 1,000,000 declared-dimension cell cap; Rust only moves bytes and writes atomically.
 - **Switch guards live in host `WorkspaceService`; Context exposes only `WorkspaceFacade`**: file/root switches share guards, dirty same-path reopen is a no-op, and windows binds the internal controller before Rust authorization.
 - **Close cancels in the main process first**: macOS `_close:`/red button/`terminate:` enter frontend guards; consent calls `destroy()`.
-- **Vendored cordis, take the contract drop the loader**: a static module table + manifest loading, composition is data; upgrades = manual diff + registration in [vendor/VENDORED.md](../vendor/VENDORED.md).
+- **Vendored cordis, take the contract drop the loader**: a static module table+manifest loading, composition is data; upgrades = manual diff+registration in [vendor/VENDORED.md](../vendor/VENDORED.md).
 - **Layering**: `src/plugins/` must not import `@tauri-apps/*` (checked by `pnpm verify:layering`); global state lives in Rust, window state in the Context.
 - **assetProtocol's configured scope is empty, runtime dynamic authorization**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory` (recursive) — video and images keep using the asset protocol, but the configured surface no longer pre-opens arbitrary directories.
 - **markdown-it bundled at build time, `html: false`**: a corollary of environment independence (below), and it shrinks the XSS surface.
-- **The system webview does rendering and video decoding** (WKWebView / WebView2 / webkit2gtk): a volume-vs-dependencies tradeoff, see [environment-independence.en.md](environment-independence.en.md).
+- **The system webview does rendering and video decoding** (WKWebView/WebView2/webkit2gtk): a volume-vs-dependencies tradeoff, see [environment-independence.en.md](environment-independence.en.md).
 - **`~/.studywiki` is the user config root**: identical shape on all three platforms; legacy `app_config_dir` data migrates once at startup (idempotent, re-entrant).
-- **Keys are stored in plaintext in settings.json with 0600**: the same water level as Claude Code / Codex / dsh; the command surface is write-only for keys (list is redacted) and the external-plugin whitelist excludes write operations.
-- **Rust is a thin capability layer (persistence + egress)**: model routing and the future agent loop both live in the frontend (compared with dsh: native code only isolates capabilities); vendor preset baseUrls exist only on the Rust side.
-- **External plugins load via blob URL**: a Rust command reads the entry source → JS Blob → dynamic import; the single-file zero-dependency contract drives the blob's usual weaknesses (relative imports, URL lifetime) to zero, and the channel is testable end-to-end in vitest with an injected fake import; custom-protocol ESM can only be verified in a real webview and stays as a fallback (landing record in the Phase 2 Note, decision 1).
+- **Keys are stored in plaintext in settings.json with 0600**: the same water level as Claude Code/Codex/dsh; the command surface is write-only for keys (list is redacted) and the external-plugin whitelist excludes write operations.
+- **Rust is a thin capability layer (persistence+egress)**: model routing and the future agent loop both live in the frontend (compared with dsh: native code only isolates capabilities); vendor preset baseUrls exist only on the Rust side.
+- **External plugins load via blob URL**: a Rust command reads the entry source→JS Blob→dynamic import; the single-file zero-dependency contract drives the blob's usual weaknesses (relative imports, URL lifetime) to zero, and the channel is testable end-to-end in vitest with an injected fake import; custom-protocol ESM can only be verified in a real webview and stays as a fallback (landing record in the Phase 2 Note, decision 1).
+- **Streaming uses `ipc::Channel`, not event broadcast**: one ordered consumer/natural window isolation; `llm_chat_abort` stops it explicitly.
+- **Three-source attachment union**: path is read and base64-encoded at the Rust egress/inline is never persisted/url passes through to the provider.
 - **npm as a repository, not as a runtime**: networking happens only in the Rust install command (ureq+rustls pure-Rust stack); runtime stays fully offline ([environment-independence.en.md](environment-independence.en.md) exemption registry).
 
 ## Environment independence
