@@ -244,16 +244,33 @@ describe("app-chat", () => {
     expect(host().textContent).not.toContain("MODEL_CONFIG_UNAVAILABLE");
   });
 
-  it("fileToAttachment：图片 File → inline base64，文本 File → null", async () => {
+  it("fileToAttachment：图片 File → inline base64，文本/不支持的 MIME 拒绝", async () => {
     const { fileToAttachment } = await import("../src/plugins/app-chat/attachments");
     const img = new File([new Uint8Array([137, 80, 78, 71])], "截图.png", { type: "image/png" });
-    const att = await fileToAttachment(img);
-    expect(att?.part.type).toBe("image");
-    expect(att?.part.source).toMatchObject({ kind: "inline", mimeType: "image/png" });
+    const got = await fileToAttachment(img);
+    expect(got.ok).toBe(true);
+    if (!got.ok) throw new Error("expected ok");
+    expect(got.attachment.part.type).toBe("image");
+    expect(got.attachment.part.source).toMatchObject({ kind: "inline", mimeType: "image/png" });
     const txt = new File(["hi"], "a.txt", { type: "text/plain" });
     const ogg = new File([new Uint8Array([1])], "voice.ogg", { type: "audio/ogg" });
-    expect(await fileToAttachment(ogg)).toBeNull();
-    expect(await fileToAttachment(txt)).toBeNull();
+    expect(await fileToAttachment(ogg)).toMatchObject({ ok: false, reason: "unsupported" });
+    expect(await fileToAttachment(txt)).toMatchObject({ ok: false, reason: "unsupported" });
+  });
+
+  it("fileToAttachment：超上限在读取字节前拒绝（硬上限 + 明确报错，复现 §6.1 无界内存）", async () => {
+    const { fileToAttachment } = await import("../src/plugins/app-chat/attachments");
+    const big = new File([new Uint8Array([1])], "大音频.wav", { type: "audio/wav" });
+    Object.defineProperty(big, "size", { value: 21 * 1024 * 1024 });
+    let readBytes = false;
+    big.arrayBuffer = () => {
+      readBytes = true;
+      return Promise.resolve(new ArrayBuffer(0));
+    };
+    const result = await fileToAttachment(big);
+    expect(result).toMatchObject({ ok: false, reason: "oversized" });
+    expect(readBytes).toBe(false);
+    if (!result.ok) expect(result.message).toContain("20 MB");
   });
 
   it("paste 事件把图片挂进 composer chips", async () => {
@@ -266,6 +283,24 @@ describe("app-chat", () => {
     area.dispatchEvent(ev);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(document.querySelector(".chat-chip")?.textContent).toContain("贴图.png");
+    dispose();
+  });
+
+  it("paste 超限附件显示明确报错且不进 chips", async () => {
+    const { ctx } = fakeCtx([{ type: "finish", reason: "stop" }]);
+    const dispose = apply(ctx as never, {}, syncDeps);
+    const big = new File([new Uint8Array([1])], "大音频.wav", { type: "audio/wav" });
+    Object.defineProperty(big, "size", { value: 21 * 1024 * 1024 });
+    const area = document.querySelector("textarea")!;
+    const ev = new Event("paste", { bubbles: true }) as Event & { clipboardData: unknown };
+    ev.clipboardData = { files: [big] };
+    area.dispatchEvent(ev);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const notice = document.querySelector(".chat-notice") as HTMLElement | null;
+    expect(notice).not.toBeNull();
+    expect(notice!.hidden).toBe(false);
+    expect(notice!.textContent).toContain("超过大小上限");
+    expect(document.querySelector(".chat-chip")).toBeNull();
     dispose();
   });
 });

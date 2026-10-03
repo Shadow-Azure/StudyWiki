@@ -22,7 +22,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### 多模态消息模型
 
-消息 content 从纯字符串扩为 part 数组；媒体 wire tag 直接是 `image` / `audio`（Rust enum 结构化分派，不用自由字符串 kind），source 是联合类型：`path`（本地文件，Rust 出口读盘转 base64 注入请求体，路径 canonicalize 一次后对同一路径做 root 校验并读取）/ `inline`（剪贴板粘贴与拖拽的 base64，不落盘）/ `url`（远程 URL 原样透传，由 provider 端拉取，客户端不下载）。模型能力门禁前置：endpoint 的 `capabilities` 增 `audio`，消息带图/音频而模型无对应能力时发送前报 `UNSUPPORTED_CONTENT`。
+消息 content 从纯字符串扩为 part 数组；媒体 wire tag 直接是 `image` / `audio`（Rust enum 结构化分派，不用自由字符串 kind），source 是联合类型：`path`（本地文件，Rust 出口读盘转 base64 注入请求体，路径 canonicalize 一次后对同一路径做 root 校验并读取）/ `inline`（剪贴板粘贴与拖拽的 base64，不落盘）/ `url`（远程 URL 原样透传，由 provider 端拉取，客户端不下载）。模型能力门禁前置：endpoint 的 `capabilities` 增 `audio`，消息带图/音频而模型无对应能力时发送前报 `UNSUPPORTED_CONTENT`。附件大小硬上限：单件 20 MB / 单请求聚合 100 MB（解码估算），前端粘贴/拖拽在读取字节前拒绝、Rust 出口 metadata/data 长度兜底，超限 `UNSUPPORTED_CONTENT` 明确报错；不做压缩/归一化——pi/dsh 式压缩是 provider 5 MB 级硬上限的产物，OpenAI 兼容 20 MB 上限下直接拒绝更诚实，也避免引入图像处理依赖。
 
 ### chat 槽位与渲染
 
@@ -46,5 +46,6 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 - guard 白名单 `llm` 增 `chatStream`；`SlotName` 增 `sidebar.right`；commands.md 生成区增 `llm_chat_stream` / `llm_chat_abort`；归一错误词表增 `STREAM_CLOSED` / `UNSUPPORTED_CONTENT`。
 - 终态语义：中止是显式 `llm_chat_abort` 命令加 send-failure 兜底，不是字面 Channel-drop GC；组装点唯一住宿主 `llm_stream.ts`，`ChatStreamHandle.snapshot()` 同时消除「partial 快照」歧义。
 - 流式单事件载荷设字节上限：`settings.json` 可选 `streamEventLimitBytes`，缺省 100 MiB，超限断流报 `BAD_RESPONSE`（流内唯一无界缓冲的防线）。
+- 附件请求侧有双层大小硬上限（单件 20 MB / 聚合 100 MB），`settings.json` 暂不可配；量大后再议配置化。
 - 附件 path 的 canonicalize 授权与读取之间保留本机竞态窗口（触发需本机恶意进程，桌面单用户威胁模型下接受）；canonicalize 失败统一报「不在工作区内」，诊断粒度粗但 fail-closed——错误词表细分与 open 级防符号链接留 m2-03 工具落盘硬化窗口。
 - 欠账：`tool-call-delta` 本期无消费方；会话不持久化（重开即清）；块级增量渲染留作性能优化；远程 url 来源依赖 provider 可达性，自托管 endpoint 够不到公网时按传输错误语义报错。

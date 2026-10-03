@@ -1249,7 +1249,7 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 .slot-sidebar-right { display: flex; flex-direction: column; }
 .chat {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
   flex: 1;
   min-height: 0;
   background: var(--paper);
@@ -1419,6 +1419,12 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 }
 .chat-interrupted::before { content: "■"; font-size: 8px; }
 
+.chat-notice {
+  margin: 0 14px 6px;
+  color: var(--cinnabar-deep);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
 .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 14px 8px; }
 .chat-chip {
   display: inline-flex;

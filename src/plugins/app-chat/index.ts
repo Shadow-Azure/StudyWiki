@@ -92,6 +92,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   let composer: HTMLElement | null = null;
   let transcript: HTMLElement | null = null;
   let chips: HTMLElement | null = null;
+  let notice: HTMLElement | null = null;
   let input: HTMLTextAreaElement | null = null;
   let sendButton: HTMLButtonElement | null = null;
   let contextRow: HTMLElement | null = null;
@@ -276,14 +277,29 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     input.value = "";
     attachments = [];
     renderChips();
+    if (notice) notice.hidden = true;
     void startStream(content, true);
   };
 
   const addFiles = async (files: FileList | File[]): Promise<void> => {
-    const converted = await Promise.all([...files].map(fileToAttachment));
+    const results = await Promise.all([...files].map(fileToAttachment));
     if (disposed) return;
-    attachments.push(...converted.filter((item): item is PendingAttachment => item !== null));
+    const accepted: PendingAttachment[] = [];
+    const failures: string[] = [];
+    for (const result of results) {
+      if (result.ok) accepted.push(result.attachment);
+      else failures.push(result.message);
+    }
+    attachments.push(...accepted);
     renderChips();
+    if (notice) {
+      if (failures.length > 0) {
+        notice.textContent = failures.join("；");
+        notice.hidden = false;
+      } else {
+        notice.hidden = true;
+      }
+    }
   };
 
   const onPaste = (event: Event): void => {
@@ -331,6 +347,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     chips = document.createElement("div");
     chips.className = "chat-chips";
     chips.hidden = true;
+    notice = document.createElement("div");
+    notice.className = "chat-notice";
+    notice.hidden = true;
     composer = document.createElement("div");
     composer.className = "chat-composer";
     const attach = document.createElement("button");
@@ -361,7 +380,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
     hint.textContent = "Enter 发送 · Shift+Enter 换行";
     row.append(attach, hint, sendButton);
     composer.append(input, row);
-    chatRoot.append(header, contextRow, transcript, chips, composer);
+    chatRoot.append(header, contextRow, transcript, chips, notice, composer);
     chatRoot.addEventListener("dragover", onDragOver);
     chatRoot.addEventListener("drop", onDrop);
     el.append(chatRoot);

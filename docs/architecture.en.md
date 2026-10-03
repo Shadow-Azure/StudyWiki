@@ -31,7 +31,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
-  plugins/app-chat/attachments.ts  app-chat 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收
+  plugins/app-chat/attachments.ts  app-chat 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
   plugins/app-chat/index.ts        app-chat 插件：右侧栏内存会话 + chat 流式请求/渲染/停止/重试 + 模型选择与多模态附件 chips（→ llm-stream.ts、llm.ts、attachments.ts、render.ts）
   plugins/app-chat/render.ts       app-chat 渲染：rAF 合帧 partial 快照 → reasoning/Markdown/工具/usage/error 视图（→ llm-stream.ts、markdown.ts）
   plugins/app-shell/index.ts       app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
@@ -60,7 +60,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
 src-tauri/                         Rust 壳
   config.rs                        用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
   lib.rs                           tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、windows.rs）
-  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口（唯一联网点，ureq rustls）
+  llm.rs                           LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口 + 附件大小门禁（单件 20 MB / 聚合 100 MB）（唯一联网点，ureq rustls）
   llm_stream.rs                    流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                          入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                  macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫

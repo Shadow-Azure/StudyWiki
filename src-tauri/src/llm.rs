@@ -16,6 +16,11 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const CHAT_TIMEOUT: Duration = Duration::from_secs(300);
 /// 流式 chat 超时：长回答持续出字，给 600s。
 const STREAM_TIMEOUT: Duration = Duration::from_secs(600);
+/// 单个附件解码字节上限：硬上限 + 明确报错，不做压缩/归一化——pi/dsh 式压缩是 provider
+/// 5 MB 级硬上限的产物；OpenAI 兼容图片 base64 上限 20 MB，音频同限，超限提示压缩或分段。
+const MAX_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
+/// 单请求附件聚合解码字节上限：与响应侧 DEFAULT_STREAM_EVENT_LIMIT_BYTES（100 MiB）对称。
+const MAX_REQUEST_ATTACHMENT_BYTES: u64 = 100 * 1024 * 1024;
 
 /// 归一错误：code 为全链路共享词表（前端路由层另有 MODEL_* 三码；
 /// INTERNAL 仅由 async 命令的后台任务 JoinError 产生，正常路径不可达）。
@@ -420,6 +425,52 @@ fn probe_with(agent: &ureq::Agent, ep: &Endpoint) -> Result<u64, LlmError> {
     Ok(start.elapsed().as_millis() as u64)
 }
 
+/// base64 数据的解码字节估算（向下取整，仅用于大小门禁）。
+fn decoded_base64_len(data: &str) -> u64 {
+    data.len() as u64 * 3 / 4
+}
+
+/// 附件大小硬上限：单件与聚合（inline 按解码估算 / path 读 metadata），超限
+/// UNSUPPORTED_CONTENT 明确报错；url 来源不计（由 provider 端拉取，客户端不下载）。
+fn ensure_attachment_size(
+    req: &ChatRequest,
+    max_per_item: u64,
+    max_total: u64,
+) -> Result<(), LlmError> {
+    let mut total: u64 = 0;
+    for message in &req.messages {
+        let MessageContent::Parts(parts) = &message.content else {
+            continue;
+        };
+        for part in parts {
+            let size = match part {
+                ContentPart::Text { .. } => continue,
+                ContentPart::Image { source } | ContentPart::Audio { source } => match source {
+                    MediaSource::Inline { data, .. } => decoded_base64_len(data),
+                    MediaSource::Path { path } => {
+                        std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+                    }
+                    MediaSource::Url { .. } => 0,
+                },
+            };
+            if size > max_per_item {
+                return Err(LlmError::new(
+                    "UNSUPPORTED_CONTENT",
+                    format!("附件超过大小上限 {max_per_item} 字节（不做压缩，请压缩或分段后再试）"),
+                ));
+            }
+            total += size;
+            if total > max_total {
+                return Err(LlmError::new(
+                    "UNSUPPORTED_CONTENT",
+                    format!("单请求附件总量超过上限 {max_total} 字节"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 模型能力守门：消息里的媒体类 part 必须有对应模型能力；纯文本不受影响。
 /// TS 侧同类门禁保留，本函数是 Rust 出口的最后防线。
 fn ensure_media_caps(req: &ChatRequest, ep: &Endpoint) -> Result<(), LlmError> {
@@ -456,6 +507,7 @@ fn chat_checked(
     req: &ChatRequest,
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<ChatResponse, LlmError> {
+    ensure_attachment_size(req, MAX_ATTACHMENT_BYTES, MAX_REQUEST_ATTACHMENT_BYTES)?;
     ensure_media_caps(req, ep)?;
     chat_with(agent, ep, req, root_check)
 }
@@ -722,6 +774,7 @@ fn run_chat_stream_checked(
     sink: &mut dyn FnMut(StreamChunk) -> bool,
     ctx: &StreamCtx<'_>,
 ) -> Result<(), LlmError> {
+    ensure_attachment_size(req, MAX_ATTACHMENT_BYTES, MAX_REQUEST_ATTACHMENT_BYTES)?;
     ensure_media_caps(req, ep)?;
     run_chat_stream(agent, ep, req, sink, ctx)
 }
@@ -1289,6 +1342,91 @@ mod tests {
         };
         let r = build_chat_body(&req, true, &|_p| false);
         assert_eq!(r.unwrap_err().code, "UNSUPPORTED_CONTENT");
+    }
+
+    #[test]
+    fn attachment_size_constants_match_contract() {
+        assert_eq!(MAX_ATTACHMENT_BYTES, 20 * 1024 * 1024);
+        assert_eq!(MAX_REQUEST_ATTACHMENT_BYTES, 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn inline_attachment_over_per_item_cap_rejected() {
+        // 12 base64 字符 ≈ 9 解码字节，超过 8 字节单件上限；超限必须明确报错而非静默收下。
+        let req = media_request(ContentPart::Audio {
+            source: MediaSource::Inline {
+                data: "AAAAAAAAAAAA".into(),
+                mime_type: "audio/wav".into(),
+            },
+        });
+        let err = ensure_attachment_size(&req, 8, 100).unwrap_err();
+        assert_eq!(err.code, "UNSUPPORTED_CONTENT");
+        assert!(err.message.contains("8 字节"));
+    }
+
+    #[test]
+    fn path_attachment_size_cap_uses_metadata() {
+        let dir = std::env::temp_dir().join(format!("sw-att-size-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.wav");
+        std::fs::write(&file, [0u8; 10]).unwrap();
+        let req = media_request(ContentPart::Audio {
+            source: MediaSource::Path {
+                path: file.to_string_lossy().to_string(),
+            },
+        });
+        assert_eq!(ensure_attachment_size(&req, 5, 1000).unwrap_err().code, "UNSUPPORTED_CONTENT");
+        assert!(ensure_attachment_size(&req, 100, 1000).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn attachments_over_aggregate_cap_rejected() {
+        // 两个各 6 解码字节的附件，单件限 10 都过，聚合限 10 必炸。
+        let part = || ContentPart::Audio {
+            source: MediaSource::Inline {
+                data: "AAAAAAAA".into(),
+                mime_type: "audio/wav".into(),
+            },
+        };
+        let req = ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![part(), part()]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        };
+        assert!(ensure_attachment_size(&req, 10, 12).is_ok());
+        let err = ensure_attachment_size(&req, 10, 10).unwrap_err();
+        assert_eq!(err.code, "UNSUPPORTED_CONTENT");
+        assert!(err.message.contains("总量"));
+    }
+
+    #[test]
+    fn url_and_text_parts_do_not_count_toward_size_caps() {
+        let req = ChatRequest {
+            endpoint_id: "e".into(),
+            model: "m".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "看图".into(),
+                    },
+                    ContentPart::Image {
+                        source: MediaSource::Url {
+                            url: "https://x/a.png".into(),
+                        },
+                    },
+                ]),
+            }],
+            max_tokens: None,
+            temperature: None,
+        };
+        assert!(ensure_attachment_size(&req, 0, 0).is_ok());
     }
 
     #[test]
