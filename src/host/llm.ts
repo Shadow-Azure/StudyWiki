@@ -237,11 +237,14 @@ export class LlmService {
     });
   }
 
-  /** 流式 chat：模型路由与媒体能力门禁在本层，chunk 经 Tauri Channel 逐个交付。
+  /** 流式 chat：模型路由与 tools/媒体能力门禁在本层，chunk 经 Tauri Channel 逐个交付。
    * settled 在正常终结 resolve；传输失败或 error chunk 终结时以 LlmError 拒绝。
-   * @throws LlmError 路由 MODEL_*、媒体不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
+   * @throws LlmError 路由 MODEL_*、tools 或媒体不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
   async chatStream(req: ChatInput): Promise<ChatStreamHandle> {
     const { endpointId, model, entry } = await this.#route(req.model);
+    if (req.tools?.length && !entry.capabilities.includes("tools")) {
+      throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持工具调用");
+    }
     const needsVision = req.messages.some(
       (message) => Array.isArray(message.content) &&
         message.content.some((part) => part.type === "image"),

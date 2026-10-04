@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LlmService, LlmError, type ToolDeclaration } from "../src/host/llm";
+import type { StreamChunk } from "../src/host/llm-stream";
 
 const TOOLS: ToolDeclaration[] = [
   { name: "read", description: "读文件", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
@@ -25,6 +26,37 @@ describe("LlmService tools 口", () => {
     await expect(svc.chat({ model: "m1", messages: [{ role: "user", content: "hi" }], tools: TOOLS }))
       .rejects.toMatchObject({ code: "UNSUPPORTED_CONTENT" });
     expect(invoked).toBe(false);
+  });
+
+  it("无 tools 能力带 tools 流式发送前报 UNSUPPORTED_CONTENT，不出网", async () => {
+    let onmessage: ((chunk: StreamChunk) => void) | null = null;
+    const calls: string[] = [];
+    const channels: unknown[] = [];
+    const svc = new LlmService({
+      invoke: async (cmd, args) => {
+        calls.push(cmd);
+        if (cmd === "llm_list_endpoints") {
+          return { defaultModel: "m1", endpoints: [
+            { id: "e1", kind: "chat", models: [{ id: "m1", capabilities: ["text"] }], apiKey: "***", baseUrl: "https://x" },
+          ] };
+        }
+        if (cmd === "llm_chat_stream") return undefined;
+        void args;
+        throw new Error(`unexpected ${cmd}`);
+      },
+      createChannel: () => {
+        const channel = {
+          set onmessage(f: ((chunk: StreamChunk) => void) | null) { onmessage = f; },
+          get onmessage() { return onmessage; },
+        };
+        channels.push(channel);
+        return channel;
+      },
+    });
+    await expect(svc.chatStream({ model: "m1", messages: [{ role: "user", content: "hi" }], tools: TOOLS }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED_CONTENT" });
+    expect(calls).toEqual(["llm_list_endpoints"]);
+    expect(channels).toHaveLength(0);
   });
 
   it("有 tools 能力时 tools 透传到 llm_chat", async () => {
