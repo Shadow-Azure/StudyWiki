@@ -7,6 +7,8 @@ import { apply as applyMarkdown } from "./plugins/doc-markdown";
 import { apply as applyVideo } from "./plugins/doc-video";
 import { apply as applyPluginManager } from "./plugins/plugin-manager";
 import { apply as applyLlmSettings } from "./plugins/llm-settings";
+import { apply as applyChat } from "./plugins/app-chat";
+import { StreamAssembler, type StreamChunk } from "./host/llm-stream";
 import { WorkspaceService } from "./host/workspace";
 import type { FileNode } from "./types";
 
@@ -39,8 +41,28 @@ const markdown = `# Tauri 架构
 
 /** 内存 LLM 桩：面板在浏览器预览可打开可编辑；baseUrl 分段拼装以避开
  * 环境无关门禁对 src/** 源文本的外部 URL 字面扫描（预览不进发布产物）。 */
+/** 假流式桩脚本：演示 reasoning 折叠、markdown 正文、代码块与 usage footer。 */
+const PREVIEW_CHAT_SCRIPT: StreamChunk[] = [
+  { type: "reasoning-delta", index: 0, text: "预览思考：先组织要点，再给出带格式的正文…" },
+  { type: "text-delta", index: 0, text: "**预览桩回答**：这段文字来自浏览器预览的假流式桩，用于检视 chat 视觉语言。\n\n" },
+  { type: "text-delta", index: 0, text: "第二段带一个代码块：\n\n```ts\nconst preview = true;\n```" },
+  { type: "usage", usage: { promptTokens: 12, completionTokens: 34 } },
+  { type: "finish", reason: "stop" },
+];
+
 class PreviewLlm {
-  #endpoints: { endpoints: unknown[]; defaultModel: string | null } = { endpoints: [], defaultModel: null };
+  #endpoints: {
+    endpoints: { id: string; kind: string; hasKey: boolean; models: { id: string; capabilities: string[] }[] }[];
+    defaultModel: string | null;
+  } = {
+    endpoints: [{
+      id: "demo",
+      kind: "chat",
+      hasKey: false,
+      models: [{ id: "demo-model", capabilities: ["text", "vision", "audio"] }],
+    }],
+    defaultModel: "demo-model",
+  };
   listPresets() {
     return Promise.resolve([{
       vendor: "deepseek",
@@ -50,10 +72,36 @@ class PreviewLlm {
     }]);
   }
   listEndpoints() { return Promise.resolve(this.#endpoints); }
-  upsertEndpoint(e: unknown) { this.#endpoints.endpoints.push(e); return Promise.resolve(); }
+  upsertEndpoint(e: unknown) {
+    this.#endpoints.endpoints.push(
+      e as { id: string; kind: string; hasKey: boolean; models: { id: string; capabilities: string[] }[] },
+    );
+    return Promise.resolve();
+  }
   removeEndpoint() { return Promise.resolve(); }
   revealKey() { return Promise.resolve("preview-key"); }
   probe() { return Promise.resolve(12); }
+
+  /** 假流式桩：与 ChatStreamHandle 同形，内部喂宿主真实的 StreamAssembler（预览
+   * 也走唯一组装点）；逐 chunk 延时出字，供检视流式渲染与停止交互。 */
+  chatStream(_req: unknown) {
+    const assembler = new StreamAssembler();
+    let stopped = false;
+    const events = (async function* () {
+      for (const chunk of PREVIEW_CHAT_SCRIPT) {
+        if (stopped) return;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        assembler.push(chunk);
+        yield chunk;
+      }
+    })();
+    return {
+      events,
+      snapshot: () => assembler.snapshot(),
+      settled: Promise.resolve(),
+      abort: async () => { stopped = true; },
+    };
+  }
 }
 
 class PreviewSlots {
@@ -115,7 +163,7 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
     bootBroken: [],
     readManifest: async () => JSON.stringify({
       plugins: [
-        ...["app-shell", "view-filetree", "doc-markdown", "doc-video", "app-windows", "plugin-manager"]
+        ...["app-shell", "view-filetree", "doc-markdown", "doc-video", "app-windows", "app-chat", "plugin-manager"]
           .map((id) => ({ id, enabled: true, config: {} })),
         { id: "ext:demo", enabled: true, config: {} },
       ],
@@ -136,6 +184,7 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
     applyFileTree(ctx, { ignoreDotfiles: true }),
     applyMarkdown(ctx, {}),
     applyVideo(ctx),
+    applyChat(ctx),
     applyShell(ctx, shellConfig),
   ].reverse();
 

@@ -1,12 +1,22 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
+import { ChunkQueue, StreamAssembler, type ChatStreamHandle, type StreamChunk } from "./llm-stream";
 
-/** Tauri binding this service wraps; injectable so tests fake exactly one seam. */
+/** Tauri channel factory for streaming callbacks; injectable with the invoke seam. */
+export type LlmChannel = { onmessage: ((chunk: StreamChunk) => void) | null };
+
+/** Tauri bindings this service wraps; injectable so tests fake exactly one seam.
+ * createChannel 可选：缺省回落 defaultLlmDeps 的真实 Tauri Channel（构造时统一合并，
+ * 部分注入时 console.warn 提醒）——测试注入假依赖时请一并提供假工厂。 */
 export interface LlmDeps {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+  createChannel?: () => LlmChannel;
 }
 
 /** Real Tauri binding (the only sanctioned import site). */
-export const defaultLlmDeps: LlmDeps = { invoke };
+export const defaultLlmDeps: LlmDeps = {
+  invoke,
+  createChannel: () => new Channel<StreamChunk>(),
+};
 
 /** 归一错误（与 Rust LlmError 同一词表：传输码 + 本层 MODEL_* 路由码）。 */
 export class LlmError extends Error {
@@ -17,11 +27,11 @@ export class LlmError extends Error {
   }
 }
 
-/** One model entry inside an endpoint (capabilities: text / vision). */
+/** One model entry inside an endpoint (capabilities: text / vision / audio). */
 export interface ModelEntry {
   /** Model id sent as the OpenAI-compatible `model` field. */
   id: string;
-  /** Declared capabilities, e.g. ["text", "vision"]. */
+  /** Declared capabilities, e.g. ["text", "vision", "audio"]. */
   capabilities: string[];
 }
 
@@ -68,12 +78,23 @@ export interface EndpointInput {
   models: ModelEntry[];
 }
 
+/** Message content part wire shape shared with Rust. */
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image" | "audio"; source: MediaSource };
+
+/** Media source accepted by Rust (path is read there; inline is base64; url is provider-fetched). */
+export type MediaSource =
+  | { kind: "path"; path: string }
+  | { kind: "inline"; data: string; mimeType: string }
+  | { kind: "url"; url: string };
+
 /** Chat input: `model` is the routing key resolved by this service. */
 export interface ChatInput {
   /** Model id; falls back to the configured default model when omitted. */
   model?: string;
-  /** Plain-text messages (multimodal segments arrive with m2-02 streaming). */
-  messages: { role: string; content: string }[];
+  /** Text or multimodal message content. */
+  messages: { role: string; content: string | ContentPart[] }[];
   /** Optional upstream max output tokens. */
   maxTokens?: number;
   /** Optional sampling temperature. */
@@ -94,7 +115,12 @@ export class LlmService {
   readonly #deps: LlmDeps;
 
   constructor(deps: LlmDeps = defaultLlmDeps) {
-    this.#deps = deps;
+    if (deps !== defaultLlmDeps && !deps.createChannel) {
+      console.warn(
+        "[llm] deps 未提供 createChannel，回落真实 Tauri Channel——测试环境请在 deps 注入假工厂",
+      );
+    }
+    this.#deps = { ...defaultLlmDeps, ...deps };
   }
 
   /** Single IPC seam; rejections normalize into LlmError(code). */
@@ -146,32 +172,104 @@ export class LlmService {
     return this.#call<number>("llm_probe", { id });
   }
 
+  /** 解析模型归属 endpoint：只路由 chat 类 endpoint，asr 配置不得误入推理命令。
+   * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
+  async #route(model?: string): Promise<{ endpointId: string; model: string; entry: ModelEntry }> {
+    const settings = await this.listEndpoints();
+    const resolved = model ?? settings.defaultModel;
+    if (!resolved) {
+      throw new LlmError("MODEL_UNSPECIFIED", "未指定 model 且未配置默认模型");
+    }
+    const owners = settings.endpoints.filter(
+      (e) => e.kind === "chat" && e.models.some((m) => m.id === resolved),
+    );
+    if (owners.length === 0) {
+      throw new LlmError("MODEL_UNKNOWN", `未找到模型：${resolved}`);
+    }
+    if (owners.length > 1) {
+      throw new LlmError("MODEL_AMBIGUOUS", `模型 ${resolved} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
+    }
+    const entry = owners[0].models.find((m) => m.id === resolved)!;
+    return { endpointId: owners[0].id, model: resolved, entry };
+  }
+
   /** 非流式 chat：按 model 解析归属 endpoint 后交 Rust 传输。
    * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
   async chat(req: ChatInput): Promise<ChatResult> {
-    const settings = await this.listEndpoints();
-    const model = req.model ?? settings.defaultModel;
-    if (!model) {
-      throw new LlmError("MODEL_UNSPECIFIED", "未指定 model 且未配置默认模型");
-    }
-    // 只路由 chat 类 endpoint：asr 配置本期无消费方，模型不得误入 chat/completions。
-    const owners = settings.endpoints.filter(
-      (e) => e.kind === "chat" && e.models.some((m) => m.id === model),
-    );
-    if (owners.length === 0) {
-      throw new LlmError("MODEL_UNKNOWN", `未找到模型：${model}`);
-    }
-    if (owners.length > 1) {
-      throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
-    }
+    const { endpointId, model } = await this.#route(req.model);
     return this.#call<ChatResult>("llm_chat", {
       req: {
-        endpointId: owners[0].id,
+        endpointId,
         model,
         messages: req.messages,
         ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       },
     });
+  }
+
+  /** 流式 chat：模型路由与媒体能力门禁在本层，chunk 经 Tauri Channel 逐个交付。
+   * settled 在正常终结 resolve；传输失败或 error chunk 终结时以 LlmError 拒绝。
+   * @throws LlmError 路由 MODEL_*、媒体不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
+  async chatStream(req: ChatInput): Promise<ChatStreamHandle> {
+    const { endpointId, model, entry } = await this.#route(req.model);
+    const needsVision = req.messages.some(
+      (message) => Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "image"),
+    );
+    const needsAudio = req.messages.some(
+      (message) => Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "audio"),
+    );
+    if ((needsVision && !entry.capabilities.includes("vision")) ||
+      (needsAudio && !entry.capabilities.includes("audio"))) {
+      throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持请求中的媒体内容");
+    }
+
+    const streamId = crypto.randomUUID();
+    const channel = this.#deps.createChannel!();
+    const queue = new ChunkQueue();
+    const assembler = new StreamAssembler();
+    let seenError: Extract<StreamChunk, { type: "error" }> | null = null;
+    channel.onmessage = (chunk) => {
+      assembler.push(chunk);
+      if (chunk.type === "error") seenError = chunk;
+      queue.push(chunk);
+    };
+
+    const transport = this.#call<void>("llm_chat_stream", {
+      req: {
+        endpointId,
+        model,
+        messages: req.messages,
+        streamId,
+        ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
+        ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      },
+      onChunk: channel,
+    });
+    const settle = async (): Promise<void> => {
+      try {
+        await transport;
+      } catch (error) {
+        const normalized = error instanceof LlmError
+          ? error
+          : new LlmError("BAD_RESPONSE", String(error));
+        queue.fail(normalized);
+        throw normalized;
+      }
+      if (seenError) {
+        const failure = new LlmError(seenError.code, seenError.message);
+        queue.fail(failure);
+        throw failure;
+      }
+      queue.close();
+    };
+    return {
+      events: queue,
+      snapshot: () => assembler.snapshot(),
+      settled: settle(),
+      abort: () => this.#call<void>("llm_chat_abort", { id: streamId }),
+    };
   }
 }

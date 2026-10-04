@@ -61,6 +61,19 @@ impl WindowRegistry {
     }
 }
 
+/// 路径是否落在任一已注册窗口 root 之下（附件 path 来源的越权防线；无 root 全拒）。
+/// 两侧 canonicalize 后做前缀判断；路径或 root 不存在即拒。注册表读取在命令面做。
+pub fn path_under_roots(roots: &[String], path: &str) -> bool {
+    let p = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    roots.iter().any(|root| match std::fs::canonicalize(root) {
+        Ok(r) => p.starts_with(r),
+        Err(_) => false,
+    })
+}
+
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]
 pub fn create_window<R: tauri::Runtime>(
@@ -206,6 +219,30 @@ mod tests {
         // 主窗口（windows[] 配置窗）从未登记过：upsert 让"打开文件夹"也持久化
         reg.set_root("main", Some("/first".into()));
         assert_eq!(reg.get("main"), Some(Some("/first".into())));
+    }
+
+    #[test]
+    fn path_under_roots_canonicalizes_and_rejects_unrooted_paths() {
+        let base = std::env::temp_dir().join(format!("sw-roots-{}", std::process::id()));
+        let root = base.join("workspace");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        let inside = root.join("docs/file.txt");
+        std::fs::write(&inside, b"ok").unwrap();
+        let outside_dir = base.join("outside");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        let outside = outside_dir.join("file.txt");
+        std::fs::write(&outside, b"no").unwrap();
+
+        let roots = vec![root.to_string_lossy().to_string()];
+        assert!(path_under_roots(&roots, &inside.to_string_lossy()));
+        assert!(path_under_roots(&roots, &root.to_string_lossy()));
+        assert!(!path_under_roots(&roots, &outside.to_string_lossy()));
+        assert!(!path_under_roots(
+            &roots,
+            &(base.join("missing")).to_string_lossy()
+        ));
+        assert!(!path_under_roots(&[], &inside.to_string_lossy()));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

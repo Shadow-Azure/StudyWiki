@@ -107,6 +107,54 @@ describe("panel", () => {
     });
   });
 
+  // 音频能力与视觉能力同形：勾选写入保存负载，取消后从保存负载移除。
+  it("toggles audio capability through the model checkbox", async () => {
+    const { ctx, saved, renders } = fakeCtx();
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    (document.querySelector(".llm-panel [data-action=add]") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const form = document.querySelector(".llm-panel form") as HTMLFormElement;
+    (form.querySelector("[name=vendor]") as HTMLSelectElement).value = "deepseek";
+    (form.querySelector("[name=vendor]") as HTMLSelectElement).dispatchEvent(new Event("change"));
+    const audio = form.querySelector("[name=audio]") as HTMLInputElement;
+    expect(audio).not.toBeNull();
+    audio.checked = true;
+    audio.dispatchEvent(new Event("change"));
+    (form.querySelector("[name=apiKey]") as HTMLInputElement).value = "sk-test";
+    (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
+      Promise.resolve({
+        endpoints: [{ ...preset, id: "deepseek", kind: "chat", hasKey: false,
+          models: [{ id: "deepseek-v4-pro", capabilities: ["text", "audio"] }] }],
+        defaultModel: null,
+      });
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await new Promise((r) => setTimeout(r)); // 保存后列表重渲染
+    expect(saved[0]).toMatchObject({
+      id: "deepseek",
+      models: [{ id: "deepseek-v4-pro", capabilities: ["text", "audio"] }],
+    });
+
+    const card = document.querySelector(".llm-card") as HTMLElement;
+    (card.querySelectorAll("button")[1] as HTMLButtonElement).click(); // 编辑
+    await new Promise((r) => setTimeout(r));
+    const editForm = document.querySelector(".llm-panel form") as HTMLFormElement;
+    const editAudio = editForm.querySelector("[name=audio]") as HTMLInputElement;
+    expect(editAudio.checked).toBe(true);
+    editAudio.checked = false;
+    editAudio.dispatchEvent(new Event("change"));
+    editForm.dispatchEvent(new Event("submit", { cancelable: true }));
+    await new Promise((r) => setTimeout(r));
+    expect(saved[1]).toMatchObject({
+      id: "deepseek",
+      models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }],
+    });
+  });
+
   // 编辑态：掩码回填 + 未动保存 = 保留（apiKey 空且无 dirty 标记）。
   it("fills the key mask on edit and preserves the stored key when untouched", async () => {
     const { ctx, saved, renders } = fakeCtx();

@@ -50,3 +50,41 @@ test("ui preview: mounts the real video viewer and plugin panel", async () => {
   teardown();
   root.remove();
 });
+
+test("ui preview: mounts the app-chat panel in the right rail", async () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const teardown = await mountUiPreview(root);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  expect(root.querySelector(".chat-model-select")).not.toBeNull();
+  expect([...root.querySelectorAll<HTMLSelectElement>(".chat-model-select option")]
+    .map((option) => option.value)).toContain("demo-model");
+
+  teardown();
+  root.remove();
+});
+
+test("ui preview: PreviewLlm streams a fake chat answer end-to-end", async () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const teardown = await mountUiPreview(root);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const input = root.querySelector("textarea")!;
+  input.value = "预览提问";
+  root.querySelector<HTMLButtonElement>(".chat-send")!.click();
+  const start = Date.now();
+  while (!root.querySelector(".chat-usage")?.textContent?.includes("finish stop")
+    && Date.now() - start < 2000) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  expect(root.querySelector(".chat-usage")?.textContent).toContain("finish stop");
+  expect(root.querySelector(".chat-md")?.textContent).toContain("预览桩回答");
+
+  teardown();
+  root.remove();
+});

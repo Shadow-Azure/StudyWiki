@@ -21,7 +21,7 @@ const SIDEBAR_DEFAULT = 252;
 const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** Shell layout: topbar (seal brand + actions + active filename) + sidebar + main
- * grid and the three slot containers; main states cover the no-root welcome,
+ * grid and the four slot containers; main states cover the no-root welcome,
  * no-active-file hint, and explicit unsupported hint for other files.
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
@@ -64,6 +64,11 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   const viewerHost = document.createElement("div");
   viewerHost.className = "slot-host main-viewer";
   main.append(viewerHost);
+  const chatRail = document.createElement("aside");
+  chatRail.className = "chat-rail";
+  const chatHost = document.createElement("div");
+  chatHost.className = "slot-host sidebar-right";
+  chatRail.append(chatHost);
   let sidebarSize = SIDEBAR_DEFAULT;
   const resizer = document.createElement("div");
   resizer.className = "workspace-resizer line-resizer";
@@ -110,12 +115,13 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
       resize(event.key === "Home" ? SIDEBAR_MIN : sidebarMax());
     }
   });
-  body.append(sidebar, resizer, main);
+  body.append(sidebar, resizer, main, chatRail);
   app.append(topbar, body);
 
   ctx.slots.mount("topbar.left", topbarLeft);
   ctx.slots.mount("sidebar.tree", treeHost);
   ctx.slots.mount("main.viewer", viewerHost);
+  ctx.slots.mount("sidebar.right", chatHost);
 
   const welcome = document.createElement("div");
   welcome.className = "welcome";

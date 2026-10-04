@@ -103,3 +103,11 @@ test("workspace: 同路径脏文档重开为无提示 no-op", async () => {
   offGuard();
   offEvent();
 });
+
+test("sidebar.right 槽位可注册并按序渲染", () => {
+  const slots = new SlotsService();
+  const host = document.createElement("div");
+  slots.register("sidebar.right", (el) => { el.textContent = "chat"; });
+  slots.mount("sidebar.right", host);
+  expect(host.textContent).toContain("chat");
+});

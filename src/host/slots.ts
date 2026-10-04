@@ -1,5 +1,5 @@
 /** All UI slot names the shell provides containers for. */
-export type SlotName = "topbar.left" | "sidebar.tree" | "main.viewer";
+export type SlotName = "topbar.left" | "sidebar.tree" | "main.viewer" | "sidebar.right";
 
 /** Renders into its own child element; decides its own visibility. */
 export type SlotRenderer = (el: HTMLElement) => void;
