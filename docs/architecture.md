@@ -32,6 +32,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
   plugins/agent-core/session.ts    agent-core JSONL 会话编解码、崩溃尾容错与压缩视图（→ types.ts）
+  plugins/agent-core/tools.ts      agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
   plugins/agent-core/types.ts      agent-core 消息、批准与会话日志类型契约（→ llm.ts）
   plugins/app-chat/attachments.ts  app-chat 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
   plugins/app-chat/index.ts        app-chat 插件：右侧栏内存会话 + chat 流式请求/渲染/停止/重试 + 模型选择与多模态附件 chips（→ llm-stream.ts、llm.ts、attachments.ts、render.ts）

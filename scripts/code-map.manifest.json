@@ -59,5 +59,6 @@
   "src/plugins/doc-excel/editing.ts": "doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet",
   "src/host/llm-stream.ts": "LLM 流式契约：chunk 词表、partial 快照组装器、FIFO 异步 chunk 队列与流句柄形状",
   "src/plugins/agent-core/types.ts": "agent-core 消息、批准与会话日志类型契约",
-  "src/plugins/agent-core/session.ts": "agent-core JSONL 会话编解码、崩溃尾容错与压缩视图"
+  "src/plugins/agent-core/session.ts": "agent-core JSONL 会话编解码、崩溃尾容错与压缩视图",
+  "src/plugins/agent-core/tools.ts": "agent-core 四工具执行、审批请求契约与越权读升级"
 }
