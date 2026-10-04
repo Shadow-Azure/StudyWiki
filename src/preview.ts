@@ -72,7 +72,12 @@ class PreviewLlm {
     }]);
   }
   listEndpoints() { return Promise.resolve(this.#endpoints); }
-  upsertEndpoint(e: unknown) { this.#endpoints.endpoints.push(e); return Promise.resolve(); }
+  upsertEndpoint(e: unknown) {
+    this.#endpoints.endpoints.push(
+      e as { id: string; kind: string; hasKey: boolean; models: { id: string; capabilities: string[] }[] },
+    );
+    return Promise.resolve();
+  }
   removeEndpoint() { return Promise.resolve(); }
   revealKey() { return Promise.resolve("preview-key"); }
   probe() { return Promise.resolve(12); }
