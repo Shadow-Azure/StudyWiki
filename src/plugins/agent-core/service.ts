@@ -109,6 +109,7 @@ interface InternalSession {
   gate: ApprovalGate;
   isNew: boolean;
   persistQueue: Promise<void>;
+  persisting: boolean;
 }
 
 /** Create the service whose cordis plugin publishes it as `ctx.agent`.
@@ -151,9 +152,12 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
   }
 
   function enqueue(session: InternalSession, write: () => Promise<void>): Promise<void> {
+    session.persisting = true;
     const task = session.persistQueue.then(write).then(() => undefined, (error: unknown) => {
       console.error("agent 会话落盘失败", error);
       session.events.emit("agent", { type: "error", message: `会话落盘失败：${describeError(error)}` });
+    }).finally(() => {
+      session.persisting = false;
     });
     session.persistQueue = task;
     return task;
@@ -177,8 +181,8 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
     path: string,
     rootMismatch: string | null,
     isNew: boolean,
+    mode: ApprovalMode = "ask",
   ): { internal: InternalSession; session: AgentSession } {
-    const mode: ApprovalMode = "ask";
     const controller = new AbortController();
     const pendingApprovals = new Map<string, (outcome: ApprovalOutcome) => void>();
     const internal: InternalSession = {
@@ -197,6 +201,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       gate: undefined as unknown as ApprovalGate,
       isNew,
       persistQueue: Promise.resolve(),
+      persisting: false,
     };
 
     internal.gate = createApprovalGate({
@@ -346,6 +351,12 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         if (existing) return existing.session;
         const path = sessionPath(id, root);
         const parsed = parseSession(await deps.files.readText(path));
+        if (parsed.tailTruncated) {
+          await deps.files.writeText(
+            path,
+            `${parsed.lines.map((line) => encodeLine(line)).join("\n")}\n`,
+          );
+        }
         return createSession(
           parsed.header,
           root,
@@ -353,6 +364,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
           path,
           parsed.header.rootPath === root ? null : parsed.header.rootPath,
           false,
+          lastPersistedMode(parsed.lines),
         ).session;
       }
 
@@ -374,6 +386,9 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
 
     async deleteSession(id) {
       const entry = sessions.get(id);
+      if (entry && (entry.internal.running || entry.internal.persisting)) {
+        throw new Error("会话进行中，先停止再删除");
+      }
       sessions.delete(id);
       await entry?.session.abort();
       await deps.files.deleteSessionFile(sessionPath(id));
@@ -385,6 +400,14 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       sessions.clear();
     },
   };
+}
+
+function lastPersistedMode(lines: SessionLine[]): ApprovalMode {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (line?.type === "mode") return line.mode;
+  }
+  return "ask";
 }
 
 async function readAgentsMd(root: string, files: FilesService): Promise<string | null> {

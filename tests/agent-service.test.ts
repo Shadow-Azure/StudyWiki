@@ -129,6 +129,49 @@ describe("AgentService", () => {
     expect(session.messages()[0]).toMatchObject({ role: "user", content: expect.stringContaining("摘要：早前聊了甲") });
   });
 
+  it("打开崩溃尾巴会话后先归一化，再追加完整行", async () => {
+    const existing = HEADER_S1("/lib")
+      + `{"type":"message","message":{"role":"user","content":"完整问题"}}\n`
+      + `{"type":"message","message":{"role":"user","content":"partial-tail-marker"}`;
+    const { svc, host } = serviceWith({
+      "/lib/.study-wiki/sessions/s1.jsonl": existing,
+    }, { scripts: [] });
+    const session = await svc.openSession("s1");
+    await session.send("新问题");
+
+    const content = host.files["/lib/.study-wiki/sessions/s1.jsonl"];
+    expect(content).not.toContain("partial-tail-marker");
+    const lines = content.trimEnd().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(JSON.parse(lines[2]!)).toMatchObject({ type: "message", message: { role: "user", content: "新问题" } });
+  });
+
+  it("加载历史会话恢复最后一次持久化模式", async () => {
+    const existing = HEADER_S1("/lib")
+      + `{"type":"mode","mode":"auto"}\n`;
+    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": existing }, { scripts: [] });
+    const session = await svc.openSession("s1");
+    expect(session.mode).toBe("auto");
+  });
+
+  it("运行中的会话拒绝删除且文件保留，空闲会话可删除", async () => {
+    const { svc, host } = serviceWith({}, { scripts: [WRITE_CALL, TEXT("已写好")] });
+    const session = await svc.openSession(null);
+    const path = Object.keys(host.files).find((p) => p.includes(".study-wiki/sessions/"))!;
+    const reqs: ApprovalRequest[] = [];
+    session.onApproval((r) => reqs.push(r));
+    const done = session.send("记个笔记");
+    await vi.waitFor(() => expect(reqs).toHaveLength(1));
+    await expect(svc.deleteSession(session.id)).rejects.toThrow("会话进行中，先停止再删除");
+    expect(host.files[path]).toBeDefined();
+    session.respond(reqs[0]!.id, { decision: "allow" });
+    await done;
+    await session.abort();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await svc.deleteSession(session.id);
+    expect(host.files[path]).toBeUndefined();
+  });
+
   it("deleteSession 调 deleteSessionFile", async () => {
     const { svc, host } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
     await svc.deleteSession("s1");
