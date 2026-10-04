@@ -25,7 +25,7 @@ scope:
   - docs/plugins/*
   - docs/environment-independence.*
 adr:
-  - ../../notes/proposed/architecture/2026-10-04-basic-agent.md
+  - ../../notes/implemented/architecture/2026-10-04-basic-agent.md
 github:
   number: 30
   url: https://github.com/Shadow-Azure/StudyWiki/issues/30

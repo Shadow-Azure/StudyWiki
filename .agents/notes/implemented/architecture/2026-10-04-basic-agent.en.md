@@ -1,6 +1,6 @@
 # Agent Note: Basic agent plugin (m2-03): cordis dual plugins, native tool calling, and durable sessions
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-10-04-basic-agent.md)
 
@@ -18,7 +18,7 @@ Tools are designed as a generic file agent with no baked-in study context; study
 
 - **`src/plugins/agent-core/` (built-in plugin, no UI)**: provides the `ctx.agent` service — the turn loop, the four tools, the approval gate, guardian review, JSONL session persistence, and compaction. `inject: ['llm', 'files', 'workspace']`. Aligned with dsh's "the agent loop itself is a plugin": reuses cordis inject ordering and fiber cleanup (stream handles/AbortControllers are reclaimed on hot reload); m2-04 consumes it via `inject: ['agent']`. Internal writing discipline: core classes take dependencies via constructor injection and never import cordis types, so vitest can drive the full chain with a hand-rolled ctx.
 - **`src/plugins/app-agent/` (built-in plugin, pure UI)**: `inject: ['agent', 'slots', 'workspace']`, mounts `sidebar.right`, and replaces app-chat (removed from the module table; reusable modules such as render/attachments move in; directory deleted). Plain chat = a turn without tools, so app-chat's capability is a subset of the superset; two coexisting conversation panels are not kept.
-- `src/host/context.d.ts` declaration merging adds the `agent` service type (noted as provided by a built-in plugin, not bootstrap); the files service gains three facades — `grepFiles` / `authorizeReadPath` / `appendSessionEvent` — (the three new Rust commands are reached only through host facades, layering unchanged); the external-plugin guard whitelist is unchanged — this issue does not expose agent externally.
+- `src/host/context.d.ts` declaration merging adds the `agent` service type (noted as provided by a built-in plugin, not bootstrap); the files service gains four facades — `grepFiles` / `authorizeReadPath` / `appendSessionEvent` / `deleteSessionFile` — (the four new Rust commands are reached only through host facades, layering unchanged); the external-plugin guard whitelist is unchanged — this issue does not expose agent externally.
 
 ### Tool protocol: OpenAI native function calling
 
@@ -46,7 +46,7 @@ All tool results have a unified size cap; overflow is truncated and explicitly m
 
 ### grep supply: sidecar ripgrep (dsh-style build-time packaging)
 
-- The binary is supplied via the `@vscode/ripgrep` npm package (an extension of the "npm as repository, not runtime" ruling); a build script copies it as a Tauri sidecar (`binaries/rg-<target-triple>`), and per-platform CI builds each pick their own; `dep-allowlist` registers the package and `docs/environment-independence.md` registers the bundled-sidecar note. pi-style runtime download is rejected (the hard constraint forbids it outright), as is pure-frontend TS scanning (traversal already lives in Rust — same family as read_tree — and only matching lines cross IPC).
+- The binary is supplied via the `@vscode/ripgrep` npm package (currently 1.18.0, containing ripgrep 15.0.0; an extension of the "npm as repository, not runtime" ruling); a build script copies it as a Tauri sidecar (`binaries/rg-<target-triple>`), and per-platform CI builds each pick their own; `dep-allowlist` registers the package and `docs/environment-independence.md` registers the bundled-sidecar note. pi-style runtime download is rejected (the hard constraint forbids it outright), as is pure-frontend TS scanning (traversal already lives in Rust — same family as read_tree — and only matching lines cross IPC).
 - A new Rust grep command: bare argv spawn (no shell, no quoting surface), parses the complete `rg --json` stdout, the budgets and error vocabulary above; `path_authorized` runs before spawn (the same single decision point as every file command).
 
 ### Authorization boundary and out-of-bounds reads
@@ -65,7 +65,7 @@ All tool results have a unified size cap; overflow is truncated and explicitly m
 
 - Location `<library-root>/.study-wiki/sessions/<session-id>.jsonl`: travels with the library; the header line carries a **format version** (the dsh v0→v1 migration lesson, front-loaded) + `rootPath` (for validation, with a notice after the library moves) + a title (first 50 chars of the first user message).
 - One event per line, **persisted only when complete** (streaming deltas never touch disk); a new Rust `append_session_event` command (O(1) single-line append, through `path_authorized`).
-- Physical isolation between libraries: the list reads only the current root's sessions directory; switching roots switches the list. Resume semantics = **load only, never auto-run**: replaying the JSONL renders history (including the historical look of tool cards and approval cards), and the loop continues only when the user sends a new message; a crash tail is truncated to the last complete event and marked; dangling approvals are judged `unavailable` (fail-closed, no resurrected clickable cards). The convention is "one session is driven by one window at a time", with no locking.
+- Physical isolation between libraries: the list reads only the current root's sessions directory; switching roots switches the list. The session projection exposes `title`, `messages()`, `lines()`, running state and `setModel`; the UI consumes only that surface. Resume semantics = **load only, never auto-run**: replaying the JSONL renders history (including the historical look of tool cards and approval cards), and the loop continues only when the user sends a new message; a crash tail is truncated to the last complete event and marked; dangling approvals are judged `unavailable` (fail-closed, no resurrected clickable cards). The convention is "one session is driven by one window at a time", with no locking.
 - **Compaction is in scope**: when the latest response's `usage.promptTokens` crosses a threshold (default 80k, configurable in settings), before the next turn the old segment (first half of history) goes through one independent summarization call (preserving: user goals, conclusions, written/edited file paths, unfinished todos) while the new segment (including recent tool results) is kept verbatim; the old segment is replaced by a summary message and a `compaction` event is logged. **The log keeps the full text** (compaction only affects the view fed to the model), and replay rebuilds the same effective view from compaction events; the UI inserts a divider at the compaction point (expandable to read the summary). Multi-level recursive compaction and tokenizer-precise trimming are rejected (no dependencies; use the measured usage values).
 
 ### Gates and tests
@@ -92,6 +92,6 @@ All tool results have a unified size cap; overflow is truncated and explicitly m
 
 - issue #30's scope extends to `src-tauri/**`, `package.json`, `scripts/dep-allowlist.json`, `tests/**`, `docs/environment-independence.*`, etc. (the issue three-piece set is updated and set to in-progress in the same PR).
 - app-chat retires; `sidebar.right`'s sole registrant becomes app-agent; m2-02's rendering and attachment investment is inherited wholesale.
-- Rust gains three commands (grep / authorize_read_path / append_session_event) plus sidecar configuration and a build script; commands.md, code-map, dep-allowlist, and doc-budgets move in sync.
+- Rust gains four commands (grep_files / authorize_read_path / append_session_event / delete_session_file) plus sidecar configuration and a build script; commands.md, code-map, dep-allowlist, and doc-budgets move in sync.
 - The environment-independence doc registers the rg sidecar (packaged at build time, zero runtime downloads).
 - Debts: no evaluation mechanism for compaction summary quality; parallel tool execution; multi-window locks for one session; diff rendering on approval cards; an independent model slot for the guardian; session search/forking; block-level incremental markdown rendering (carried over from m2-02); a repeat-tool-reminder-style soft anti-loop nudge.

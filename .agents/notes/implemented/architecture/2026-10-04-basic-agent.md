@@ -1,6 +1,6 @@
 # Agent Note: 基础 agent 插件（m2-03）：cordis 双插件、原生工具调用与持久会话
 
-Status: proposed
+Status: implemented
 
 [English](2026-10-04-basic-agent.en.md) | 中文
 
@@ -18,7 +18,7 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 - **`src/plugins/agent-core/`（内置插件，无 UI）**：提供 `ctx.agent` 服务——回合 loop、四工具、审批门、guardian 审查、JSONL 会话持久化、compaction。`inject: ['llm', 'files', 'workspace']`。对齐 dsh「agent loop 本身也是插件」：复用 cordis 的 inject 依赖序与 fiber 清理（流句柄/AbortController 随热重载回收），m2-04 经 `inject: ['agent']` 消费。内部书写纪律：核心类构造注入依赖、不 import cordis 类型，vitest 可手搓 ctx 全链路测。
 - **`src/plugins/app-agent/`（内置插件，纯 UI）**：`inject: ['agent', 'slots', 'workspace']`，挂 `sidebar.right`，取代 app-chat（从模块表移除，render/attachments 等可复用模块搬入，目录删除）。纯聊天 = 无工具回合，app-chat 能力是超集的子集，不并存两套对话面板。
-- `src/host/context.d.ts` 声明合并增 `agent` 服务类型（注明由内置插件提供而非 bootstrap）；files 服务增 `grepFiles` / `authorizeReadPath` / `appendSessionEvent` 三个 facade（三条新 Rust 命令只经宿主面触达，分层不变）；外置插件 guard 白名单不变——本 issue 不对外暴露 agent。
+- `src/host/context.d.ts` 声明合并增 `agent` 服务类型（注明由内置插件提供而非 bootstrap）；files 服务增 `grepFiles` / `authorizeReadPath` / `appendSessionEvent` / `deleteSessionFile` 四个 facade（四条新 Rust 命令只经宿主面触达，分层不变）；外置插件 guard 白名单不变——本 issue 不对外暴露 agent。
 
 ### 工具协议：OpenAI 原生 function calling
 
@@ -46,7 +46,7 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 ### grep 供给：sidecar ripgrep（dsh 式构建期打包）
 
-- 二进制经 `@vscode/ripgrep` npm 包供给（「npm 当仓库用」定论的延伸），构建脚本复制为 Tauri sidecar（`binaries/rg-<target-triple>`），CI 按平台构建各拿各的；`dep-allowlist` 登记该包，`docs/environment-independence.md` 登记自带 sidecar 说明。否决 pi 式运行时下载（硬约束直接拒绝）与纯前端 TS 扫描（遍历已在 Rust——read_tree 同族，IPC 只回命中行）。
+- 二进制经 `@vscode/ripgrep` npm 包供给（当前 1.18.0，内含 ripgrep 15.0.0；「npm 当仓库用」定论的延伸），构建脚本复制为 Tauri sidecar（`binaries/rg-<target-triple>`），CI 按平台构建各拿各的；`dep-allowlist` 登记该包，`docs/environment-independence.md` 登记自带 sidecar 说明。否决 pi 式运行时下载（硬约束直接拒绝）与纯前端 TS 扫描（遍历已在 Rust——read_tree 同族，IPC 只回命中行）。
 - Rust 新增 grep 命令：裸 argv spawn（不过 shell，无引号面）、解析 `rg --json` 完整 stdout、上述预算与错误词表；spawn 前过 `path_authorized`（与所有文件命令同一决策点）。
 
 ### 授权边界与越界读
@@ -65,7 +65,7 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 - 落点 `<库根>/.study-wiki/sessions/<session-id>.jsonl`：随库走；header 行带**格式版本号**（dsh v0→v1 迁移的教训前置）+ `rootPath`（校验用，库移动后提示）+ 标题（首条用户消息前 50 字）。
 - 事件一行一条，**完成才落盘**（流式 delta 永不落盘）；新增 Rust `append_session_event` 命令（O(1) 单行追加，过 `path_authorized`）。
-- 库间物理隔离：列表只读当前 root 的 sessions 目录，换 root 即换列表。恢复语义 = **只加载不自动跑**：重放 JSONL 渲染历史（含工具卡与审批卡历史样貌），loop 等用户发新消息才续；崩溃尾巴截断到最后完整事件并标注；悬空审批判 `unavailable`（fail-closed，不复活可点卡片）。约定「一个会话同一时间只在一个窗口驱动」，不做锁。
+- 库间物理隔离：列表只读当前 root 的 sessions 目录，换 root 即换列表。会话投影暴露 `title`、`messages()`、`lines()`、运行态与 `setModel`，UI 只消费该面。恢复语义 = **只加载不自动跑**：重放 JSONL 渲染历史（含工具卡与审批卡历史样貌），loop 等用户发新消息才续；崩溃尾巴截断到最后完整事件并标注；悬空审批判 `unavailable`（fail-closed，不复活可点卡片）。约定「一个会话同一时间只在一个窗口驱动」，不做锁。
 - **compaction 做**：最近响应 `usage.promptTokens` 超阈值（默认 80k，settings 可配）时，下一回合前先把旧段（前半历史）送一次独立摘要调用（保留：用户目标、结论、写改过的文件路径、未完成待办），新段（含最近工具结果）原样保留；旧段替换为摘要消息并落 `compaction` 事件。**日志保留全文**（压缩只影响喂模型的视图），重放按 compaction 事件重建同一有效视图；UI 在压缩点插分隔条（可展开看摘要）。否决多级递归压缩与 tokenizer 精裁（不引依赖，用 usage 实测值）。
 
 ### 门禁与测试
@@ -92,6 +92,6 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 - issue #30 scope 扩 `src-tauri/**`、`package.json`、`scripts/dep-allowlist.json`、`tests/**`、`docs/environment-independence.*` 等（同 PR 更新 issue 三件套并置 in-progress）。
 - app-chat 退役；`sidebar.right` 唯一注册者换成 app-agent；m2-02 的渲染与附件投入整体继承。
-- Rust 增三条命令（grep / authorize_read_path / append_session_event）+ sidecar 配置与构建脚本；commands.md、code-map、dep-allowlist、doc-budgets 同步。
+- Rust 增四条命令（grep_files / authorize_read_path / append_session_event / delete_session_file）+ sidecar 配置与构建脚本；commands.md、code-map、dep-allowlist、doc-budgets 同步。
 - 环境无关性文档登记 rg sidecar（构建期打包、运行零下载）。
 - 欠账：compaction 摘要质量无评估机制；并行工具执行；同会话多窗锁；审批卡 diff 渲染；guardian 独立模型配置槽；会话搜索/分叉；块级增量 markdown 渲染（沿 m2-02 欠账）；repeat-tool-reminder 式软防循环提示。

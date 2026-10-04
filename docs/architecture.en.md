@@ -97,26 +97,31 @@ export type FileNode = {
 
 The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
-Data flows: tree reading — pick a folder→`read_tree` assigns kind→view-filetree renders; opening — `workspace.openFile` passes the switch guards, then dispatches by kind: markdown through `read_text_file`+markdown-it, excel through `ctx.excel.read`, video through `files.assetUrl` into the webview `<video>`, and other to the shell hint; saving — markdown/excel share `Mod-S` and save buttons, then broadcast `fs://changed`; root switching — `windows.changeRoot` runs guard confirmation, Rust authorization/registration, then the frontend switch; window creation — `create_window` registers and creates the WebviewWindow, and the new bootstrap fetches the root before manifest activation; external plugins — install/import/toggle/reload/rollback/remove through plugin-manager, with `ext:` rows using the sole blob loading seam (details in [dynamic.en.md](plugins/dynamic.en.md)); LLM inference — plugins call `ctx.llm.chat`/`ctx.llm.chatStream`, the host service routes the model to its owning endpoint (`MODEL_UNKNOWN`/`MODEL_AMBIGUOUS`/`MODEL_UNSPECIFIED` are thrown here), and the Rust `llm_chat`/`llm_chat_stream` read `~/.studywiki/settings.json` and send HTTPS (an empty apiKey carries no Authorization header); streaming goes through a Channel, `llm_chat_abort` sets the stop flag, and errors return on the same path.
+Data flows: tree reading — pick a folder→`read_tree` assigns kind→view-filetree renders; opening — `workspace.openFile` passes the guard and dispatches by kind to the markdown, Excel, video, or hint surface; saving broadcasts `fs://changed`; root switching confirms with the guard before Rust authorization/registration; Rust creates windows, then the new bootstrap fetches the root and activates plugins; external plugin install/toggle/reload/rollback/remove goes through plugin-manager, and `ext:` uses the sole blob seam (details in [dynamic.en.md](plugins/dynamic.en.md)); plugins initiate LLM inference, the host routes the endpoint and gates capabilities, and Rust only reads configuration and transports HTTPS; streaming goes through a Channel, and `llm_chat_abort` sets the stop flag.
+
+Agent turn: `ctx.agent` calls `ctx.llm.chatStream` with tools. `tool_calls` are fed back serially; the four tools run through `ctx.files`, writes pass approval, and outside reads are retried after authorization (contract in [agent.en.md](plugins/agent.en.md)).
 
 ## Key decision points
 
 - **Extension dispatch lives on the Rust side** (`MARKDOWN_EXTS`/`VIDEO_EXTS`/`EXCEL_EXTS`): a single decision point.
 - **xlsx semantics live in frontend ExcelJS; Rust stays a byte boundary**: `ctx.excel` owns the workbook and enforces the 1,000,000 declared-dimension cell cap; Rust only moves bytes and writes atomically.
 - **Switch guards live in host `WorkspaceService`; Context exposes only `WorkspaceFacade`**: file/root switches share guards, dirty same-path reopen is a no-op, and windows binds the internal controller before Rust authorization.
-- **Close cancels in the main process first**: macOS `_close:`/red button/`terminate:` enter frontend guards; consent calls `destroy()`.
+- **Close cancels in the main process first**: macOS close/red button/`terminate:` enter frontend guards; consent calls `destroy()`.
 - **Vendored cordis, take the contract drop the loader**: a static module table+manifest loading, composition is data; upgrades = manual diff+registration in [vendor/VENDORED.md](../vendor/VENDORED.md).
 - **Layering**: `src/plugins/` must not import `@tauri-apps/*` (checked by `pnpm verify:layering`); global state lives in Rust, window state in the Context.
-- **assetProtocol's configured scope is empty, runtime dynamic authorization**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory` (recursive) — video and images keep using the asset protocol, but the configured surface no longer pre-opens arbitrary directories.
+- **assetProtocol's configured scope is empty**: when a folder is picked, a window is created, or startup carries a root, Rust injects it via `allow_directory`; the configured surface does not pre-open arbitrary directories.
 - **markdown-it bundled at build time, `html: false`**: a corollary of environment independence (below), and it shrinks the XSS surface.
 - **The system webview does rendering and video decoding** (WKWebView/WebView2/webkit2gtk): a volume-vs-dependencies tradeoff, see [environment-independence.en.md](environment-independence.en.md).
 - **`~/.studywiki` is the user config root**: identical shape on all three platforms; legacy `app_config_dir` data migrates once at startup (idempotent, re-entrant).
 - **Keys are stored in plaintext in settings.json with 0600**: the same water level as Claude Code/Codex/dsh; the command surface is write-only for keys (list is redacted) and the external-plugin whitelist excludes write operations.
-- **Rust is a thin capability layer (persistence+egress)**: model routing and the future agent loop both live in the frontend (compared with dsh: native code only isolates capabilities); vendor preset baseUrls exist only on the Rust side.
-- **External plugins load via blob URL**: a Rust command reads the entry source→JS Blob→dynamic import; the single-file zero-dependency contract drives the blob's usual weaknesses (relative imports, URL lifetime) to zero, and the channel is testable end-to-end in vitest with an injected fake import; custom-protocol ESM can only be verified in a real webview and stays as a fallback (landing record in the Phase 2 Note, decision 1).
-- **Streaming uses `ipc::Channel`, not event broadcast**: one ordered consumer/natural window isolation; `llm_chat_abort` stops it explicitly.
+- **Rust is a thin capability layer (persistence+egress)**: model routing and the agent loop both live in the frontend (compared with dsh: native code only isolates capabilities); vendor preset baseUrls exist only on the Rust side.
+- **The agent loop lives in the agent-core cordis plugin**: it is exposed as the `ctx.agent` service; app-agent is UI only, and m2-04 consumes it with `inject: ['agent']`.
+- **Grep uses a ripgrep sidecar**: the npm package supplies the platform binary at build time; Rust spawns it with bare argv and parses `rg --json`, with zero runtime downloads.
+- **The authorization set expands dynamically**: approval of an outside read can grant the file or directory for the session; write/edit remains confined to the current library root in every mode.
+- **External plugins load via blob URL**: Rust reads the entry source→JS Blob→dynamic import; the single-file zero-dependency contract removes common blob weaknesses, and custom-protocol ESM remains a fallback.
+- **Streaming uses `ipc::Channel`**: one ordered consumer/natural window isolation; `llm_chat_abort` stops it explicitly.
 - **Three-source attachment union**: path is read and base64-encoded at the Rust egress/inline is never persisted/url passes through to the provider.
-- **npm as a repository, not as a runtime**: networking happens only in the Rust install command (ureq+rustls pure-Rust stack); runtime stays fully offline ([environment-independence.en.md](environment-independence.en.md) exemption registry).
+- **npm as a repository, not as a runtime**: networking happens only in the Rust install command; runtime stays fully offline ([environment-independence.en.md](environment-independence.en.md) exemption registry).
 
 ## Environment independence
 
