@@ -50,3 +50,4 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 - 附件 path 的 canonicalize 授权与读取之间保留本机竞态窗口（触发需本机恶意进程，桌面单用户威胁模型下接受）；canonicalize 失败统一报「不在工作区内」，诊断粒度粗但 fail-closed——错误词表细分与 open 级防符号链接留 m2-03 工具落盘硬化窗口。
 - 欠账：`tool-call-delta` 本期无消费方；会话不持久化（重开即清）；块级增量渲染留作性能优化；远程 url 来源依赖 provider 可达性，自托管 endpoint 够不到公网时按传输错误语义报错。
 - `llm_chat_abort` 迟到写入（停止与流完结的毫秒级竞态）会在进程级登记表残留一个 streamId 直至退出：无功能影响（每流新 UUID，残留 id 永不再被查询），单条约百字节；系跨 IPC 字符串寻址的结构性产物（pi/dsh 的取消句柄随活动生灭故无此问题），TTL 清扫留待真有需要再做。
+- `input_audio` 出线固定为 OpenAI 官方言（裸 base64 + format 字段）；MiMo v2.5 ASR 实测要求 data-URI 前缀且不带 format（shenlun 脚本 2026-08 对真实端点验证，pyvideotrans/Codewhale 同形），按现状配 MiMo ASR 发音频必 400——厂商方言分派（preset 加 audioDialect）拍板暂不做，留待真实接入；TTS 方向（顶层 audio 参数 + message.audio 出参）本期未实现，同属后续欠账。
