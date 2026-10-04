@@ -12,11 +12,11 @@ The released artifacts satisfy all of the following clauses, which together mean
 2. **Core and built-in plugins offline**: the core and all built-in plugins are bundled into the artifact at build time; installation and runtime touch no network — no CDN, external scripts/styles, or runtime downloads.
 3. **Consistent behavior**: functionality is unaffected by environment variables or global config files; the same version plus the same plugin set behaves identically on any machine meeting the OS minimum.
 4. **Self-contained install**: the installer carries all its prerequisites (see "system webview boundary" below).
-5. **External plugins**: an external plugin is a local resource the user installs deliberately — the install action may go online and only via registry tarball direct fetch; after install everything runs offline; always a pre-bundled zero-dependency single file, and the host refuses any other shape.
+5. **External plugins**: a local resource the user installs deliberately; install may go online and only via registry tarball direct fetch; runtime stays offline, and the host refuses anything but a pre-bundled zero-dependency single file.
 
 ## System webview boundary (the only platform dependency)
 
-Tauri embeds no browser engine; it relies on the OS webview: macOS WKWebView (system-provided, no extra steps), Linux webkit2gtk (carried by the AppImage), Windows WebView2 (preinstalled only on Windows 10/11; older systems are covered by the installer embedding an offlineInstaller — configured in `tauri.conf.json`). This is a deliberate volume-versus-effort tradeoff (alternative: embedding Chromium at 100MB+, see the Agent Note). This boundary **is not treated as violating the constraint**, and it is the only one.
+Tauri relies on the OS webview: macOS WKWebView (system-provided), Linux webkit2gtk (carried by the AppImage), Windows WebView2 (preinstalled only on Windows 10/11; older systems are covered by the installer embedding an offlineInstaller — configured in `tauri.conf.json`). This is a deliberate volume-versus-effort tradeoff (see the Agent Note). This boundary **is not treated as violating the constraint**.
 
 ## Mechanical gates
 
@@ -28,7 +28,7 @@ Tauri embeds no browser engine; it relies on the OS webview: macOS WKWebView (sy
 
 ## Exemption registry
 
-New exemptions must be registered in this table with an Agent Note link; unregistered violations go red:
+New exemptions must be registered in this table with an Agent Note link; violations otherwise go red:
 
 | Exemption | Reason | Basis |
 |---|---|---|
@@ -36,6 +36,7 @@ New exemptions must be registered in this table with an Agent Note link; unregis
 | External plugin install networking (active) | Install = registry tarball direct fetch; runtime stays fully offline | [.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.en.md](../.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.en.md) |
 | `http://www.w3.org/2000/svg` (icons.ts) | createElementNS identifier, never fetched; WKWebView does not paint innerHTML-parsed SVGs, explicit construction required | [.agents/notes/implemented/feature/2026-09-13-ui-refresh.en.md](../.agents/notes/implemented/feature/2026-09-13-ui-refresh.en.md) |
 | AI inference via a user-configured remote endpoint (LLM/VLM/ASR) | The only network point; user-run closed loop, no shipped key | [.agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.en.md](../.agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.en.md) |
+| ripgrep sidecar (`@vscode/ripgrep` bundled at build time, agent grep tool) | Search must run natively; bundled at build time with zero downloads or external dependencies at runtime | [.agents/notes/proposed/architecture/2026-10-04-basic-agent.en.md](../.agents/notes/proposed/architecture/2026-10-04-basic-agent.en.md) |
 
 Exemptions for `node:` builtin references (in-package files confirmed never to enter the browser bundle, e.g. CLI bins) are registered in the `nodeRefExempt` table of [scripts/dep-allowlist.json](../scripts/dep-allowlist.json), part of the dependency-allowlist gate — not duplicated here.
 
