@@ -31,6 +31,7 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/table.ts                  静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
+  plugins/agent-core/approval.ts   agent-core 审批门：ask/auto 路由、guardian 无状态审查与悬挂取消（→ tools.ts、types.ts）
   plugins/agent-core/session.ts    agent-core JSONL 会话编解码、崩溃尾容错与压缩视图（→ types.ts）
   plugins/agent-core/tools.ts      agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
   plugins/agent-core/types.ts      agent-core 消息、批准与会话日志类型契约（→ llm.ts）
