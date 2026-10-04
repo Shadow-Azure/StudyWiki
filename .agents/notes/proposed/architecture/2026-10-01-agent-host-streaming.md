@@ -18,7 +18,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### chunk 词表与组装
 
-取主流 agent 实现共识的最小集：`text-delta` / `reasoning-delta` / `tool-call-delta` / `usage` / `finish` / `error`。`tool-call-delta` 本期只定义不消费（m2-03 工具循环要用，协议不留返工）。reasoning 按 `reasoning_content` → `reasoning` → `reasoning_text` 取第一个非空字段（各家兼容端点词形不一）；请求带 `stream_options: {include_usage: true}`，容忍 usage 落在 choice 上。宿主流服务为每条流持有一个前端组装器，并经 `ChatStreamHandle.snapshot()` 暴露唯一 chunk → 消息快照；消费者只读渲染，不碰裸 delta，也不得复制组装器；中断时半截 tool-call 丢弃（无法补伪造结果），text/reasoning 部分保留。
+取主流 agent 实现共识的最小集：`text-delta` / `reasoning-delta` / `tool-call-delta` / `usage` / `finish` / `error`。`tool-call-delta` 本期只定义不消费（m2-03 工具循环要用，协议不留返工）。reasoning 按 `reasoning_content` → `reasoning` → `reasoning_text` 取第一个非空字段（各家兼容端点词形不一）；请求带 `stream_options: {include_usage: true}`，容忍 usage 落在 choice 上。宿主流服务为每条流持有一个前端组装器，并经 `ChatStreamHandle.snapshot()` 暴露唯一 chunk → 消息快照；消费者只读渲染，不碰裸 delta，也不得复制组装器；中断时半截 tool-call 丢弃（无法补伪造结果），text/reasoning 部分保留。半截正文只保留在界面、不进后续模型上下文：错误、停止与无 finish 的收尾都不入会话历史，只有拿到 finish_reason 的完整回答入账——失败尝试重放会触发兼容性错误并把重试锚成续写（对齐 pi 转换层对 error/aborted 的整体过滤与 dsh 的 attempt≠message 双轨；拍板时停止半截也不进，比 dsh 更严）。
 
 ### 多模态消息模型
 

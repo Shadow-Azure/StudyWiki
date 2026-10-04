@@ -176,7 +176,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   const finishError = (active: ActiveChat, error: { code: string; message: string }): void => {
     if (disposed) return;
     if (!active.snapshot.error) active.snapshot = { ...active.snapshot, error };
-    if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
+    // 半截正文只留在界面（错误横幅下方可见），不进模型账：失败尝试重放会触发
+    // 兼容性错误且把重试锚成续写（对齐 pi 转换层过滤 / dsh attempt≠message 分轨）。
     current = null;
     paintSendButton();
   };
@@ -184,7 +185,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   const finishNeutralEnd = (active: ActiveChat): void => {
     if (disposed || active.finishing) return;
     active.finishing = true;
-    if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
+    // 无 finish_reason 的收尾是不完整轮次：半截正文只留在界面，不进模型账。
     const marker = document.createElement("div");
     marker.className = "chat-interrupted";
     marker.textContent = "已结束";
@@ -196,10 +197,11 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}, deps:
   const markInterrupted = (active: ActiveChat): void => {
     if (disposed || active.finishing) return;
     active.finishing = true;
-    if (active.snapshot.text) messages.push({ role: "assistant", content: active.snapshot.text });
+    // 停止的半截正文只留在界面，不进模型账（拍板语义比 dsh 的 interrupted-message
+    // 更进一步，与 pi 的转换层过滤一致）：后续追问不带半截，避免续写锚定。
     const marker = document.createElement("div");
     marker.className = "chat-interrupted";
-    marker.textContent = "已中断 · 已保留以上内容";
+    marker.textContent = "已中断 · 仅保留在界面";
     active.wrapper.append(marker);
     current = null;
     paintSendButton();

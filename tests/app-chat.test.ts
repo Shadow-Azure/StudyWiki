@@ -99,6 +99,12 @@ describe("app-chat", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(aborted).toBe(true);
     expect(document.body.textContent).toContain("已中断");
+    const area = document.querySelector("textarea")!;
+    area.value = "继续";
+    document.querySelector<HTMLButtonElement>(".chat-send")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const wire = (lastReq as { messages: { role: string; content: string }[] }).messages;
+    expect(wire.every((m) => m.role !== "assistant")).toBe(true);
     dispose();
   });
 
@@ -132,6 +138,11 @@ describe("app-chat", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(document.querySelector<HTMLButtonElement>(".chat-send")!.textContent).toBe("发送");
     expect(document.body.textContent).toContain("已结束");
+    document.querySelector("textarea")!.value = "接着问";
+    document.querySelector<HTMLButtonElement>(".chat-send")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const wire = (lastReq as { messages: { role: string; content: string }[] }).messages;
+    expect(wire.every((m) => m.role !== "assistant")).toBe(true);
     dispose();
   });
 
@@ -158,20 +169,22 @@ describe("app-chat", () => {
     dispose();
   });
 
-  it("错误横幅重试会重发最近一条用户消息", async () => {
-    const { ctx } = fakeCtx([{ type: "error", code: "RATE_LIMITED", message: "慢点" }]);
+  it("错误半截不进模型账：重试请求以 user 收尾且不含半截助手文本", async () => {
+    const { ctx } = fakeCtx([]);
     const requests: unknown[] = [];
-    let script: StreamChunk[] = [{ type: "error", code: "RATE_LIMITED", message: "慢点" }];
+    let attempt = 0;
     ctx.llm.chatStream = async (req: unknown) => {
+      attempt += 1;
       requests.push(req);
-      const current = script;
-      const events = (async function* () { for (const chunk of current) yield chunk; })();
-      const snapshots = stagedSnapshots(current);
+      const chunks: StreamChunk[] = attempt === 1
+        ? [{ type: "text-delta", index: 0, text: "讲到一半" }, { type: "error", code: "RATE_LIMITED", message: "慢点" }]
+        : [{ type: "finish", reason: "stop" }];
+      const snapshots = stagedSnapshots(chunks);
       let stage = 0;
       return {
-        events,
+        events: (async function* () { for (const chunk of chunks) yield chunk; })(),
         snapshot: () => snapshots[Math.min(stage++, snapshots.length - 1)] ?? { reasoning: "", text: "", toolCalls: [] },
-        settled: Promise.reject({ code: "RATE_LIMITED", message: "慢点" }),
+        settled: attempt === 1 ? Promise.reject({ code: "RATE_LIMITED", message: "慢点" }) : Promise.resolve(),
         abort: async () => { aborted = true; },
       };
     };
@@ -180,9 +193,10 @@ describe("app-chat", () => {
     document.querySelector<HTMLButtonElement>(".chat-send")!.click();
     await new Promise((resolve) => setTimeout(resolve, 10));
     document.querySelector<HTMLButtonElement>(".chat-retry")!.click();
-    script = [{ type: "finish", reason: "stop" }];
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(requests).toHaveLength(2);
+    const wire = (requests[1] as { messages: { role: string; content: string }[] }).messages;
+    expect(wire).toEqual([{ role: "user", content: "重试我" }]);
     dispose();
   });
 
