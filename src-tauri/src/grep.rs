@@ -106,9 +106,9 @@ impl SearchState {
         self.raw_bytes + self.pending_line.len()
     }
 
-    fn ingest(&mut self, chunk: &[u8]) {
-        for part in chunk.split_inclusive(|byte| *byte == b'\n') {
-            self.pending_line.extend_from_slice(part);
+    fn ingest(&mut self, chunk: &str) {
+        for part in chunk.split_inclusive('\n') {
+            self.pending_line.extend_from_slice(part.as_bytes());
             if self.pending_line.ends_with(b"\n") {
                 let line = std::mem::take(&mut self.pending_line);
                 self.raw_bytes += line.len();
@@ -186,6 +186,46 @@ fn failed(message: impl Into<String>) -> GrepError {
     GrepError {
         code: "SEARCH_FAILED".into(),
         message: message.into(),
+    }
+}
+
+#[derive(Debug)]
+enum CollectOutcome {
+    Completed,
+    LimitReached,
+    ParseError,
+    Overflow,
+}
+
+/// Wait/collect seam: all timeout decisions happen here against the stdout
+/// channel, so tests can pin them without spawning ripgrep.
+fn collect_stdout(
+    receiver: std::sync::mpsc::Receiver<String>,
+    state: &mut SearchState,
+    budget: &GrepBudget,
+) -> Result<CollectOutcome, GrepError> {
+    loop {
+        match receiver.recv_timeout(budget.timeout) {
+            Ok(chunk) => {
+                if state.total_bytes() + chunk.len() > budget.raw_max_bytes {
+                    return Ok(CollectOutcome::Overflow);
+                }
+                state.ingest(&chunk);
+                if state.parse_error.is_some() {
+                    return Ok(CollectOutcome::ParseError);
+                }
+                if state.limit_reached() {
+                    return Ok(CollectOutcome::LimitReached);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(GrepError {
+                    code: "SEARCH_ABORTED".into(),
+                    message: format!("rg 超过 {}ms 无输出", budget.timeout.as_millis()),
+                });
+            }
+            Err(RecvTimeoutError::Disconnected) => return Ok(CollectOutcome::Completed),
+        }
     }
 }
 
@@ -290,94 +330,85 @@ pub fn run_grep(
         let mut stderr = String::new();
         stderr_pipe.read_to_string(&mut stderr).map(|_| stderr)
     });
-    let (sender, receiver) = mpsc::channel::<Result<Vec<u8>, String>>();
+    let (sender, receiver) = mpsc::channel::<String>();
     let reader = thread::spawn(move || {
-        let mut chunk = vec![0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; 64 * 1024];
+        let mut pending_bytes: Vec<u8> = Vec::new();
         loop {
-            match stdout.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(size) => {
-                    if sender.send(Ok(chunk[..size].to_vec())).is_err() {
-                        break;
+            match stdout.read(&mut buffer) {
+                Ok(0) => {
+                    if !pending_bytes.is_empty() {
+                        let tail = String::from_utf8_lossy(&pending_bytes).into_owned();
+                        let _ = sender.send(tail);
                     }
-                }
-                Err(e) => {
-                    let _ = sender.send(Err(format!("读取 rg stdout 失败：{e}")));
                     break;
                 }
+                Ok(size) => {
+                    pending_bytes.extend_from_slice(&buffer[..size]);
+                    let valid_bytes = match std::str::from_utf8(&pending_bytes) {
+                        Ok(_) => pending_bytes.len(),
+                        Err(error) => error.valid_up_to(),
+                    };
+                    if valid_bytes > 0 {
+                        let chunk =
+                            String::from_utf8_lossy(&pending_bytes[..valid_bytes]).into_owned();
+                        pending_bytes.drain(..valid_bytes);
+                        if sender.send(chunk).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(_) => break,
             }
         }
     });
 
     let mut state = SearchState::new(limit);
-    let mut budget_exceeded: Option<GrepError> = None;
-    for message in std::iter::from_fn(|| {
-        if budget_exceeded.is_some() {
-            None
-        } else {
-            Some(receiver.recv_timeout(budget.timeout))
+    match collect_stdout(receiver, &mut state, budget) {
+        Ok(CollectOutcome::Overflow) => {
+            let error = GrepError {
+                code: "SEARCH_RAW_OUTPUT_OVERFLOW".into(),
+                message: format!("rg stdout 超过 {} 字节预算", budget.raw_max_bytes),
+            };
+            shutdown_child(child, reader, stderr_reader);
+            return Err(error);
         }
-    }) {
-        match message {
-            Ok(Ok(chunk)) => {
-                if state.total_bytes() + chunk.len() > budget.raw_max_bytes {
-                    budget_exceeded = Some(GrepError {
-                        code: "SEARCH_RAW_OUTPUT_OVERFLOW".into(),
-                        message: format!("rg stdout 超过 {} 字节预算", budget.raw_max_bytes),
-                    });
-                    break;
-                }
-                state.ingest(&chunk);
-                if state.parse_error.is_some() {
-                    shutdown_child(child, reader, stderr_reader);
-                    return Err(failed(
-                        state
-                            .parse_error
-                            .unwrap_or_else(|| "解析 rg 输出失败".into()),
-                    ));
-                }
-                if state.limit_reached() {
-                    state.truncated = true;
-                    shutdown_child(child, reader, stderr_reader);
-                    return Ok(GrepResult {
-                        matches: state.matches,
-                        truncated: state.truncated,
-                    });
-                }
-            }
-            Ok(Err(message)) => {
-                budget_exceeded = Some(failed(message));
-                break;
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                budget_exceeded = Some(GrepError {
-                    code: "SEARCH_ABORTED".into(),
-                    message: format!("rg 超过 {}ms 无输出", budget.timeout.as_millis()),
-                });
-                break;
-            }
-            Err(RecvTimeoutError::Disconnected) => break,
+        Ok(CollectOutcome::ParseError) => {
+            let message = state
+                .parse_error
+                .unwrap_or_else(|| "解析 rg 输出失败".into());
+            shutdown_child(child, reader, stderr_reader);
+            return Err(failed(message));
+        }
+        Ok(CollectOutcome::LimitReached) => {
+            state.truncated = true;
+            shutdown_child(child, reader, stderr_reader);
+            return Ok(GrepResult {
+                matches: state.matches,
+                truncated: state.truncated,
+            });
+        }
+        Ok(CollectOutcome::Completed) => {}
+        Err(error) => {
+            shutdown_child(child, reader, stderr_reader);
+            return Err(error);
         }
     }
 
-    if let Some(error) = budget_exceeded {
-        shutdown_child(child, reader, stderr_reader);
-        return Err(error);
-    }
-
-    let _ = reader.join();
     state.finish_pending_line();
     if state.limit_reached() {
         state.truncated = true;
     }
     if let Some(message) = state.parse_error {
+        shutdown_child(child, reader, stderr_reader);
         return Err(failed(message));
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| failed(format!("等待 rg 退出失败：{e}")))?;
-    let stderr = match stderr_reader.join() {
+    let _ = reader.join();
+    let wait_result = child.wait();
+    let stderr_result = stderr_reader.join();
+    let status = wait_result.map_err(|e| failed(format!("等待 rg 退出失败：{e}")))?;
+    let stderr = match stderr_result {
         Ok(Ok(stderr)) => stderr,
         Ok(Err(e)) => return Err(failed(format!("读取 rg stderr 失败：{e}"))),
         Err(_) => return Err(failed("rg stderr 读取线程终止")),
@@ -481,6 +512,20 @@ mod tests {
         };
         let e = run_grep(&rg(), &args("线"), &tiny).unwrap_err();
         assert_eq!(e.code, "SEARCH_RAW_OUTPUT_OVERFLOW");
+    }
+
+    #[test]
+    fn empty_stdout_channel_times_out_deterministically() {
+        let (sender, receiver) = std::sync::mpsc::channel::<String>();
+        let budget = GrepBudget {
+            raw_max_bytes: RAW_OUTPUT_MAX_BYTES,
+            timeout: std::time::Duration::from_millis(10),
+        };
+        let mut state = SearchState::new(1);
+        let error = collect_stdout(receiver, &mut state, &budget).unwrap_err();
+        drop(sender);
+        assert_eq!(error.code, "SEARCH_ABORTED");
+        assert!(state.matches.is_empty());
     }
 
     #[test]
