@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// 窗口注册表：label → 工作区根。全局状态的唯一权威（刷新/重载可重查）。
+/// 窗口注册表：label → 工作区根与会话级 grants。全局状态的唯一权威（刷新/重载可重查）。
 #[derive(Default)]
 pub struct WindowRegistry {
     next: u32,
     roots: HashMap<String, Option<String>>,
+    grants: HashMap<String, Vec<PathBuf>>,
 }
 
 /// 原生关窗守卫就绪表：只有前端聚合守卫完成装载的窗口才由主进程同步取消原生关闭。
@@ -46,6 +48,7 @@ impl WindowRegistry {
     }
     pub fn remove(&mut self, label: &str) {
         self.roots.remove(label);
+        self.grants.remove(label);
     }
     /// 更新（或 upsert，主窗口首开文件夹场景）某窗口的工作区根。
     pub fn set_root(&mut self, label: &str, root: Option<String>) {
@@ -57,6 +60,22 @@ impl WindowRegistry {
             .values()
             .filter_map(|r| r.clone())
             .map(std::path::PathBuf::from)
+            .collect()
+    }
+
+    /// 登记某窗口经用户审批获得的动态只读授权；按窗口归属，窗口关闭即清除。
+    pub fn add_grant(&mut self, label: &str, path: String) {
+        self.grants
+            .entry(label.to_string())
+            .or_default()
+            .push(PathBuf::from(path));
+    }
+
+    /// 读命令授权集合：已设 roots + 所有存活窗口 grants（重复不合并，判断语义不变）。
+    pub fn authorized(&self) -> Vec<PathBuf> {
+        self.roots()
+            .into_iter()
+            .chain(self.grants.values().flatten().cloned())
             .collect()
     }
 }
@@ -219,6 +238,21 @@ mod tests {
         // 主窗口（windows[] 配置窗）从未登记过：upsert 让"打开文件夹"也持久化
         reg.set_root("main", Some("/first".into()));
         assert_eq!(reg.get("main"), Some(Some("/first".into())));
+    }
+
+    #[test]
+    fn grants_scoped_to_window_and_dropped_on_remove() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("w1", Some("/lib".into()));
+        reg.add_grant("w1", "/outside/file.md".into());
+        reg.add_grant("w2", "/elsewhere".into());
+        let auth = reg.authorized();
+        assert!(auth.iter().any(|p| p.ends_with("file.md")));
+        reg.add_grant("w1", "/tmp/x".into());
+        reg.remove("w1");
+        let auth = reg.authorized();
+        assert!(!auth.iter().any(|p| p.ends_with("file.md")));
+        assert!(auth.iter().any(|p| p.ends_with("elsewhere")));
     }
 
     #[test]

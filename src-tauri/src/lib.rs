@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -134,17 +135,53 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// 命令面根域校验（单一决策点，所有文件命令共用）：先拒用户配置域——
+/// 会话 JSONL 的纯追加器：逐行带换行写入，父目录缺失时创建；含换行的
+/// line 会破坏 JSONL 帧边界，先拒。授权由命令面先行收口。
+fn append_line_to(path: &str, line: &str) -> Result<(), String> {
+    if line.contains('\n') {
+        return Err("会话事件 line 不得包含换行符".to_string());
+    }
+    let file_path = Path::new(path);
+    let parent = file_path
+        .parent()
+        .ok_or_else(|| format!("路径没有父目录：{path}"))?;
+    fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(file_path)
+        .map_err(|e| format!("open {path}: {e}"))?;
+    file.write_all(format!("{line}\n").as_bytes())
+        .map_err(|e| format!("write {path}: {e}"))
+}
+
+/// 删除面收窄：路径必须真正位于 `.study-wiki/sessions` 两级组件之下，
+/// 防止授权后的普通库内文件或只有单一关键词的路径进入删除命令。
+fn session_file_path_is_confined(path: &str) -> bool {
+    let components: Vec<_> = Path::new(path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    components
+        .windows(2)
+        .any(|pair| pair == [".study-wiki", "sessions"])
+}
+
+/// 写命令与非读命令根域校验：先拒用户配置域——
 /// ~/.studywiki 内路径（settings.json 明文 key、plugins.json 清单、plugins/
 /// 插件代码）对文件服务一律不可见，祖先 root 打开时也不可经读写命令触达；
-/// 再查路径须落在某个已授权 root 之内。词法 starts_with（路径组件级），与
+/// 再查路径须落在某个原始授权 root 之内。词法 starts_with（路径组件级），与
 /// assetProtocol 的 allow_directory 授权同源；含 `..` 组件直接拒（前缀组件可
 /// 恰匹配 root 而 OS 解析后落在 root 外，必须在词法层收口）；symlink 跟随
 /// 不在本层防线（停机坪）。
-fn path_authorized(
+fn path_authorized_with(
     reg: &windows::WindowRegistry,
     path: &str,
     config_root: &Path,
+    include_grants: bool,
 ) -> Result<(), String> {
     let p = Path::new(path);
     if p.components()
@@ -155,14 +192,36 @@ fn path_authorized(
     if config::is_config_domain_in(p, config_root) {
         return Err(format!("路径位于用户配置域，禁止经文件服务访问：{path}"));
     }
-    for root in reg.roots() {
+    let authorized = if include_grants {
+        reg.authorized()
+    } else {
+        reg.roots()
+    };
+    for root in authorized {
         if p.starts_with(&root) {
             return Ok(());
         }
     }
-    Err(format!(
-        "路径不在任何已授权文件夹内：{path}（先打开文件夹）"
-    ))
+    Err(format!("UNAUTHORIZED_PATH|{path}"))
+}
+
+/// 写域边界固定为原始授权 root 集合：动态 grants 永不扩张写/删除面。
+fn path_authorized(
+    reg: &windows::WindowRegistry,
+    path: &str,
+    config_root: &Path,
+) -> Result<(), String> {
+    path_authorized_with(reg, path, config_root, false)
+}
+
+/// 读域边界可由审批 grants 扩张：原始 roots + 所有存活窗口 grants。
+/// 稳定 `UNAUTHORIZED_PATH|` 前缀与写域一致，供前端识别审批升级。
+fn path_authorized_read(
+    reg: &windows::WindowRegistry,
+    path: &str,
+    config_root: &Path,
+) -> Result<(), String> {
+    path_authorized_with(reg, path, config_root, true)
 }
 
 fn ensure_authorized(
@@ -171,6 +230,14 @@ fn ensure_authorized(
     config_root: &Path,
 ) -> Result<(), String> {
     path_authorized(&state.lock().unwrap(), path, config_root)
+}
+
+fn ensure_authorized_read(
+    state: &tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: &str,
+    config_root: &Path,
+) -> Result<(), String> {
+    path_authorized_read(&state.lock().unwrap(), path, config_root)
 }
 
 const PATH_HEADER: &str = "x-studywiki-path";
@@ -228,7 +295,7 @@ fn read_tree(
 
 /// 整文件写入（markdown 编辑器的保存通道）。落盘成功后广播 `fs://changed`
 /// （payload 为路径），各窗口据此重读受影响目录。
-/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+/// 路径须在原始授权 root 内；动态读 grant 不能解锁写面。
 #[tauri::command]
 fn write_text_file(
     app: tauri::AppHandle,
@@ -244,7 +311,8 @@ fn write_text_file(
 }
 
 /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
-/// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；授权与 FS 访问前先校验。
+/// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；读授权与 FS 访问前先校验，
+/// 边界为原始授权 root + 动态读 grants。
 #[tauri::command]
 fn read_binary_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -253,14 +321,15 @@ fn read_binary_file<R: tauri::Runtime>(
 ) -> Result<Response, String> {
     let path = request_path(&request)?;
     let config_root = config::app_studywiki_dir(&app)?;
-    ensure_authorized(&state, &path, &config_root)?;
+    ensure_authorized_read(&state, &path, &config_root)?;
     fs::read(&path)
         .map(Response::new)
         .map_err(|e| format!("read {path}: {e}"))
 }
 
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
-/// 路径经 header 传入且须先授权；body 必须是 Tauri raw bytes，拒绝 JSON 数组。
+/// 路径经 header 传入且须在原始授权 root 内（读 grant 不解锁写面）；
+/// body 必须是 Tauri raw bytes，拒绝 JSON 数组。
 #[tauri::command]
 fn write_binary_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -281,9 +350,83 @@ fn write_binary_file<R: tauri::Runtime>(
         .map_err(|e| format!("emit: {e}"))
 }
 
+/// 请求把一个已存在的文件/目录加入当前窗口的动态只读授权。
+/// 拒绝 `..` 与用户配置域；目标必须存在并 canonicalize。若已在授权集内
+/// 则幂等 no-op，否则登记为该窗口 grant；窗口销毁时随注册表清除。
+/// grants 只进入读域，绝不改变写/删除命令的原始 root 边界。
+#[tauri::command]
+fn authorize_read_path<R: tauri::Runtime>(
+    window: tauri::Window<R>,
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+) -> Result<(), String> {
+    let raw = Path::new(&path);
+    if raw
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("路径不得含 .. 组件：{path}"));
+    }
+    let config_root = config::app_studywiki_dir(&app)?;
+    if config::is_config_domain_in(raw, &config_root) {
+        return Err(format!("路径位于用户配置域，禁止经文件服务访问：{path}"));
+    }
+    fs::metadata(raw).map_err(|e| format!("metadata {path}: {e}"))?;
+    let canonical = fs::canonicalize(raw).map_err(|e| format!("canonicalize {path}: {e}"))?;
+    if config::is_config_domain_in(&canonical, &config_root) {
+        return Err(format!(
+            "路径位于用户配置域，禁止经文件服务访问：{}",
+            canonical.display()
+        ));
+    }
+    let authorized = {
+        let registry = state.lock().unwrap();
+        path_authorized_read(&registry, &canonical.to_string_lossy(), &config_root)
+    };
+    if authorized.is_ok() {
+        return Ok(());
+    }
+    state
+        .lock()
+        .unwrap()
+        .add_grant(window.label(), canonical.to_string_lossy().into_owned());
+    Ok(())
+}
+
+/// 追加一条会话 JSONL 事件。路径须在原始授权 root 内；line 不得含换行符，
+/// 否则 JSONL 帧边界不可信。目录按需创建，OS 失败原样上抛。
+#[tauri::command]
+fn append_session_event(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+    line: String,
+) -> Result<(), String> {
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &path, &config_root)?;
+    append_line_to(&path, &line)
+}
+
+/// 删除会话文件。路径须在原始授权 root 内，且组件中必须出现 `.study-wiki/sessions`
+/// 两级收窄域；删除失败携带 OS 错误原文，成功不广播文件树变更。
+#[tauri::command]
+fn delete_session_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+) -> Result<(), String> {
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &path, &config_root)?;
+    if !session_file_path_is_confined(&path) {
+        return Err(format!("会话文件必须位于 .study-wiki/sessions 内：{path}"));
+    }
+    fs::remove_file(&path).map_err(|e| format!("remove {path}: {e}"))
+}
+
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
-/// 路径须在已授权文件夹内（欢迎态无授权即拒）。
+/// 读域为原始授权 root + 动态读 grants（欢迎态无授权即拒）。
 #[tauri::command]
 fn read_text_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -291,11 +434,11 @@ fn read_text_file<R: tauri::Runtime>(
     path: String,
 ) -> Result<String, String> {
     let config_root = config::app_studywiki_dir(&app)?;
-    ensure_authorized(&state, &path, &config_root)?;
+    ensure_authorized_read(&state, &path, &config_root)?;
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
-/// agent grep 工具：授权校验后 spawn sidecar ripgrep，预算与错误词表见 grep 模块。
+/// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含动态读 grants。
 #[tauri::command]
 fn grep_files<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -307,7 +450,7 @@ fn grep_files<R: tauri::Runtime>(
             code: "SEARCH_FAILED".into(),
             message: e,
         })?;
-    if let Err(message) = ensure_authorized(&state, &req.path, &config_root) {
+    if let Err(message) = ensure_authorized_read(&state, &req.path, &config_root) {
         return Err(crate::grep::GrepError {
             code: "UNAUTHORIZED_PATH".into(),
             message,
@@ -341,6 +484,9 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         write_text_file,
         read_binary_file,
         write_binary_file,
+        authorize_read_path,
+        append_session_event,
+        delete_session_file,
         windows::create_window,
         windows::get_window_state,
         windows::set_window_root,
@@ -462,7 +608,7 @@ mod tests {
         let mut reg = WindowRegistry::default();
         reg.set_root("main", Some("/lib/root".into()));
         let err = path_authorized(&reg, "/etc/passwd", Path::new("/cfg-root")).unwrap_err();
-        assert!(err.contains("先打开文件夹"), "{err}");
+        assert!(err.starts_with("UNAUTHORIZED_PATH|"), "{err}");
         reg.set_root("main", None);
         assert!(path_authorized(&reg, "/lib/root/a.md", Path::new("/cfg-root")).is_err());
     }
@@ -486,7 +632,7 @@ mod tests {
 
     /// 场景 B 复现：用户把祖先目录（/Users/u）打开为学习库时，配置域内的
     /// settings.json（明文 key）、plugins.json（清单）、plugins/（插件代码）
-    /// 必须对文件服务一律不可见——决策点在 path_authorized，所有文件命令共用。
+    /// 必须对文件服务一律不可见——读写域校验共用同一配置域拒绝。
     #[test]
     fn path_authorized_rejects_config_domain_under_ancestor_root() {
         let mut reg = WindowRegistry::default();
@@ -504,6 +650,46 @@ mod tests {
         assert!(path_authorized(&reg, "/Users/u/.studywiki", config_root).is_err());
         // 配置域外的正常学习文件放行。
         assert!(path_authorized(&reg, "/Users/u/notes/a.md", config_root).is_ok());
+    }
+
+    #[test]
+    fn append_session_event_writes_lines_and_rejects_newline() {
+        let dir = std::env::temp_dir().join(format!("sw-append-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        append_line_to(file.to_str().unwrap(), "{\"a\":1}").unwrap();
+        append_line_to(file.to_str().unwrap(), "{\"b\":2}").unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(text.lines().count(), 2);
+        assert!(append_line_to(file.to_str().unwrap(), "bad\nline").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_file_deletion_requires_study_wiki_sessions_components() {
+        assert!(session_file_path_is_confined(
+            "/lib/.study-wiki/sessions/a.jsonl"
+        ));
+        assert!(!session_file_path_is_confined(
+            "/lib/.study-wiki/other/a.jsonl"
+        ));
+        assert!(!session_file_path_is_confined("/lib/sessions/a.jsonl"));
+        assert!(!session_file_path_is_confined("/lib/a.jsonl"));
+    }
+
+    #[test]
+    fn grants_widen_read_authorization_only() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("main", Some("/lib/root".into()));
+        reg.add_grant("main", "/outside/dir".into());
+
+        let read_error = path_authorized(&reg, "/outside/dir/f.md", Path::new("/cfg-root"))
+            .expect_err("a grant must not widen the write/root-only domain");
+        assert!(read_error.starts_with("UNAUTHORIZED_PATH|"), "{read_error}");
+        assert!(
+            path_authorized_read(&reg, "/outside/dir/f.md", Path::new("/cfg-root")).is_ok(),
+            "the same grant must widen read authorization"
+        );
     }
 
     #[test]
