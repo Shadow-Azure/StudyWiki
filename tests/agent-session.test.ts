@@ -50,6 +50,26 @@ describe("session codec", () => {
     expect(view[1]).toEqual({ role: "user", content: "追问" });
   });
 
+  it("compaction 边界回退，防止 assistant 与 tool 拆开", () => {
+    const tool: AgentMessage = { role: "tool", callId: "c1", name: "read", content: "结果" };
+    const assistantWithCall: AgentMessage = {
+      role: "assistant", reasoning: "", text: "调用",
+      toolCalls: [{ id: "c1", name: "read", argumentsText: "{}" }],
+    };
+    const lines: SessionLine[] = [
+      { type: "header", header },
+      { type: "message", message: user },
+      { type: "message", message: assistantWithCall },
+      { type: "message", message: tool },
+      { type: "message", message: user },
+      { type: "compaction", summary: "早前", covered: 2, createdAt: "2026-10-04T01:00:00Z" },
+    ];
+    const view = effectiveMessages(lines);
+    expect(view[0]).toMatchObject({ role: "user", content: expect.stringContaining("早前") });
+    expect(view.slice(1, 3).map((message) => message.role)).toEqual(["assistant", "tool"]);
+    expect(view.at(-1)).toEqual(user);
+  });
+
   it("sessionTitle 截断与单行化", () => {
     expect(sessionTitle("第一行\n第二行")).toBe("第一行");
     expect(sessionTitle("x".repeat(80))).toHaveLength(50);

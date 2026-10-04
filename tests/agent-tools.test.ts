@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { executeTool, isUnauthorized, TOOL_DECLARATIONS,
-  type ToolRunContext, type ApprovalOutcome } from "../src/plugins/agent-core/tools";
+  type ToolRunContext, type ApprovalOutcome, type ApprovalRequest } from "../src/plugins/agent-core/tools";
 
-function ctxWith(host: Partial<ToolRunContext["host"]>, answer?: ApprovalOutcome): ToolRunContext & { asked: string[] } {
+function ctxWith(
+  host: Partial<ToolRunContext["host"]>,
+  answer?: ApprovalOutcome,
+): ToolRunContext & { asked: string[]; requests: ApprovalRequest[] } {
   const asked: string[] = [];
+  const requests: ApprovalRequest[] = [];
   return {
-    root: "/lib", asked,
+    root: "/lib", asked, requests,
     host: { readText: async () => "1 行\n2 行", grep: async () => ({ matches: [], truncated: false }),
       writeText: async () => {}, authorizeRead: async () => {}, ...host },
-    ask: async (req) => { asked.push(req.kind); return answer ?? { decision: "allow" }; },
+    ask: async (req) => { asked.push(req.kind); requests.push(req); return answer ?? { decision: "allow" }; },
   } as ToolRunContext & { asked: string[] };
 }
 
@@ -48,6 +52,17 @@ describe("tools", () => {
     // 控制器裁决：计划原断言 5 是算术错误；write 必须原样写字节，不得追加换行
     expect(writes).toEqual(["/lib/n.md:4"]);
     expect(r.content).toContain("已写入");
+  });
+
+  it("write 审批请求携带完整内容预览", async () => {
+    const ctx = ctxWith({ writeText: async () => {} });
+    await executeTool({
+      id: "preview", name: "write",
+      argumentsText: JSON.stringify({ path: "/lib/n.md", content: "机密笔记预览" }),
+    }, ctx);
+    expect(ctx.requests).toEqual([
+      expect.objectContaining({ kind: "write", path: "/lib/n.md", newText: "机密笔记预览" }),
+    ]);
   });
 
   it("write 原样保留末尾换行", async () => {
@@ -109,6 +124,19 @@ describe("tools", () => {
     expect(r.content).toContain("/lib/a.md:3: 命中");
     expect(r.content).toContain("已截断");
     expect(r.content).toContain("上").and.toContain("下");
+  });
+
+  it("grep 格式化输出按 200KB 截断并标注", async () => {
+    const line = "x".repeat(4096);
+    const ctx = ctxWith({ grep: async () => ({
+      truncated: false,
+      matches: Array.from({ length: 200 }, (_, index) => ({
+        path: `/lib/${index}.md`, line: 1, text: line, before: [], after: [],
+      })),
+    }) });
+    const r = await executeTool({ id: "1", name: "grep", argumentsText: "{\"pattern\":\"x\"}" }, ctx);
+    expect(r.content).toContain("（输出超过 200 KB，已截断）");
+    expect(new TextEncoder().encode(r.content).length).toBeLessThanOrEqual(200 * 1024);
   });
 
   it("声明四工具且名称唯一", () => {

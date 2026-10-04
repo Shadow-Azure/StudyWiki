@@ -23,9 +23,9 @@ fn write_text_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mut
 
 /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
 /// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；读授权与 FS 访问前先校验，
-/// 边界为原始授权 root + 动态读 grants。
+/// 边界为当前窗口 root + 当前窗口动态读 grants。
 #[tauri::command]
-fn read_binary_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, request: Request<'_>) -> Result<Response, String>;
+fn read_binary_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, window: tauri::Window<R>, request: Request<'_>) -> Result<Response, String>;
 
 /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
 /// 路径经 header 传入且须在原始授权 root 内（读 grant 不解锁写面）；
@@ -52,13 +52,13 @@ fn delete_session_file(app: tauri::AppHandle, state: tauri::State<'_, std::sync:
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
-/// 读域为原始授权 root + 动态读 grants（欢迎态无授权即拒）。
+/// 读域为当前窗口 root + 当前窗口动态读 grants（欢迎态无授权即拒）。
 #[tauri::command]
-fn read_text_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, path: String) -> Result<String, String>;
+fn read_text_file<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, window: tauri::Window<R>, path: String) -> Result<String, String>;
 
-/// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含动态读 grants。
+/// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含当前窗口读 grants。
 #[tauri::command]
-fn grep_files<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, req: crate::grep::GrepArgs) -> Result<crate::grep::GrepResult, crate::grep::GrepError>;
+fn grep_files<R: tauri::Runtime>(app: tauri::AppHandle<R>, state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>, window: tauri::Window<R>, req: crate::grep::GrepArgs) -> Result<crate::grep::GrepResult, crate::grep::GrepError>;
 
 /// 新建窗口：登记注册表后创建加载同一 bundle 的 WebviewWindow；创建失败回滚登记项。
 #[tauri::command]

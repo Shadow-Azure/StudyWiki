@@ -68,12 +68,6 @@ function assistantSnapshot(message: Extract<AgentMessage, { role: "assistant" }>
   };
 }
 
-/** Whether an effective first message is the marker produced by compaction. */
-function isCompactionSummary(message: AgentMessage | undefined): message is Extract<AgentMessage, { role: "user" }> {
-  return message?.role === "user" && typeof message.content === "string" &&
-    message.content.startsWith("[早期对话摘要]\n");
-}
-
 /** Provide the right-rail persistent agent panel: sessions, approvals, modes,
  * model choice, streaming turns, and multimodal composer attachments.
  * @param ctx Host context（agent/workspace/slots injected; llm read only if present）。
@@ -228,18 +222,22 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   const renderHistory = (): void => {
     if (!transcript || !session) return;
-    const messages = session.messages();
     const historyCalls = new Map<string, { id: string; name: string; argumentsText: string }>();
-    if (isCompactionSummary(messages[0])) {
-      const summaryMessage = messages[0]!;
-      const summary = typeof summaryMessage.content === "string" ? summaryMessage.content : "";
-      transcript.append(renderCompactionDivider(summary.replace("[早期对话摘要]\n", "")));
-      messages.shift();
-    }
-    for (const message of messages) {
+
+    const appendMessage = (message: AgentMessage, target: HTMLElement[]): void => {
       if (message.role === "user") {
-        addUserMessage(message.content);
-        continue;
+        const row = document.createElement("div");
+        row.className = "chat-message chat-user";
+        const bubble = document.createElement("div");
+        bubble.className = "chat-bubble";
+        bubble.textContent = typeof message.content === "string"
+          ? message.content
+          : message.content.map((part) =>
+            part.type === "text" ? part.text : `[${part.type === "image" ? "图片" : "音频"}]`,
+          ).join(" ");
+        row.append(bubble);
+        target.push(row);
+        return;
       }
       if (message.role === "assistant") {
         for (const call of message.toolCalls) historyCalls.set(call.id, call);
@@ -248,20 +246,31 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         const stream = document.createElement("div");
         stream.className = "chat-stream";
         wrapper.append(stream);
-        transcript.append(wrapper);
+        target.push(wrapper);
         const historyRenderer = createStreamRenderer(stream);
         historyRenderer.update(assistantSnapshot(message));
         historyRenderer.finalize();
-        continue;
+        return;
       }
       const call = historyCalls.get(message.callId) ??
         { id: message.callId, name: message.name, argumentsText: "" };
-      transcript.append(renderToolCard(
+      target.push(renderToolCard(
         call,
         { content: message.content, isError: message.isError === true },
       ));
     }
+
+    const nodes: HTMLElement[] = [];
     for (const line of session.lines()) {
+      if (line.type === "message") {
+        appendMessage(line.message, nodes);
+        continue;
+      }
+      if (line.type === "compaction") {
+        nodes.length = 0;
+        nodes.push(renderCompactionDivider(line.summary));
+        continue;
+      }
       if (line.type !== "approval") continue;
       const request = {
         id: line.id,
@@ -275,8 +284,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         decider: line.decider,
         reason: line.reason ?? (line.decision === "unavailable" ? "审批不可用" : undefined),
       };
-      transcript.append(renderApprovalCard(request, state));
+      nodes.push(renderApprovalCard(request, state));
     }
+    transcript.replaceChildren(...nodes);
     transcript.scrollTop = transcript.scrollHeight;
   };
 
@@ -401,12 +411,19 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       paintSessionOptions();
     }
     input.value = "";
+    const outgoingContent = attachments.length > 0 ? content as ContentPart[] : undefined;
     attachments = [];
     renderChips();
     if (notice) notice.hidden = true;
     paintButtons();
-    void session.send(text, attachments.length > 0 ? content as ContentPart[] : undefined)
-      .then(() => refreshSessions())
+    const activeSession = session;
+    void activeSession.send(text, outgoingContent)
+      .then(async () => {
+        sessionTitle = activeSession.title;
+        paintTitle();
+        paintSessionOptions();
+        await refreshSessions();
+      })
       .catch((error: unknown) => {
         if (disposed && notice) return;
         if (notice) {

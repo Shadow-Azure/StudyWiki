@@ -77,9 +77,29 @@ export async function runTurn(
   signal: AbortSignal,
 ): Promise<AgentMessage[]> {
   const appended: AgentMessage[] = [];
+  let completedAssistant: AgentMessage | undefined;
   deps.emit({ type: "turn-start" });
 
   const stop = (): AgentMessage[] => {
+    if (completedAssistant?.role === "assistant") {
+      const completedCalls = new Set(
+        appended
+          .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+          .map((message) => message.callId),
+      );
+      for (const call of completedAssistant.toolCalls) {
+        if (completedCalls.has(call.id)) continue;
+        const tool: AgentMessage = {
+          role: "tool",
+          callId: call.id,
+          name: call.name,
+          content: "已取消",
+          isError: true,
+        };
+        deps.persist({ type: "message", message: tool });
+        appended.push(tool);
+      }
+    }
     deps.emit({ type: "aborted" });
     return appended;
   };
@@ -156,6 +176,7 @@ export async function runTurn(
       usage: snapshot.usage,
       finishReason: snapshot.finishReason,
     };
+    completedAssistant = assistant;
     deps.persist({ type: "message", message: assistant });
     appended.push(assistant);
     deps.emit({ type: "message", message: assistant });

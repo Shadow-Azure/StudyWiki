@@ -119,6 +119,7 @@ interface InternalSession {
   isNew: boolean;
   persistQueue: Promise<void>;
   persisting: boolean;
+  compactedUpTo: number;
 }
 
 /** Create the service whose cordis plugin publishes it as `ctx.agent`.
@@ -212,6 +213,10 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       isNew,
       persistQueue: Promise.resolve(),
       persisting: false,
+      compactedUpTo: lines.reduce(
+        (next, line, index) => line.type === "compaction" ? index + 1 : next,
+        0,
+      ),
     };
 
     internal.gate = createApprovalGate({
@@ -244,13 +249,13 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       },
       async send(text, content) {
         if (internal.running) throw new Error("会话正在运行");
-        if (disposed || controller.signal.aborted) throw new Error("会话已停止");
+        if (disposed || internal.controller.signal.aborted) throw new Error("会话已停止");
         internal.running = true;
         try {
           const userContent = content ?? text;
           const message: AgentMessage = { role: "user", content: userContent };
           if (internal.isNew && internal.header.title === DEFAULT_TITLE) {
-            const rawTitle = text || firstText(userContent);
+            const rawTitle = text || firstText(userContent) || DEFAULT_TITLE;
             internal.header.title = sessionTitle(rawTitle);
             internal.isNew = false;
             await enqueue(internal, () =>
@@ -290,11 +295,17 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
           );
         } finally {
           internal.running = false;
+          if (internal.controller.signal.aborted && internal.controller === controller) {
+            internal.controller = new AbortController();
+          }
         }
       },
       async abort() {
         controller.abort();
         internal.gate.cancelAll("已停止");
+        if (!internal.running && internal.controller === controller) {
+          internal.controller = new AbortController();
+        }
       },
       setModel(next) {
         internal.model = next;
@@ -316,13 +327,26 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
   }
 
   async function compactIfNeeded(session: InternalSession): Promise<void> {
-    const view = effectiveMessages(session.lines);
-    const lastAssistant = [...view].reverse().find((message): message is Extract<AgentMessage, { role: "assistant" }> =>
-      message.role === "assistant",
-    );
-    if (!lastAssistant?.usage || lastAssistant.usage.promptTokens <= threshold) return;
+    const hasNewHighUsageAssistant = session.lines
+      .slice(session.compactedUpTo)
+      .some((line) => line.type === "message" && line.message.role === "assistant" &&
+        (line.message.usage?.promptTokens ?? 0) > threshold);
+    if (!hasNewHighUsageAssistant) return;
 
-    const covered = Math.max(1, Math.floor(view.length / 2));
+    const view = effectiveMessages(session.lines);
+    const midpoint = Math.max(1, Math.floor(view.length / 2));
+    let boundary = -1;
+    for (let index = midpoint; index >= 0; index -= 1) {
+      if (view[index]?.role === "user") {
+        boundary = index;
+        break;
+      }
+    }
+    let covered = boundary >= 0 ? boundary : midpoint;
+    while (covered > 0 && view[covered]?.role === "tool" && view[covered - 1]?.role !== "user") {
+      covered -= 1;
+    }
+    covered = Math.max(1, covered);
     const request = {
       messages: [
         {
@@ -339,6 +363,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       covered,
       createdAt: new Date().toISOString(),
     });
+    session.compactedUpTo = session.lines.length;
   }
 
   return {

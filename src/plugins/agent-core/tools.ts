@@ -223,6 +223,7 @@ async function executeWrite(call: AgentToolCall, args: Record<string, unknown>, 
     tool: "write",
     path,
     summary: `写入 ${content.length} 字符`,
+    newText: content,
   });
   if (!approval.ok) return approval.result;
   if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝写入");
@@ -356,7 +357,24 @@ function formatGrepResult(result: GrepResult): ToolResult {
     return [`- ${match.path}:${match.line}: ${match.text}`, ...before, ...after].join("\n");
   });
   if (result.truncated) sections.push("已截断");
-  return { content: sections.length === 0 ? "未找到匹配" : sections.join("\n") };
+  if (sections.length === 0) return { content: "未找到匹配" };
+  const encoder = new TextEncoder();
+  const notice = "\n\n...（输出超过 200 KB，已截断）";
+  const noticeBytes = encoder.encode(notice).length;
+  let content = "";
+  let contentBytes = 0;
+  let truncated = false;
+  for (const section of sections) {
+    const sectionBytes = encoder.encode(section).length;
+    if (contentBytes + sectionBytes > MAX_READ_BYTES - noticeBytes) {
+      truncated = true;
+      break;
+    }
+    content += content ? `\n${section}` : section;
+    contentBytes += sectionBytes + (content === section ? 0 : 1);
+  }
+  if (truncated) content += notice;
+  return { content };
 }
 
 function requiredString(args: Record<string, unknown>, key: string): string | ToolResult {

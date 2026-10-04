@@ -71,12 +71,17 @@ impl WindowRegistry {
             .push(PathBuf::from(path));
     }
 
-    /// 读命令授权集合：已设 roots + 所有存活窗口 grants（重复不合并，判断语义不变）。
-    pub fn authorized(&self) -> Vec<PathBuf> {
-        self.roots()
-            .into_iter()
-            .chain(self.grants.values().flatten().cloned())
-            .collect()
+    /// 单窗口读命令授权集合：该窗口 root（若有）+ 该窗口 grants。
+    /// grants 与 root 都是窗口 scope，跨窗口互不可见。
+    pub fn authorized_for(&self, label: &str) -> Vec<PathBuf> {
+        let mut authorized = Vec::new();
+        if let Some(Some(root)) = self.roots.get(label) {
+            authorized.push(PathBuf::from(root));
+        }
+        if let Some(grants) = self.grants.get(label) {
+            authorized.extend(grants.iter().cloned());
+        }
+        authorized
     }
 }
 
@@ -246,13 +251,14 @@ mod tests {
         reg.set_root("w1", Some("/lib".into()));
         reg.add_grant("w1", "/outside/file.md".into());
         reg.add_grant("w2", "/elsewhere".into());
-        let auth = reg.authorized();
+        let auth = reg.authorized_for("w1");
         assert!(auth.iter().any(|p| p.ends_with("file.md")));
+        assert!(!auth.iter().any(|p| p.ends_with("elsewhere")));
         reg.add_grant("w1", "/tmp/x".into());
         reg.remove("w1");
-        let auth = reg.authorized();
+        let auth = reg.authorized_for("w1");
         assert!(!auth.iter().any(|p| p.ends_with("file.md")));
-        assert!(auth.iter().any(|p| p.ends_with("elsewhere")));
+        assert!(reg.authorized_for("w2").iter().any(|p| p.ends_with("elsewhere")));
     }
 
     #[test]

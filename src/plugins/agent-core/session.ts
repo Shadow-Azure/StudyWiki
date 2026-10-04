@@ -186,7 +186,12 @@ export function effectiveMessages(lines: SessionLine[]): AgentMessage[] {
       continue;
     }
     if (line.type === "compaction") {
-      const covered = Math.max(0, line.covered);
+      let covered = Math.max(0, Math.min(line.covered, view.length));
+      if (view[covered]?.role === "tool") {
+        while (covered > 0 && view[covered - 1]?.role !== "user") {
+          covered -= 1;
+        }
+      }
       const summary: AgentMessage = {
         role: "user",
         content: `[早期对话摘要]\n${line.summary}`,

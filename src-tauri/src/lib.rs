@@ -182,6 +182,7 @@ fn path_authorized_with(
     path: &str,
     config_root: &Path,
     include_grants: bool,
+    window_label: Option<&str>,
 ) -> Result<(), String> {
     let p = Path::new(path);
     if p.components()
@@ -193,7 +194,7 @@ fn path_authorized_with(
         return Err(format!("路径位于用户配置域，禁止经文件服务访问：{path}"));
     }
     let authorized = if include_grants {
-        reg.authorized()
+        reg.authorized_for(window_label.expect("read authorization requires a window"))
     } else {
         reg.roots()
     };
@@ -211,17 +212,18 @@ fn path_authorized(
     path: &str,
     config_root: &Path,
 ) -> Result<(), String> {
-    path_authorized_with(reg, path, config_root, false)
+    path_authorized_with(reg, path, config_root, false, None)
 }
 
-/// 读域边界可由审批 grants 扩张：原始 roots + 所有存活窗口 grants。
+/// 读域边界可由审批 grants 扩张：当前窗口 root + 当前窗口 grants。
 /// 稳定 `UNAUTHORIZED_PATH|` 前缀与写域一致，供前端识别审批升级。
 fn path_authorized_read(
     reg: &windows::WindowRegistry,
+    window_label: &str,
     path: &str,
     config_root: &Path,
 ) -> Result<(), String> {
-    path_authorized_with(reg, path, config_root, true)
+    path_authorized_with(reg, path, config_root, true, Some(window_label))
 }
 
 fn ensure_authorized(
@@ -234,10 +236,11 @@ fn ensure_authorized(
 
 fn ensure_authorized_read(
     state: &tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    window_label: &str,
     path: &str,
     config_root: &Path,
 ) -> Result<(), String> {
-    path_authorized_read(&state.lock().unwrap(), path, config_root)
+    path_authorized_read(&state.lock().unwrap(), window_label, path, config_root)
 }
 
 const PATH_HEADER: &str = "x-studywiki-path";
@@ -312,16 +315,17 @@ fn write_text_file(
 
 /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
 /// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；读授权与 FS 访问前先校验，
-/// 边界为原始授权 root + 动态读 grants。
+/// 边界为当前窗口 root + 当前窗口动态读 grants。
 #[tauri::command]
 fn read_binary_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    window: tauri::Window<R>,
     request: Request<'_>,
 ) -> Result<Response, String> {
     let path = request_path(&request)?;
     let config_root = config::app_studywiki_dir(&app)?;
-    ensure_authorized_read(&state, &path, &config_root)?;
+    ensure_authorized_read(&state, window.label(), &path, &config_root)?;
     fs::read(&path)
         .map(Response::new)
         .map_err(|e| format!("read {path}: {e}"))
@@ -382,7 +386,12 @@ fn authorize_read_path<R: tauri::Runtime>(
     }
     let authorized = {
         let registry = state.lock().unwrap();
-        path_authorized_read(&registry, &canonical.to_string_lossy(), &config_root)
+        path_authorized_read(
+            &registry,
+            window.label(),
+            &canonical.to_string_lossy(),
+            &config_root,
+        )
     };
     if authorized.is_ok() {
         return Ok(());
@@ -426,23 +435,25 @@ fn delete_session_file(
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
 /// Errors carry the OS failure verbatim.
-/// 读域为原始授权 root + 动态读 grants（欢迎态无授权即拒）。
+/// 读域为当前窗口 root + 当前窗口动态读 grants（欢迎态无授权即拒）。
 #[tauri::command]
 fn read_text_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    window: tauri::Window<R>,
     path: String,
 ) -> Result<String, String> {
     let config_root = config::app_studywiki_dir(&app)?;
-    ensure_authorized_read(&state, &path, &config_root)?;
+    ensure_authorized_read(&state, window.label(), &path, &config_root)?;
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
-/// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含动态读 grants。
+/// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含当前窗口读 grants。
 #[tauri::command]
 fn grep_files<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    window: tauri::Window<R>,
     req: crate::grep::GrepArgs,
 ) -> Result<crate::grep::GrepResult, crate::grep::GrepError> {
     let config_root =
@@ -450,7 +461,7 @@ fn grep_files<R: tauri::Runtime>(
             code: "SEARCH_FAILED".into(),
             message: e,
         })?;
-    if let Err(message) = ensure_authorized_read(&state, &req.path, &config_root) {
+    if let Err(message) = ensure_authorized_read(&state, window.label(), &req.path, &config_root) {
         return Err(crate::grep::GrepError {
             code: "UNAUTHORIZED_PATH".into(),
             message,
@@ -687,9 +698,28 @@ mod tests {
             .expect_err("a grant must not widen the write/root-only domain");
         assert!(read_error.starts_with("UNAUTHORIZED_PATH|"), "{read_error}");
         assert!(
-            path_authorized_read(&reg, "/outside/dir/f.md", Path::new("/cfg-root")).is_ok(),
+            path_authorized_read(&reg, "main", "/outside/dir/f.md", Path::new("/cfg-root")).is_ok(),
             "the same grant must widen read authorization"
         );
+    }
+
+    #[test]
+    fn read_grants_are_scoped_to_their_window() {
+        let mut reg = WindowRegistry::default();
+        reg.set_root("w1", Some("/lib/one".into()));
+        reg.set_root("w2", Some("/lib/two".into()));
+        reg.add_grant("w1", "/outside".into());
+
+        let config_root = Path::new("/cfg-root");
+        assert!(
+            path_authorized_read(&reg, "w1", "/outside/f.md", config_root).is_ok(),
+            "a grant authorizes its owning window"
+        );
+        let error = path_authorized_read(&reg, "w2", "/outside/f.md", config_root)
+            .expect_err("one window's grant must not authorize another window");
+        assert!(error.starts_with("UNAUTHORIZED_PATH|"), "{error}");
+        assert!(path_authorized_read(&reg, "w2", "/lib/two/f.md", config_root).is_ok());
+        assert!(path_authorized_read(&reg, "w1", "/lib/two/f.md", config_root).is_err());
     }
 
     #[test]

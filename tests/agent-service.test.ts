@@ -134,6 +134,68 @@ describe("AgentService", () => {
     expect(session.messages()[0]).toMatchObject({ role: "user", content: expect.stringContaining("摘要：早前聊了甲") });
   });
 
+  it("compaction 不拆开 assistant 与 tool，也不重复摘要同一 assistant", async () => {
+    const summaries: string[] = [];
+    const toolAssistant: StreamChunk[] = [
+      { type: "tool-call-delta", index: 0, id: "t1", name: "unknown-a", argumentsDelta: "{}" },
+      { type: "tool-call-delta", index: 1, id: "t2", name: "unknown-b", argumentsDelta: "{}" },
+      { type: "finish", reason: "tool_calls" },
+    ];
+    const { svc, host } = serviceWith({}, {
+      scripts: [toolAssistant, TEXT("长回答", 90_000), TEXT("压缩后回答", 10_000), TEXT("压缩后再问", 10_000)],
+      chat: async (req) => {
+        summaries.push(JSON.stringify(req.messages));
+        return { content: "摘要：早前工具回合", finishReason: "stop" };
+      },
+    });
+    const session = await svc.openSession(null);
+    await session.send("第一问");
+    await session.send("第二问");
+    await session.send("第三问");
+    expect(summaries).toHaveLength(1);
+
+    const path = Object.keys(host.files).find((p) => p.includes("sessions/"))!;
+    const compactions = host.files[path]!.trimEnd().split("\n")
+      .map((line) => JSON.parse(line) as { type?: string; covered?: number })
+      .filter((line) => line.type === "compaction");
+    expect(compactions).toHaveLength(1);
+    const view = session.messages();
+    const assistantIndex = view.findIndex((message) => message.role === "assistant");
+    const toolIndex = view.findIndex((message) => message.role === "tool");
+    expect(compactions[0]!.covered).toBe(1);
+    expect(compactions[0]!.covered).toBeLessThan(view.length);
+    expect(toolIndex).toBeGreaterThan(assistantIndex);
+    expect(assistantIndex).toBeGreaterThanOrEqual(0);
+    expect(view[toolIndex - 1]?.role).toBe("assistant");
+  });
+
+  it("附件-only 首条消息保留默认标题且发给 session 内容", async () => {
+    const { svc } = serviceWith({}, { scripts: [TEXT("已收到图片")] });
+    const session = await svc.openSession(null);
+    await session.send("", [{ type: "image", source: { kind: "inline", data: "abcd", mimeType: "image/png" } }]);
+    expect(session.title).toBe("新会话");
+  });
+
+  it("停止当前回合后同一会话可继续发送", async () => {
+    const { svc } = serviceWith({}, { scripts: [TEXT("第一回合"), TEXT("第二回合")] });
+    const session = await svc.openSession(null);
+    await session.send("第一问");
+    await session.abort();
+    await expect(session.send("第二问")).resolves.toBeUndefined();
+  });
+
+  it("活动回合停止结算后同一会话可继续发送", async () => {
+    const { svc } = serviceWith({}, { scripts: [WRITE_CALL, TEXT("第二回合")] });
+    const session = await svc.openSession(null);
+    const reqs: ApprovalRequest[] = [];
+    session.onApproval((req) => reqs.push(req));
+    const first = session.send("记个笔记");
+    await vi.waitFor(() => expect(reqs).toHaveLength(1));
+    await session.abort();
+    await first;
+    await expect(session.send("第二问")).resolves.toBeUndefined();
+  });
+
   it("打开崩溃尾巴会话后先归一化，再追加完整行", async () => {
     const existing = HEADER_S1("/lib")
       + `{"type":"message","message":{"role":"user","content":"完整问题"}}\n`

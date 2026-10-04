@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ChunkQueue, type ChatStreamHandle, type StreamChunk } from "../src/host/llm-stream";
-import { runTurn, type LoopDeps } from "../src/plugins/agent-core/loop";
+import { runTurn, toChatMessages, type LoopDeps } from "../src/plugins/agent-core/loop";
 import type { AgentMessage, SessionLine } from "../src/plugins/agent-core/session";
 
 function fakeStream(
@@ -117,6 +117,37 @@ describe("runTurn", () => {
     await pending;
     expect(persisted).toEqual([]);
     expect(events.at(-1)).toBe("aborted");
+  });
+
+  it("工具间中止会补齐未执行 tool 结果，恢复 wire 不悬挂", async () => {
+    const ac = new AbortController();
+    const calls: string[] = [];
+    const script: StreamChunk[][] = [[
+      { type: "tool-call-delta", index: 0, id: "c1", name: "read", argumentsDelta: "{\"path\":\"/lib/a.md\"}" },
+      { type: "tool-call-delta", index: 1, id: "c2", name: "read", argumentsDelta: "{\"path\":\"/lib/b.md\"}" },
+      { type: "finish", reason: "tool_calls" },
+    ]];
+    const { deps, persisted } = depsWith(script, async (call) => {
+      calls.push(call.id);
+      if (call.id === "c1") {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        ac.abort();
+      }
+      return { content: "结果" };
+    });
+    await runTurn([], deps, ac.signal);
+    expect(calls).toEqual(["c1"]);
+    const history = persisted
+      .filter((line): line is Extract<SessionLine, { type: "message" }> => line.type === "message")
+      .map((line) => line.message);
+    const wire = toChatMessages(history);
+    expect(wire.map((message) => message.role)).toEqual([
+      "assistant", "tool", "tool",
+    ]);
+    expect(wire.slice(1)).toEqual([
+      { role: "tool", content: "结果", toolCallId: "c1" },
+      { role: "tool", content: "已取消", toolCallId: "c2" },
+    ]);
   });
 
   it("toChatMessages 映射 assistant/tool 形状", async () => {

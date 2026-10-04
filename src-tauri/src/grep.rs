@@ -144,6 +144,10 @@ impl SearchState {
             return;
         };
         if event.kind != "match" && event.kind != "context" {
+            if event.kind == "begin" || event.kind == "end" {
+                self.pending_before.clear();
+                self.after_match = None;
+            }
             return;
         }
         let Some(text) = event
@@ -626,5 +630,28 @@ mod tests {
         assert_eq!(r.matches[0].before, vec!["上下文前两行", "上下文前一行"]);
         assert_eq!(r.matches[0].after, vec!["上下文后一行", "上下文后两行"]);
         assert!(r.matches[0].text.contains("上下文命中行"));
+    }
+
+    #[test]
+    fn context_does_not_cross_file_boundaries() {
+        let mut state = SearchState::new(DEFAULT_LIMIT);
+        let events = [
+            r#"{"type":"begin","data":{}}"#,
+            r#"{"type":"context","data":{"lines":{"text":"file-one-before"}}}"#,
+            r#"{"type":"match","data":{"path":{"text":"/one.md"},"line_number":2,"lines":{"text":"file-one-match"}}}"#,
+            r#"{"type":"end","data":{}}"#,
+            r#"{"type":"begin","data":{}}"#,
+            r#"{"type":"context","data":{"lines":{"text":"file-two-before"}}}"#,
+            r#"{"type":"match","data":{"path":{"text":"/two.md"},"line_number":2,"lines":{"text":"file-two-match"}}}"#,
+        ];
+        for event in events {
+            state.process_line(event.as_bytes());
+        }
+
+        assert_eq!(state.matches.len(), 2);
+        assert_eq!(state.matches[0].before, vec!["file-one-before".to_string()]);
+        assert!(state.matches[0].after.is_empty());
+        assert_eq!(state.matches[1].before, vec!["file-two-before".to_string()]);
+        assert_eq!(state.matches[1].path, "/two.md");
     }
 }
