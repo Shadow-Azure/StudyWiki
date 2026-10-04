@@ -1375,7 +1375,10 @@ mod tests {
                 path: file.to_string_lossy().to_string(),
             },
         });
-        assert_eq!(ensure_attachment_size(&req, 5, 1000).unwrap_err().code, "UNSUPPORTED_CONTENT");
+        assert_eq!(
+            ensure_attachment_size(&req, 5, 1000).unwrap_err().code,
+            "UNSUPPORTED_CONTENT"
+        );
         assert!(ensure_attachment_size(&req, 100, 1000).is_ok());
         std::fs::remove_dir_all(&dir).unwrap();
     }
