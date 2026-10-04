@@ -3,7 +3,10 @@ import { ChunkQueue, type ChatStreamHandle, type StreamChunk } from "../src/host
 import { runTurn, type LoopDeps } from "../src/plugins/agent-core/loop";
 import type { AgentMessage, SessionLine } from "../src/plugins/agent-core/session";
 
-function fakeStream(script: StreamChunk[][]): LoopDeps["chatStream"] {
+function fakeStream(
+  script: StreamChunk[][],
+  settled: ChatStreamHandle["settled"] = Promise.resolve(),
+): LoopDeps["chatStream"] {
   let i = 0;
   return async () => {
     const chunks = script[i++];
@@ -15,7 +18,7 @@ function fakeStream(script: StreamChunk[][]): LoopDeps["chatStream"] {
     return {
       events: (async function* () {})(),
       snapshot: () => asm.snapshot(),
-      settled: Promise.resolve(),
+      settled,
       abort: async () => {},
     } satisfies ChatStreamHandle;
   };
@@ -33,11 +36,15 @@ const TOOL_THEN_TEXT: StreamChunk[][] = [
   TEXT_DONE,
 ];
 
-function depsWith(script: StreamChunk[][], runTool: LoopDeps["runTool"]) {
+function depsWith(
+  script: StreamChunk[][],
+  runTool: LoopDeps["runTool"],
+  settled: ChatStreamHandle["settled"] = Promise.resolve(),
+) {
   const persisted: SessionLine[] = [];
   const events: string[] = [];
   const deps: LoopDeps = {
-    chatStream: fakeStream(script), runTool,
+    chatStream: fakeStream(script, settled), runTool,
     systemPrompt: () => "sys", tools: [], model: "m1",
     persist: (l) => persisted.push(l), emit: (e) => events.push(e.type),
   };
@@ -92,6 +99,24 @@ describe("runTurn", () => {
     });
     const appended = await runTurn([], deps, ac.signal);
     expect(appended.at(-1)).toMatchObject({ role: "tool", isError: true });
+  });
+
+  it("settled 前中止：完成快照不落账", async () => {
+    const ac = new AbortController();
+    let releaseSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      releaseSettled = () => {
+        ac.abort();
+        resolve();
+      };
+    });
+    const { deps, persisted, events } = depsWith([TEXT_DONE], async () => ({ content: "" }), settled);
+    const pending = runTurn([], deps, ac.signal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseSettled();
+    await pending;
+    expect(persisted).toEqual([]);
+    expect(events.at(-1)).toBe("aborted");
   });
 
   it("toChatMessages 映射 assistant/tool 形状", async () => {

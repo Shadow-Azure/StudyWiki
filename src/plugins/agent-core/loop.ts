@@ -104,11 +104,6 @@ export async function runTurn(
     } catch (e) {
       return fail(e);
     }
-    if (signal.aborted) {
-      await handle.abort();
-      return stop();
-    }
-
     let snapshot: PartialAssistant;
     let cancelRequested = false;
     const cancel = async (): Promise<void> => {
@@ -120,6 +115,10 @@ export async function runTurn(
         // Abort delivery is best-effort; the loop still ends as aborted.
       }
     };
+    if (signal.aborted) {
+      await cancel();
+      return stop();
+    }
     const onAbort = () => void cancel();
     signal.addEventListener("abort", onAbort, { once: true });
     try {
@@ -137,6 +136,7 @@ export async function runTurn(
       }
       await handle.settled;
       snapshot = handle.snapshot();
+      if (signal.aborted || cancelRequested) return stop();
     } catch (e) {
       return fail(e);
     } finally {
