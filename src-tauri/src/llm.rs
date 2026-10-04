@@ -82,11 +82,34 @@ pub enum MediaSource {
     },
 }
 
-/// 一条对话消息：content 是纯文本或多模态 part 数组。
+/// OpenAI function tool 声明：name/description/parameters 原样透传给上游。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDecl {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// 前端侧工具调用：arguments 保留 JSON 字符串，出线时包成 OpenAI function call。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// 一条对话消息：content 是纯文本或多模态 part 数组；工具协议字段按需携带。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub role: String,
     pub content: MessageContent,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// chat 请求：前端已路由好归属 endpoint（endpointId），Rust 只做传输。
@@ -100,6 +123,8 @@ pub struct ChatRequest {
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDecl>>,
 }
 
 /// chat 响应：拼好首个 choice 的纯文本 + 结束原因 + 可选用量（camelCase 对齐 TS ChatResult）。
@@ -184,29 +209,14 @@ fn audio_format(mime: &str) -> Result<&'static str, LlmError> {
     }
 }
 
-/// 媒体 source → OpenAI content part JSON；path canonicalize 一次后授权并读取同一路径。
-fn resolve_media(
+/// 媒体 source 归一：path canonicalize 一次后授权并读取为 inline；url 只做协议门禁。
+fn resolve_media_source(
     source: &MediaSource,
     kind: MediaKind,
     root_check: &dyn Fn(&str) -> bool,
-) -> Result<serde_json::Value, LlmError> {
+) -> Result<MediaSource, LlmError> {
     match source {
-        MediaSource::Inline { data, mime_type } => {
-            if matches!(kind, MediaKind::Audio) {
-                Ok(serde_json::json!({
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": data,
-                        "format": audio_format(mime_type)?
-                    }
-                }))
-            } else {
-                Ok(serde_json::json!({
-                    "type": "image_url",
-                    "image_url": {"url": format!("data:{mime_type};base64,{data}")}
-                }))
-            }
-        }
+        MediaSource::Inline { .. } => Ok(source.clone()),
         MediaSource::Path { path } => {
             let original = path;
             let canonical = std::fs::canonicalize(path).map_err(|_| {
@@ -225,61 +235,91 @@ fn resolve_media(
             let bytes = std::fs::read(&canonical)
                 .map_err(|e| LlmError::new("UNSUPPORTED_CONTENT", format!("附件读取失败：{e}")))?;
             let mime = mime_of_path(&canonical, kind)?;
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            if matches!(kind, MediaKind::Audio) {
-                Ok(serde_json::json!({
-                    "type": "input_audio",
-                    "input_audio": {"data": b64, "format": audio_format(&mime)?}
-                }))
-            } else {
-                Ok(serde_json::json!({
-                    "type": "image_url",
-                    "image_url": {"url": format!("data:{mime};base64,{b64}")}
-                }))
-            }
+            Ok(MediaSource::Inline {
+                data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                mime_type: mime,
+            })
         }
-        MediaSource::Url { url } => {
+        MediaSource::Url { .. } => {
             if matches!(kind, MediaKind::Audio) {
                 return Err(LlmError::new("UNSUPPORTED_CONTENT", "音频不支持 url 来源"));
             }
-            Ok(serde_json::json!({
-                "type": "image_url",
-                "image_url": {"url": url}
-            }))
+            Ok(source.clone())
         }
     }
 }
 
-/// 请求体构建（非流式/流式共用）：parts 归一为 OpenAI content 数组。
-fn build_chat_body(
-    req: &ChatRequest,
-    stream: bool,
-    root_check: &dyn Fn(&str) -> bool,
-) -> Result<serde_json::Value, LlmError> {
-    let mut messages = Vec::new();
-    for m in &req.messages {
-        let content = match &m.content {
-            MessageContent::Text(t) => serde_json::json!(t),
-            MessageContent::Parts(parts) => {
-                let mut out = Vec::new();
-                for p in parts {
-                    out.push(match p {
-                        ContentPart::Text { text } => {
-                            serde_json::json!({"type": "text", "text": text})
-                        }
-                        ContentPart::Image { source } => {
-                            resolve_media(source, MediaKind::Image, root_check)?
-                        }
-                        ContentPart::Audio { source } => {
-                            resolve_media(source, MediaKind::Audio, root_check)?
-                        }
-                    });
+/// 上游 content part：inline/path 已归一为 OpenAI image_url 或 input_audio。
+fn upstream_content_part(part: &ContentPart) -> serde_json::Value {
+    let media = |source: &MediaSource| match source {
+        MediaSource::Inline { data, mime_type } => Some(format!("data:{mime_type};base64,{data}")),
+        MediaSource::Url { url } => Some(url.clone()),
+        MediaSource::Path { .. } => None,
+    };
+    match part {
+        ContentPart::Text { text } => serde_json::json!({"type": "text", "text": text}),
+        ContentPart::Image { source } => {
+            let url = media(source).unwrap_or_else(|| {
+                unreachable!("path 附件必须先经 upstream_request 归一为 inline")
+            });
+            serde_json::json!({
+                "type": "image_url",
+                "image_url": {"url": url}
+            })
+        }
+        ContentPart::Audio { source } => match source {
+            MediaSource::Inline { data, mime_type } => serde_json::json!({
+                "type": "input_audio",
+                "input_audio": {
+                    "data": data,
+                    "format": audio_format(mime_type).unwrap_or_else(|_| {
+                        unreachable!("音频 mime 已在附件归一时校验")
+                    })
                 }
-                serde_json::json!(out)
-            }
-        };
-        messages.push(serde_json::json!({"role": m.role, "content": content}));
+            }),
+            _ => unreachable!("audio 只接受归一 inline；url/path 已在附件归一时门禁"),
+        },
     }
+}
+
+/// 单条消息 → OpenAI wire；assistant tool_calls 的 content 固定为空字符串。
+fn upstream_message(message: &ChatMessage) -> serde_json::Value {
+    let content = match &message.content {
+        MessageContent::Text(text) => serde_json::json!(text),
+        MessageContent::Parts(parts) => {
+            serde_json::json!(parts.iter().map(upstream_content_part).collect::<Vec<_>>())
+        }
+    };
+    let mut wire = serde_json::json!({"role": message.role, "content": content});
+    if message.role == "assistant" {
+        if let Some(tool_calls) = &message.tool_calls {
+            wire["content"] = serde_json::json!("");
+            wire["tool_calls"] = serde_json::json!(tool_calls
+                .iter()
+                .map(|call| {
+                    serde_json::json!({
+                        "id": call.id,
+                        "type": "function",
+                        "function": {"name": call.name, "arguments": call.arguments}
+                    })
+                })
+                .collect::<Vec<_>>());
+        }
+    }
+    if let Some(tool_call_id) = &message.tool_call_id {
+        wire["tool_call_id"] = serde_json::json!(tool_call_id);
+    }
+    wire
+}
+
+/// 上游请求体唯一组装点：OpenAI tools 声明、工具消息、stream 与采样参数在此成形。
+/// 入参 messages 必须先经 `upstream_request`；path 附件已归一 inline。
+pub fn upstream_body(req: &ChatRequest, stream: bool) -> serde_json::Value {
+    let messages = req
+        .messages
+        .iter()
+        .map(upstream_message)
+        .collect::<Vec<_>>();
     let mut body = serde_json::json!({
         "model": req.model,
         "messages": messages,
@@ -291,10 +331,77 @@ fn build_chat_body(
     if let Some(max) = req.max_tokens {
         body["max_tokens"] = serde_json::json!(max);
     }
-    if let Some(t) = req.temperature {
-        body["temperature"] = serde_json::json!(t);
+    if let Some(temperature) = req.temperature {
+        body["temperature"] = serde_json::json!(temperature);
     }
-    Ok(body)
+    if let Some(tools) = &req.tools {
+        body["tools"] = serde_json::json!(tools
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters
+                    }
+                })
+            })
+            .collect::<Vec<_>>());
+    }
+    body
+}
+
+/// 请求侧媒体归一：保证 upstream_body 是不落盘、不执行授权的纯组装函数。
+fn upstream_request(
+    req: &ChatRequest,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<ChatRequest, LlmError> {
+    let mut messages = Vec::with_capacity(req.messages.len());
+    for message in &req.messages {
+        let content = match &message.content {
+            MessageContent::Text(text) => MessageContent::Text(text.clone()),
+            MessageContent::Parts(parts) => {
+                let mut normalized = Vec::with_capacity(parts.len());
+                for part in parts {
+                    normalized.push(match part {
+                        ContentPart::Text { text } => ContentPart::Text { text: text.clone() },
+                        ContentPart::Image { source } => ContentPart::Image {
+                            source: resolve_media_source(source, MediaKind::Image, root_check)?,
+                        },
+                        ContentPart::Audio { source } => ContentPart::Audio {
+                            source: resolve_media_source(source, MediaKind::Audio, root_check)?,
+                        },
+                    });
+                }
+                MessageContent::Parts(normalized)
+            }
+        };
+        messages.push(ChatMessage {
+            role: message.role.clone(),
+            content,
+            tool_calls: message.tool_calls.clone(),
+            tool_call_id: message.tool_call_id.clone(),
+        });
+    }
+    Ok(ChatRequest {
+        endpoint_id: req.endpoint_id.clone(),
+        model: req.model.clone(),
+        messages,
+        max_tokens: req.max_tokens,
+        temperature: req.temperature,
+        tools: req.tools.clone(),
+    })
+}
+
+/// 请求体构建（非流式/流式共用）：先归一媒体，再交给唯一组装点。
+fn build_chat_body(
+    req: &ChatRequest,
+    stream: bool,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<serde_json::Value, LlmError> {
+    let prepared = upstream_request(req, root_check)?;
+    Ok(upstream_body(&prepared, stream))
 }
 
 /// OpenAI 兼容 chat/completions 回包的只取所需子集。
@@ -962,9 +1069,12 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: MessageContent::Text("hi".into()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         let resp = chat_with(&agent(), &ep(&base, "secret-key"), &req, &|_| false).unwrap();
         assert_eq!(resp.content, "你好");
@@ -986,6 +1096,7 @@ mod tests {
             messages: vec![],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         assert_eq!(
             chat_with(&agent(), &ep(&base, ""), &req, &|_| false)
@@ -1146,9 +1257,12 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: MessageContent::Text("你好".into()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         }
     }
 
@@ -1221,6 +1335,82 @@ mod tests {
     }
 
     #[test]
+    fn upstream_body_emits_openai_tools_shape() {
+        let req = ChatRequest {
+            endpoint_id: "e1".into(),
+            model: "m1".into(),
+            messages: vec![],
+            max_tokens: None,
+            temperature: None,
+            tools: Some(vec![ToolDecl {
+                name: "read".into(),
+                description: "读文件".into(),
+                parameters: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            }]),
+        };
+        let body = upstream_body(&req, false);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["function"]["name"], "read");
+        assert!(body["tools"][0]["function"]["parameters"]["properties"]["path"].is_object());
+    }
+
+    #[test]
+    fn upstream_body_emits_tool_calls_and_tool_role() {
+        let req = ChatRequest {
+            endpoint_id: "e1".into(),
+            model: "m1".into(),
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+            messages: vec![
+                ChatMessage {
+                    role: "assistant".into(),
+                    content: MessageContent::Text(String::new()),
+                    tool_calls: Some(vec![ToolCall {
+                        id: "c1".into(),
+                        name: "read".into(),
+                        arguments: "{\"path\":\"/a.md\"}".into(),
+                    }]),
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "tool".into(),
+                    content: MessageContent::Text("内容".into()),
+                    tool_calls: None,
+                    tool_call_id: Some("c1".into()),
+                },
+            ],
+        };
+        let body = upstream_body(&req, false);
+        assert_eq!(body["messages"][0]["tool_calls"][0]["type"], "function");
+        assert_eq!(
+            body["messages"][0]["tool_calls"][0]["function"]["name"],
+            "read"
+        );
+        assert_eq!(
+            body["messages"][0]["tool_calls"][0]["function"]["arguments"],
+            "{\"path\":\"/a.md\"}"
+        );
+        assert_eq!(body["messages"][1]["role"], "tool");
+        assert_eq!(body["messages"][1]["tool_call_id"], "c1");
+    }
+
+    #[test]
+    fn upstream_body_omits_tools_when_absent() {
+        let req = ChatRequest {
+            endpoint_id: "e1".into(),
+            model: "m1".into(),
+            messages: vec![],
+            max_tokens: None,
+            temperature: None,
+            tools: None,
+        };
+        let body = upstream_body(&req, true);
+        assert!(body.get("tools").is_none());
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
     fn image_path_part_becomes_data_url() {
         let dir = std::env::temp_dir().join(format!("sw-att-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1239,9 +1429,12 @@ mod tests {
                         source: MediaSource::Path { path: p },
                     },
                 ]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         let body = build_chat_body(&req, false, &|_p| true).unwrap();
         let parts = body["messages"][0]["content"].as_array().unwrap();
@@ -1307,9 +1500,12 @@ mod tests {
                         path: link.to_string_lossy().to_string(),
                     },
                 }]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         let body = build_chat_body(&req, false, &|p| {
             *checked_path.borrow_mut() = p.to_string();
@@ -1336,9 +1532,12 @@ mod tests {
                         path: "/etc/passwd".into(),
                     },
                 }]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         let r = build_chat_body(&req, true, &|_p| false);
         assert_eq!(r.unwrap_err().code, "UNSUPPORTED_CONTENT");
@@ -1398,9 +1597,12 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: MessageContent::Parts(vec![part(), part()]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         assert!(ensure_attachment_size(&req, 10, 12).is_ok());
         let err = ensure_attachment_size(&req, 10, 10).unwrap_err();
@@ -1425,9 +1627,12 @@ mod tests {
                         },
                     },
                 ]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         assert!(ensure_attachment_size(&req, 0, 0).is_ok());
     }
@@ -1454,9 +1659,12 @@ mod tests {
                         url: "https://x/a.mp3".into(),
                     },
                 }]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         };
         let r = build_chat_body(&req, true, &|_| true);
         assert_eq!(r.unwrap_err().code, "UNSUPPORTED_CONTENT");
@@ -1486,9 +1694,12 @@ mod tests {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: MessageContent::Parts(vec![part]),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             max_tokens: None,
             temperature: None,
+            tools: None,
         }
     }
 
