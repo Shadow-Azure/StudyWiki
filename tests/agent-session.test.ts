@@ -29,6 +29,12 @@ describe("session codec", () => {
     expect(() => parseSession("{\"type\":\"header\",\"header\":{\"v\":2}}\n")).toThrow();
   });
 
+  it("header 非首行拒绝", () => {
+    const text = encodeLine({ type: "header", header }) + "\n"
+      + encodeLine({ type: "header", header }) + "\n";
+    expect(() => parseSession(text)).toThrow();
+  });
+
   it("compaction 有效视图：覆盖前缀换摘要，日志行保留", () => {
     const lines: SessionLine[] = [
       { type: "header", header },

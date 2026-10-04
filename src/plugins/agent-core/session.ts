@@ -132,7 +132,7 @@ export function encodeLine(line: SessionLine): string {
  * and dropped without mutating the input.
  * @param text Full JSONL session text.
  * @returns Header, complete pre-header-following records including the header, and tail state.
- * @throws When the log is empty, its first record is missing or invalid, or any newline-terminated record is invalid.
+ * @throws When the log is empty, its first record is missing or invalid, a header repeats later, or any newline-terminated record is invalid.
  */
 export function parseSession(text: string): {
   header: SessionHeader;
@@ -160,6 +160,8 @@ export function parseSession(text: string): {
     if (!header) {
       if (value.type !== "header") throw new Error("会话日志缺少 v1 header");
       header = value.header;
+    } else if (value.type === "header") {
+      throw new Error("header 必须是会话首行");
     }
     lines.push(value);
   }
