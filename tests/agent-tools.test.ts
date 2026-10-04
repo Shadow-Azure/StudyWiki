@@ -60,6 +60,33 @@ describe("tools", () => {
     expect(writes).toEqual(["a\n"]);
   });
 
+  it("write 越界遍历路径不审批", async () => {
+    const writes: string[] = [];
+    const ctx = ctxWith({ writeText: async (p, c) => { writes.push(`${p}:${c}`); } });
+    const r = await executeTool({
+      id: "1", name: "write",
+      argumentsText: JSON.stringify({ path: "/lib/../outside.md", content: "x" }),
+    }, ctx);
+    expect(r.isError).toBe(true);
+    expect(ctx.asked).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+
+  it("edit 越界遍历路径不审批", async () => {
+    let reads = 0;
+    const ctx = ctxWith({
+      readText: async () => { reads += 1; return "x"; },
+      writeText: async () => {},
+    });
+    const r = await executeTool({
+      id: "1", name: "edit",
+      argumentsText: JSON.stringify({ path: "/lib/../outside.md", old_string: "x", new_string: "y" }),
+    }, ctx);
+    expect(r.isError).toBe(true);
+    expect(ctx.asked).toEqual([]);
+    expect(reads).toBe(0);
+  });
+
   it("edit 精确替换；零匹配与多匹配报错", async () => {
     let saved = "";
     const ctx = ctxWith({ readText: async () => "foo bar foo", writeText: async (_p, c) => { saved = c; } });

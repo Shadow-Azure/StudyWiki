@@ -419,9 +419,21 @@ function countOccurrences(text: string, needle: string): number {
 }
 
 function isWithinRoot(path: string, root: string): boolean {
-  const normalizedRoot = root.replace(/[\\/]+$/, "");
-  if (normalizedRoot === "") return false;
-  return path.startsWith(`${normalizedRoot}/`) || path.startsWith(`${normalizedRoot}\\`);
+  const rootSegments = normalizedSegments(root);
+  const pathSegments = normalizedSegments(path);
+  if (!rootSegments || rootSegments.length === 0 || !pathSegments) return false;
+  return pathSegments.length > rootSegments.length &&
+    rootSegments.every((segment, index) => pathSegments[index] === segment);
+}
+
+function normalizedSegments(path: string): string[] | null {
+  const segments: string[] = [];
+  for (const segment of path.split(/[\\/]/)) {
+    if (segment === "..") return null;
+    if (segment === "" || segment === ".") continue;
+    segments.push(segment);
+  }
+  return segments;
 }
 
 function isBinaryPath(path: string): boolean {
