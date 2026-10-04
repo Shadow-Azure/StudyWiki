@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apply } from "../src/plugins/app-chat/index";
 import type { PartialAssistant, StreamChunk } from "../src/host/llm-stream";
 
@@ -298,6 +298,33 @@ describe("app-chat", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(document.querySelector(".chat-chip")?.textContent).toContain("贴图.png");
     dispose();
+  });
+
+  it("附件 base64 转换按 8KB 分块调用 fromCharCode（避免逐字节循环卡主线程）", async () => {
+    const { fileToAttachment } = await import("../src/plugins/app-chat/attachments");
+    const size = 20 * 1024; // 分块后 ceil(20480/8192)=3 次调用；旧实现逐字节 20480 次
+    const bytes = new Uint8Array(size).map((_, i) => i % 251);
+    const file = new File([bytes], "大图.png", { type: "image/png" });
+    const spy = vi.spyOn(String, "fromCharCode");
+    try {
+      const result = await fileToAttachment(file);
+      expect(result.ok).toBe(true);
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(Math.ceil(size / 8192));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("分块转换结果与逐字节一致：base64 round-trip 无损（含块边界余数）", async () => {
+    const { fileToAttachment } = await import("../src/plugins/app-chat/attachments");
+    const bytes = new Uint8Array(100 * 1024).map((_, i) => (i * 7) % 256);
+    const file = new File([bytes], "大图.png", { type: "image/png" });
+    const result = await fileToAttachment(file);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    const source = result.attachment.part.source as { kind: string; data: string };
+    const decoded = Uint8Array.from(atob(source.data), (c) => c.charCodeAt(0));
+    expect(decoded).toEqual(bytes);
   });
 
   it("paste 超限附件显示明确报错且不进 chips", async () => {

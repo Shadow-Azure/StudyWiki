@@ -22,6 +22,17 @@ export type AttachmentResult =
   | { ok: true; attachment: PendingAttachment }
   | { ok: false; reason: "unsupported" | "oversized"; message: string };
 
+/** Uint8Array → base64：8 KB 分块调 `String.fromCharCode.apply`，避免逐字节
+ * `binary +=` 的千万级循环卡主线程（输出与逐字节拼接逐位一致）。 */
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 8 * 1024;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
 /** Convert a pasted or dropped image/audio File to an inline attachment.
  * Text and unsupported MIME types are rejected; files over MAX_ATTACHMENT_BYTES
  * are rejected before their bytes are read (hard cap + clear error, no compression).
@@ -42,14 +53,12 @@ export async function fileToAttachment(file: File): Promise<AttachmentResult> {
     };
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
   return {
     ok: true,
     attachment: {
       part: {
         type: isImage ? "image" : "audio",
-        source: { kind: "inline", data: btoa(binary), mimeType: file.type },
+        source: { kind: "inline", data: bytesToBase64(bytes), mimeType: file.type },
       },
       label: name,
     },
