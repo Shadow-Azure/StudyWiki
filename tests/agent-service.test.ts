@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentService, type AgentService } from "../src/plugins/agent-core/service";
+import { createAgentService, type AgentService, type AgentSession } from "../src/plugins/agent-core/service";
 import type { StreamChunk } from "../src/host/llm-stream";
 import type { ApprovalRequest } from "../src/plugins/agent-core/tools";
 import { vi } from "vitest";
@@ -122,6 +122,41 @@ describe("AgentService", () => {
     expect(stream.calls).toEqual([1, 2]);
     expect(session.messages().filter((message) => message.role === "assistant"))
       .toEqual([expect.objectContaining({ role: "assistant", text: "第二回合" })]);
+  });
+
+  it("runTurn 前等待期间停止时使用入口控制器且下一问可运行", async () => {
+    const host = fakeHost({});
+    const calls: number[] = [];
+    let session!: AgentSession;
+    const scripted = scriptedChatStream([TEXT("下一回合")]);
+    const svc = createAgentService({
+      llm: {
+        chatStream: async (request) => {
+          calls.push(calls.length + 1);
+          return scripted(request);
+        },
+      } as never,
+      files: host.svc as never,
+      workspace: { activeFile: null, root: "/lib" } as never,
+    });
+    const appendSessionEvent = host.svc.appendSessionEvent;
+    host.svc.appendSessionEvent = async (path, line) => {
+      if (line.includes('"content":"流启动前停止"')) await session.abort();
+      await appendSessionEvent(path, line);
+    };
+    session = await svc.openSession(null);
+    const events: Array<{ type: string }> = [];
+    session.on((event) => events.push({ type: event.type }));
+
+    await session.send("流启动前停止");
+
+    expect(events.map((event) => event.type)).toEqual(["turn-start", "aborted"]);
+    expect(session.messages()).toEqual([{ role: "user", content: "流启动前停止" }]);
+
+    await session.send("第二问");
+    expect(calls).toEqual([1]);
+    expect(session.messages().filter((message) => message.role === "assistant"))
+      .toEqual([expect.objectContaining({ role: "assistant", text: "下一回合" })]);
   });
 
   it("附件-only 首发保留标题改写资格，后续文本重写文件头", async () => {

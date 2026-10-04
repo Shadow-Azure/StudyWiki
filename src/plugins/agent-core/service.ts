@@ -248,8 +248,8 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         return internal.approvals.on("approval", listener);
       },
       async send(text, content) {
-        const currentController = internal.controller;
         if (internal.running) throw new Error("会话正在运行");
+        const currentController = internal.controller;
         if (disposed || currentController.signal.aborted) throw new Error("会话已停止");
         internal.running = true;
         try {
@@ -295,7 +295,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
               persist: (line) => void persist(internal, line),
               emit: (event) => emit(internal, event),
             },
-            internal.controller.signal,
+            currentController.signal,
           );
         } finally {
           internal.running = false;
