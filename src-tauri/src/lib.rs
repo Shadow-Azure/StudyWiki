@@ -8,6 +8,7 @@ use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
 pub mod config;
+mod grep;
 pub mod llm;
 mod llm_stream;
 
@@ -294,6 +295,35 @@ fn read_text_file<R: tauri::Runtime>(
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
+/// agent grep 工具：授权校验后 spawn sidecar ripgrep，预算与错误词表见 grep 模块。
+#[tauri::command]
+fn grep_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    req: crate::grep::GrepArgs,
+) -> Result<crate::grep::GrepResult, crate::grep::GrepError> {
+    let config_root =
+        crate::config::app_studywiki_dir(&app).map_err(|e| crate::grep::GrepError {
+            code: "SEARCH_FAILED".into(),
+            message: e,
+        })?;
+    if let Err(message) = ensure_authorized(&state, &req.path, &config_root) {
+        return Err(crate::grep::GrepError {
+            code: "UNAUTHORIZED_PATH".into(),
+            message,
+        });
+    }
+    let rg = crate::grep::sidecar_path()?;
+    crate::grep::run_grep(
+        &rg,
+        &req,
+        &crate::grep::GrepBudget {
+            raw_max_bytes: crate::grep::RAW_OUTPUT_MAX_BYTES,
+            timeout: crate::grep::SEARCH_TIMEOUT,
+        },
+    )
+}
+
 /// 装配发布运行的完整 Tauri builder。
 pub fn app_builder() -> tauri::Builder<tauri::Wry> {
     configure_window_lifecycle(
@@ -307,6 +337,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
     .invoke_handler(tauri::generate_handler![
         read_tree,
         read_text_file,
+        grep_files,
         write_text_file,
         read_binary_file,
         write_binary_file,

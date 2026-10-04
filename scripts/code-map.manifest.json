@@ -9,6 +9,7 @@
   "src-tauri/src/llm_stream.rs": "流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝",
   "src-tauri/src/main.rs": "入口壳（Windows 隐藏控制台）",
   "src-tauri/src/plugins.rs": "插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）",
+  "src-tauri/src/grep.rs": "agent grep 原生命令：sidecar ripgrep 裸 argv spawn + rg --json 流式解析 + raw/timeout/limit 预算与 SEARCH_* 错误词表",
   "src-tauri/src/windows.rs": "窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO",
   "src/boot-error.ts": "启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）",
   "src/bootstrap.ts": "每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）",
