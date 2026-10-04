@@ -7,7 +7,8 @@ import { apply as applyMarkdown } from "./plugins/doc-markdown";
 import { apply as applyVideo } from "./plugins/doc-video";
 import { apply as applyPluginManager } from "./plugins/plugin-manager";
 import { apply as applyLlmSettings } from "./plugins/llm-settings";
-import { apply as applyChat } from "./plugins/app-chat";
+import { apply as applyAgentCore } from "./plugins/agent-core";
+import { apply as applyAgent } from "./plugins/app-agent";
 import { StreamAssembler, type StreamChunk } from "./host/llm-stream";
 import { WorkspaceService } from "./host/workspace";
 import type { FileNode } from "./types";
@@ -145,10 +146,20 @@ class PreviewSlots {
 export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
   const workspace = new WorkspaceService();
   const slots = new PreviewSlots();
+  const previewSessions = new Map<string, string>();
   const files = {
     readTree: async () => previewTree,
-    readText: async (path: string) => (path === markdownPath ? markdown : "# 研究笔记\n"),
-    writeText: async () => undefined,
+    readText: async (path: string) => {
+      if (previewSessions.has(path)) return previewSessions.get(path)!;
+      return path === markdownPath ? markdown : "# 研究笔记\n";
+    },
+    writeText: async (path: string, content: string) => { previewSessions.set(path, content); },
+    appendSessionEvent: async (path: string, line: string) => {
+      previewSessions.set(path, `${previewSessions.get(path) ?? ""}${line}\n`);
+    },
+    deleteSessionFile: async (path: string) => { previewSessions.delete(path); },
+    grepFiles: async () => ({ matches: [], truncated: false }),
+    authorizeReadPath: async () => undefined,
     onFsChanged: () => () => undefined,
     pickFolder: async () => null,
     assetUrl: (path: string) => path,
@@ -163,7 +174,7 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
     bootBroken: [],
     readManifest: async () => JSON.stringify({
       plugins: [
-        ...["app-shell", "view-filetree", "doc-markdown", "doc-video", "app-windows", "app-chat", "plugin-manager"]
+        ...["app-shell", "view-filetree", "doc-markdown", "doc-video", "app-windows", "agent-core", "app-agent", "plugin-manager"]
           .map((id) => ({ id, enabled: true, config: {} })),
         { id: "ext:demo", enabled: true, config: {} },
       ],
@@ -174,8 +185,22 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
     install: async () => "demo",
     importFromTgz: async () => null,
   };
-  const ctx = { files, windows, workspace, slots, plugins, llm: new PreviewLlm() } as unknown as Context;
+  const ctx = {} as Context & { reflect: { provide(key: string, value: unknown): void } };
+  Object.assign(ctx, {
+    files,
+    windows,
+    workspace,
+    slots,
+    plugins,
+    llm: new PreviewLlm(),
+  });
+  ctx.reflect = {
+    provide(key, value) { (ctx as unknown as Record<string, unknown>)[key] = value; },
+  };
   const shellConfig: ShellConfig = { title: "StudyWiki" };
+
+  // Agent service requires the library root before it can create a boot session.
+  await workspace.setRoot(previewRoot);
 
   const teardown = [
     applyWindows(ctx),
@@ -184,11 +209,11 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
     applyFileTree(ctx, { ignoreDotfiles: true }),
     applyMarkdown(ctx, {}),
     applyVideo(ctx),
-    applyChat(ctx),
+    applyAgentCore(ctx),
+    applyAgent(ctx),
     applyShell(ctx, shellConfig),
   ].reverse();
 
-  workspace.setRoot(previewRoot);
   workspace.openFile(previewTree[0]?.children?.[0] ?? previewTree[1]!);
   await new Promise((resolve) => setTimeout(resolve, 0));
 

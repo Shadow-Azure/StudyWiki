@@ -100,6 +100,7 @@ function isSessionLine(value: unknown): value is SessionLine {
   if (value.type === "approval") {
     return (
       requiredString(value, "id") &&
+      (value.kind === "write" || value.kind === "edit" || value.kind === "read-outside") &&
       requiredString(value, "tool") &&
       requiredString(value, "path") &&
       (value.decider === "human" || value.decider === "guardian") &&

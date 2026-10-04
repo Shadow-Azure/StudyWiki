@@ -40,10 +40,8 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/agent-core/tools.ts       agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
   plugins/agent-core/types.ts       agent-core 消息、批准与会话日志类型契约（→ llm.ts）
   plugins/app-agent/attachments.ts  app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
+  plugins/app-agent/index.ts        app-agent 右栏插件：会话列表/模式/模型选择、流式回合、审批卡、附件 composer 与清理（→ service.ts、loop.ts、tools.ts、llm.ts、attachments.ts、render.ts）（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts）
   plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、工具结果折叠卡、审批 pending/decided 卡与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
-  plugins/app-chat/attachments.ts   app-chat 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
-  plugins/app-chat/index.ts         app-chat 插件：右侧栏内存会话 + chat 流式请求/渲染/停止/重试 + 模型选择与多模态附件 chips（→ llm-stream.ts、llm.ts、attachments.ts、render.ts）
-  plugins/app-chat/render.ts        app-chat 渲染：rAF 合帧 partial 快照 → reasoning/Markdown/工具/usage/error 视图（→ llm-stream.ts、markdown.ts）
   plugins/app-shell/index.ts        app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
   plugins/app-windows/index.ts      app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts      doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
@@ -60,7 +58,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/plugin-manager/model.ts   plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts    view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
   plugins/view-filetree/tree.ts     view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
-  preview.ts                        浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归；含 app-chat 假流式桩（→ llm-stream.ts、workspace.ts、styles.css、types.ts）
+  preview.ts                        浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归；含 app-agent 假流式桩（→ llm-stream.ts、workspace.ts、styles.css、types.ts）
   styles.css                        工作台视觉系统：中性双主题令牌 + 壳/树/拖拽发丝线/按钮/阅读与编辑面/分段模式/暗室/面板全样式（无逻辑）
   types.ts                          FileNode —— 前后端共享的唯一形状
   ui/dom.ts                         DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）（→ icons.ts）

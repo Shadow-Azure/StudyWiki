@@ -65,6 +65,7 @@ export function createApprovalGate(
     const line: SessionLine = {
       type: "approval",
       id: entry.request.id,
+      kind: entry.request.kind,
       tool: entry.request.tool,
       path: entry.request.path,
       decider: entry.decider,

@@ -48,11 +48,16 @@ const WRITE_CALL: StreamChunk[] = [
 function serviceWith(rootFiles: Record<string, string>, opts: {
   scripts: StreamChunk[][];
   chat?: (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string; finishReason: string }>;
+  streamRequests?: Array<{ model?: string }>;
 }) {
   const host = fakeHost(rootFiles);
+  const scripted = scriptedChatStream(opts.scripts);
   const svc = createAgentService({
     llm: {
-      chatStream: scriptedChatStream(opts.scripts),
+      chatStream: async (request) => {
+        opts.streamRequests?.push({ ...(request.model === undefined ? {} : { model: request.model }) });
+        return scripted(request);
+      },
       chat: opts.chat ?? (async () => ({ content: "{\"approve\":true,\"reason\":\"ok\"}", finishReason: "stop" })),
     } as never,
     files: host.svc as never,
@@ -144,6 +149,37 @@ describe("AgentService", () => {
     const lines = content.trimEnd().split("\n");
     expect(lines).toHaveLength(3);
     expect(JSON.parse(lines[2]!)).toMatchObject({ type: "message", message: { role: "user", content: "新问题" } });
+  });
+
+  it("setModel 只作用于当前回合路由，null 回落端点默认", async () => {
+    const requests: Array<{ model?: string }> = [];
+    const { svc } = serviceWith({}, { scripts: [TEXT("m2"), TEXT("default")], streamRequests: requests });
+    const session = await svc.openSession(null);
+    session.setModel("m2");
+    await session.send("第一问");
+    session.setModel(null);
+    await session.send("第二问");
+    expect(requests.map((request) => request.model)).toEqual(["m2", undefined]);
+    expect(session.model).toBeNull();
+  });
+
+  it("lines 返回防御性副本并保留含 kind 的审批行", async () => {
+    const existing = HEADER_S1("/lib")
+      + `{"type":"approval","id":"a1","kind":"edit","tool":"edit","path":"/lib/a.md","decider":"human","decision":"deny","reason":"不对"}
+`;
+    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": existing }, { scripts: [] });
+    const session = await svc.openSession("s1");
+    const lines = session.lines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ type: "approval", id: "a1", kind: "edit", decision: "deny" });
+    lines.pop();
+    expect(session.lines()).toHaveLength(1);
+  });
+
+  it("加载历史会话暴露 header 标题", async () => {
+    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
+    const session = await svc.openSession("s1");
+    expect(session.title).toBe("旧");
   });
 
   it("加载历史会话恢复最后一次持久化模式", async () => {

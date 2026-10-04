@@ -24,12 +24,18 @@ export interface AgentSession {
   readonly id: string;
   /** 当前写操作审批模式。 */
   readonly mode: ApprovalMode;
+  /** 当前会话运行时模型；null 表示使用 endpoint 默认，不持久化。 */
+  readonly model: string | null;
+  /** 会话头中的显示标题，首条用户消息会同步改写。 */
+  readonly title: string;
   /** True while one `send` turn is still in progress. */
   readonly running: boolean;
   /** 会话创建库根与当前库根不一致时的原库根；一致为 null。 */
   readonly rootMismatch: string | null;
   /** 当前模型有效视图；compaction 只缩短该视图，不改全文日志。 */
   messages(): AgentMessage[];
+  /** Replay log lines excluding header; the array is a defensive copy. */
+  lines(): SessionLine[];
   /** Subscribe to loop lifecycle, snapshot, message, and error events. */
   on(listener: (e: AgentEvent) => void): () => void;
   /** Subscribe to human approval requests raised in `ask` mode. */
@@ -40,6 +46,8 @@ export interface AgentSession {
   abort(): Promise<void>;
   /** Switch the session approval mode and record the change. */
   setMode(mode: ApprovalMode): void;
+  /** Set this session's runtime model; null clears back to endpoint default. */
+  setModel(model: string | null): void;
   /** Resolve a pending human approval request by id. */
   respond(requestId: string, outcome: ApprovalOutcome): void;
 }
@@ -101,6 +109,7 @@ interface InternalSession {
   lines: SessionLine[];
   rootMismatch: string | null;
   mode: ApprovalMode;
+  model: string | null;
   running: boolean;
   controller: AbortController;
   events: PluginEmitter<AgentEvent>;
@@ -193,6 +202,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       lines,
       rootMismatch,
       mode,
+      model: null,
       running: false,
       controller,
       events: createPluginEmitter<AgentEvent>(),
@@ -216,10 +226,15 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
     const session: AgentSession = {
       get id() { return internal.id; },
       get mode() { return internal.mode; },
+      get model() { return internal.model; },
+      get title() { return internal.header.title; },
       get running() { return internal.running; },
       get rootMismatch() { return internal.rootMismatch; },
       messages() {
         return effectiveMessages(internal.lines);
+      },
+      lines() {
+        return [...internal.lines];
       },
       on(listener) {
         return internal.events.on("agent", listener);
@@ -267,7 +282,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
                 now: new Date().toISOString(),
               }),
               tools: TOOL_DECLARATIONS,
-              model: undefined,
+              model: internal.model ?? undefined,
               persist: (line) => void persist(internal, line),
               emit: (event) => emit(internal, event),
             },
@@ -280,6 +295,9 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       async abort() {
         controller.abort();
         internal.gate.cancelAll("已停止");
+      },
+      setModel(next) {
+        internal.model = next;
       },
       setMode(next) {
         if (internal.mode === next) return;
