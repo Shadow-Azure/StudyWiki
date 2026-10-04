@@ -34,6 +34,37 @@ function scriptedChatStream(scripts: StreamChunk[][]) {
   };
 }
 
+// 先阻塞首回合，直到测试调用 abort；后续回合继续使用脚本流。
+function blockedFirstThenScriptedChatStream(scripts: StreamChunk[][]) {
+  const scripted = scriptedChatStream(scripts);
+  const calls: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+  const firstSnapshot = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  return {
+    calls,
+    firstSnapshot,
+    chatStream: async () => {
+      calls.push(calls.length + 1);
+      if (calls.length > 1) return await scripted();
+      const { StreamAssembler } = await import("../src/host/llm-stream");
+      const asm = new StreamAssembler();
+      for (const chunk of TEXT("第一回合被停止")) asm.push(chunk);
+      const release = releaseFirst!;
+      return {
+        events: (async function* () {
+          yield TEXT("第一回合被停止")[0]!;
+          await firstSnapshot;
+        })(),
+        snapshot: () => asm.snapshot(),
+        settled: Promise.resolve(),
+        abort: async () => { release(); },
+      };
+    },
+  };
+}
+
 const TEXT = (t: string, promptTokens = 10): StreamChunk[] => [
   { type: "text-delta", index: 0, text: t },
   { type: "usage", usage: { promptTokens, completionTokens: 1 } },
@@ -70,6 +101,52 @@ const HEADER_S1 = (rootPath: string) =>
   `{"type":"header","header":{"v":1,"id":"s1","rootPath":"${rootPath}","title":"旧","createdAt":"x"}}\n`;
 
 describe("AgentService", () => {
+  it("停止后当前控制器立即轮换，同一会话可继续发送", async () => {
+    const host = fakeHost({});
+    const scripts = [TEXT("第二回合")];
+    const stream = blockedFirstThenScriptedChatStream(scripts);
+    const svc = createAgentService({
+      llm: { chatStream: stream.chatStream } as never,
+      files: host.svc as never,
+      workspace: { activeFile: null, root: "/lib" } as never,
+    });
+    const session = await svc.openSession(null);
+    const first = session.send("第一问");
+    await vi.waitFor(() => expect(stream.calls).toEqual([1]));
+    await session.abort();
+    await session.abort();
+    await first;
+
+    expect(session.messages().some((message) => message.role === "assistant")).toBe(false);
+    await expect(session.send("第二问")).resolves.toBeUndefined();
+    expect(stream.calls).toEqual([1, 2]);
+    expect(session.messages().filter((message) => message.role === "assistant"))
+      .toEqual([expect.objectContaining({ role: "assistant", text: "第二回合" })]);
+  });
+
+  it("附件-only 首发保留标题改写资格，后续文本重写文件头", async () => {
+    const { svc, host } = serviceWith({}, {
+      scripts: [TEXT("附件回合"), TEXT("文字回合")],
+    });
+    const session = await svc.openSession(null);
+    await session.send("", [{
+      type: "image",
+      source: { kind: "inline", data: "aW1n", mimeType: "image/png" },
+    }]);
+    expect(session.title).toBe("新会话");
+
+    await session.send("第二问");
+    expect(session.title).toBe("第二问");
+    const path = Object.keys(host.files).find((p) => p.includes(".study-wiki/sessions/"))!;
+    const content = host.files[path]!;
+    expect(content).toContain('"title":"第二问"');
+    expect(content).toContain("附件回合");
+    expect(content).toContain("第二问");
+    expect(session.messages().filter((message) => message.role === "assistant").map((message) =>
+      message.role === "assistant" ? message.text : "",
+    )).toEqual(["附件回合", "文字回合"]);
+  });
+
   it("新会话发消息后 JSONL 落盘 header+消息", async () => {
     const { svc, host } = serviceWith({}, { scripts: [TEXT("你好，我是 agent")] });
     const session = await svc.openSession(null);

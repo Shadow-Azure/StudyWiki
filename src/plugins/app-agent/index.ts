@@ -405,11 +405,6 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (session && session.model !== selectedModel) session.setModel(selectedModel);
     const content = composeContent(text, attachments);
     addUserMessage(content);
-    if (sessionTitle === "新会话" && text) {
-      sessionTitle = text.split("\n", 1)[0] ?? sessionTitle;
-      paintTitle();
-      paintSessionOptions();
-    }
     input.value = "";
     const outgoingContent = attachments.length > 0 ? content as ContentPart[] : undefined;
     attachments = [];

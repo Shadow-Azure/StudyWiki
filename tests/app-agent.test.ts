@@ -47,7 +47,7 @@ function fakeCtx(
     } : {}),
   };
   const el = globalThis.document.createElement("div");
-  return { ctx, el, calls, sessionEvents, approvalEvents };
+  return { ctx, el, calls, sessionEvents, approvalEvents, session };
 }
 
 describe("app-agent 面板", () => {
@@ -138,6 +138,23 @@ describe("app-agent 面板", () => {
     expect(call?.[1]).toBe("");
     expect(Array.isArray(call?.[2])).toBe(true);
     expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("新会话");
+  });
+
+  it("发送中不做本地标题改写，完成后按服务标题同步", async () => {
+    const { ctx, el, calls, session } = fakeCtx([]);
+    session.send = async (text: string, content?: unknown) => {
+      calls.push(["send", text, content]);
+      session.title = "服务同步标题";
+    };
+    apply(ctx as never);
+    await Promise.resolve();
+    await Promise.resolve();
+    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "总结一下";
+    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
+    expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("新会话");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("服务同步标题");
   });
 
   it("恢复历史时消息与审批按日志顺序交错", async () => {

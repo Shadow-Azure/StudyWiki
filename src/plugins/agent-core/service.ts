@@ -26,7 +26,7 @@ export interface AgentSession {
   readonly mode: ApprovalMode;
   /** 当前会话运行时模型；null 表示使用 endpoint 默认，不持久化。 */
   readonly model: string | null;
-  /** 会话头中的显示标题，首条用户消息会同步改写。 */
+  /** 会话头中的显示标题，首条含文本的用户消息会同步改写。 */
   readonly title: string;
   /** True while one `send` turn is still in progress. */
   readonly running: boolean;
@@ -248,18 +248,22 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         return internal.approvals.on("approval", listener);
       },
       async send(text, content) {
+        const currentController = internal.controller;
         if (internal.running) throw new Error("会话正在运行");
-        if (disposed || internal.controller.signal.aborted) throw new Error("会话已停止");
+        if (disposed || currentController.signal.aborted) throw new Error("会话已停止");
         internal.running = true;
         try {
           const userContent = content ?? text;
           const message: AgentMessage = { role: "user", content: userContent };
-          if (internal.isNew && internal.header.title === DEFAULT_TITLE) {
-            const rawTitle = text || firstText(userContent) || DEFAULT_TITLE;
-            internal.header.title = sessionTitle(rawTitle);
+          const titleSource = text || firstText(userContent);
+          if (internal.isNew && internal.header.title === DEFAULT_TITLE && titleSource.trim()) {
+            internal.header.title = sessionTitle(titleSource);
             internal.isNew = false;
             await enqueue(internal, () =>
-              deps.files.writeText(internal.path, `${encodeLine({ type: "header", header: internal.header })}\n`),
+              deps.files.writeText(internal.path, [
+                encodeLine({ type: "header", header: internal.header }),
+                ...internal.lines.map(encodeLine),
+              ].join("\n") + "\n"),
             );
           }
           await persist(internal, { type: "message", message });
@@ -291,21 +295,20 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
               persist: (line) => void persist(internal, line),
               emit: (event) => emit(internal, event),
             },
-            controller.signal,
+            internal.controller.signal,
           );
         } finally {
           internal.running = false;
-          if (internal.controller.signal.aborted && internal.controller === controller) {
+          if (internal.controller.signal.aborted) {
             internal.controller = new AbortController();
           }
         }
       },
       async abort() {
-        controller.abort();
+        const current = internal.controller;
+        current.abort();
+        internal.controller = new AbortController();
         internal.gate.cancelAll("已停止");
-        if (!internal.running && internal.controller === controller) {
-          internal.controller = new AbortController();
-        }
       },
       setModel(next) {
         internal.model = next;
