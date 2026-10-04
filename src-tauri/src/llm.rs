@@ -216,7 +216,12 @@ fn resolve_media_source(
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<MediaSource, LlmError> {
     match source {
-        MediaSource::Inline { .. } => Ok(source.clone()),
+        MediaSource::Inline { mime_type, .. } => {
+            if matches!(kind, MediaKind::Audio) {
+                audio_format(mime_type)?;
+            }
+            Ok(source.clone())
+        }
         MediaSource::Path { path } => {
             let original = path;
             let canonical = std::fs::canonicalize(path).map_err(|_| {
@@ -1645,6 +1650,18 @@ mod tests {
             body["stream_options"],
             serde_json::json!({"include_usage": true})
         );
+    }
+
+    #[test]
+    fn inline_audio_unsupported_mime_rejected() {
+        let req = media_request(ContentPart::Audio {
+            source: MediaSource::Inline {
+                data: "ZA".into(),
+                mime_type: "audio/flac".into(),
+            },
+        });
+        let r = build_chat_body(&req, true, &|_| true);
+        assert_eq!(r.unwrap_err().code, "UNSUPPORTED_CONTENT");
     }
 
     #[test]
