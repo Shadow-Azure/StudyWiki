@@ -13,7 +13,7 @@
 src/                               前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                    启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
   bootstrap.ts                     每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                cordis Context 声明合并：七个宿主服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts）
+  host/context.d.ts                cordis Context 声明合并：七个宿主服务 + agent 会话服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、service.ts）
   host/emitter.ts                  极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                    Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                    文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
@@ -32,8 +32,10 @@ src/                               前端（TypeScript + Vite，无 UI 框架）
   loader/types.ts                  内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
   main.ts                          入口：调用每窗口 bootstrap（三行）（→ boot-error.ts、bootstrap.ts、styles.css）
   plugins/agent-core/approval.ts   agent-core 审批门：ask/auto 路由、guardian 无状态审查与悬挂取消（→ tools.ts、types.ts）
+  plugins/agent-core/index.ts      agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话（→ service.ts）
   plugins/agent-core/loop.ts       agent-core 回合状态机：wire 组装、快照事件、串行工具回灌与半截不落账（→ llm-stream.ts、llm.ts、types.ts）
   plugins/agent-core/prompt.ts     agent-core 系统提示组装：角色、工具纪律、授权边界、模式句与当前上下文（→ types.ts）
+  plugins/agent-core/service.ts    agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction 与生命周期（→ files.ts、llm.ts、workspace.ts、approval.ts、loop.ts、prompt.ts、session.ts、tools.ts、types.ts）
   plugins/agent-core/session.ts    agent-core JSONL 会话编解码、崩溃尾容错与压缩视图（→ types.ts）
   plugins/agent-core/tools.ts      agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
   plugins/agent-core/types.ts      agent-core 消息、批准与会话日志类型契约（→ llm.ts）
