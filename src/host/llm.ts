@@ -89,12 +89,36 @@ export type MediaSource =
   | { kind: "inline"; data: string; mimeType: string }
   | { kind: "url"; url: string };
 
+/** Upstream tool declaration passed through to the selected chat model. */
+export interface ToolDeclaration {
+  /** Provider-visible stable tool name supplied to tool-call responses. */
+  name: string;
+  /** Natural-language contract used by the model when choosing the tool. */
+  description: string;
+  /** JSON Schema object describing the tool arguments. */
+  parameters: Record<string, unknown>;
+}
+
+/** Chat message wire shape, including the assistant tool-call and tool-result forms. */
+export interface ChatMessage {
+  /** Provider role: user / assistant / tool / system. */
+  role: string;
+  /** Plain text or multimodal content parts. */
+  content: string | ContentPart[];
+  /** Assistant requests emitted by a prior model response, in order. */
+  toolCalls?: { id: string; name: string; argumentsText: string }[];
+  /** Identifies the assistant tool call satisfied by a tool-role message. */
+  toolCallId?: string;
+}
+
 /** Chat input: `model` is the routing key resolved by this service. */
 export interface ChatInput {
   /** Model id; falls back to the configured default model when omitted. */
   model?: string;
-  /** Text or multimodal message content. */
-  messages: { role: string; content: string | ContentPart[] }[];
+  /** Text, multimodal, assistant tool-call, or tool-result messages. */
+  messages: ChatMessage[];
+  /** Optional upstream tool declarations; requires endpoint capability `tools`. */
+  tools?: ToolDeclaration[];
   /** Optional upstream max output tokens. */
   maxTokens?: number;
   /** Optional sampling temperature. */
@@ -193,15 +217,20 @@ export class LlmService {
     return { endpointId: owners[0].id, model: resolved, entry };
   }
 
-  /** 非流式 chat：按 model 解析归属 endpoint 后交 Rust 传输。
-   * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
+  /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
+   * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）/
+   *   tools 不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
   async chat(req: ChatInput): Promise<ChatResult> {
-    const { endpointId, model } = await this.#route(req.model);
+    const { endpointId, model, entry } = await this.#route(req.model);
+    if (req.tools?.length && !entry.capabilities.includes("tools")) {
+      throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持工具调用");
+    }
     return this.#call<ChatResult>("llm_chat", {
       req: {
         endpointId,
         model,
         messages: req.messages,
+        ...(req.tools?.length ? { tools: req.tools } : {}),
         ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       },
@@ -243,6 +272,7 @@ export class LlmService {
         model,
         messages: req.messages,
         streamId,
+        ...(req.tools?.length ? { tools: req.tools } : {}),
         ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       },
