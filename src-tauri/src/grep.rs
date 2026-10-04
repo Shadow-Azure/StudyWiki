@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-/// grep 工具请求参数；路径必须先过 `crate::ensure_authorized`。
+/// grep 工具请求参数；路径必须先过 `crate::ensure_authorized_read`。
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrepArgs {
