@@ -12,6 +12,7 @@ scope:
   - .agents/notes/**
   - .agents/plans/**
   - .gitignore
+  - .github/workflows/ci.yml
   - docs/README.*
   - docs/architecture.*
   - docs/commands.*
@@ -55,4 +56,4 @@ github:
 
 ## 落地记录
 
-- 2026-10-05（CI 修复）：scope 扩 `.agents/plans/**`（实施计划文件）、`.gitignore`（sidecar 产物忽略）、`docs/README.*`（agent 插件页索引挂链）、`pnpm-lock.yaml`（@vscode/ripgrep 安装）、`src/loader/**`（模块表 +app-agent/−app-chat）、`src/preview.ts`（预览 harness 去 app-chat 引用）、`scripts/install-git-hooks.*`（pre-push 增 src-tauri rustfmt 提醒）——均为实现的自然伴生面。
+- 2026-10-05（CI 修复）：scope 扩 `.agents/plans/**`（实施计划文件）、`.gitignore`（sidecar 产物忽略）、`docs/README.*`（agent 插件页索引挂链）、`pnpm-lock.yaml`（@vscode/ripgrep 安装）、`src/loader/**`（模块表 +app-agent/−app-chat）、`src/preview.ts`（预览 harness 去 app-chat 引用）、`scripts/install-git-hooks.*`（pre-push 增 src-tauri rustfmt 提醒）、`.github/workflows/ci.yml`（rust lane 补 pnpm 安装——sidecar 落位依赖 node_modules）——均为实现的自然伴生面。

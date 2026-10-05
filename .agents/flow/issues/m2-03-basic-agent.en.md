@@ -12,6 +12,7 @@ scope:
   - .agents/notes/**
   - .agents/plans/**
   - .gitignore
+  - .github/workflows/ci.yml
   - docs/README.*
   - docs/architecture.*
   - docs/commands.*
@@ -55,4 +56,4 @@ A first agent plugin with basic capabilities is needed (the pi/dsh intersection)
 
 ## Landing record
 
-- 2026-10-05 (CI fix): scope extended with `.agents/plans/**` (implementation plan file), `.gitignore` (sidecar artifact ignore), `docs/README.*` (index link for the agent plugin page), `pnpm-lock.yaml` (@vscode/ripgrep install), `src/loader/**` (module table +app-agent/−app-chat), `src/preview.ts` (preview harness drops the app-chat import), `scripts/install-git-hooks.*` (pre-push gains a src-tauri rustfmt reminder) — all natural companions of the implementation.
+- 2026-10-05 (CI fix): scope extended with `.agents/plans/**` (implementation plan file), `.gitignore` (sidecar artifact ignore), `docs/README.*` (index link for the agent plugin page), `pnpm-lock.yaml` (@vscode/ripgrep install), `src/loader/**` (module table +app-agent/−app-chat), `src/preview.ts` (preview harness drops the app-chat import), `scripts/install-git-hooks.*` (pre-push gains a src-tauri rustfmt reminder), `.github/workflows/ci.yml` (rust lane installs pnpm deps — sidecar staging needs node_modules) — all natural companions of the implementation.
