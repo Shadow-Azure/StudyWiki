@@ -258,7 +258,10 @@ mod tests {
         reg.remove("w1");
         let auth = reg.authorized_for("w1");
         assert!(!auth.iter().any(|p| p.ends_with("file.md")));
-        assert!(reg.authorized_for("w2").iter().any(|p| p.ends_with("elsewhere")));
+        assert!(reg
+            .authorized_for("w2")
+            .iter()
+            .any(|p| p.ends_with("elsewhere")));
     }
 
     #[test]

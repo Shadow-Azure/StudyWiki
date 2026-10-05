@@ -42,11 +42,14 @@ fn main() {
     let out_dir = manifest.join("binaries");
     fs::create_dir_all(&out_dir).expect("创建 binaries 目录");
     let dst = out_dir.join(format!("rg-{target}{}", if windows { ".exe" } else { "" }));
-    let stale = fs::metadata(&dst).map(|m| m.len()) .unwrap_or(0)
+    let stale = fs::metadata(&dst).map(|m| m.len()).unwrap_or(0)
         != fs::metadata(&src).map(|m| m.len()).unwrap_or(u64::MAX);
     if stale {
         fs::copy(&src, &dst).unwrap_or_else(|e| {
-            panic!("落位 rg sidecar 失败：{e}（{} 缺失？先跑 pnpm install）", src.display())
+            panic!(
+                "落位 rg sidecar 失败：{e}（{} 缺失？先跑 pnpm install）",
+                src.display()
+            )
         });
     }
     println!("cargo:rerun-if-changed={}", src.display());

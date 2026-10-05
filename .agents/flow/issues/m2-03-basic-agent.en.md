@@ -9,21 +9,28 @@ priority: P0
 status: in-progress
 scope:
   - .agents/flow/issues/m2-03-basic-agent.*
-  - src/plugins/**
-  - src/host/**
-  - src/ui/**
-  - src/styles.css
-  - src-tauri/**
-  - tests/**
-  - package.json
   - .agents/notes/**
-  - scripts/code-map.manifest.json
-  - scripts/doc-budgets.manifest.json
-  - scripts/dep-allowlist.json
+  - .agents/plans/**
+  - .gitignore
+  - docs/README.*
   - docs/architecture.*
   - docs/commands.*
-  - docs/plugins/*
   - docs/environment-independence.*
+  - docs/plugins/*
+  - package.json
+  - pnpm-lock.yaml
+  - scripts/code-map.manifest.json
+  - scripts/dep-allowlist.json
+  - scripts/doc-budgets.manifest.json
+  - scripts/install-git-hooks.*
+  - src/host/**
+  - src/loader/**
+  - src/plugins/**
+  - src/preview.ts
+  - src/styles.css
+  - src-tauri/**
+  - src/ui/**
+  - tests/**
 adr:
   - ../../notes/implemented/architecture/2026-10-04-basic-agent.md
 github:
@@ -45,3 +52,7 @@ A first agent plugin with basic capabilities is needed (the pi/dsh intersection)
 - Multi-turn conversation with the agent works; read/grep can search the library and wiki, and write/edit can persist notes.
 - Sessions persist as JSONL; historical sessions can be loaded, and the loop continues once the user sends a new message.
 - Writes go through the two approval modes (ask-for-approval / approve-for-me); reads outside the authorized set are dynamically authorized via approval (session-scoped); writes never cross the boundary in any mode.
+
+## Landing record
+
+- 2026-10-05 (CI fix): scope extended with `.agents/plans/**` (implementation plan file), `.gitignore` (sidecar artifact ignore), `docs/README.*` (index link for the agent plugin page), `pnpm-lock.yaml` (@vscode/ripgrep install), `src/loader/**` (module table +app-agent/−app-chat), `src/preview.ts` (preview harness drops the app-chat import), `scripts/install-git-hooks.*` (pre-push gains a src-tauri rustfmt reminder) — all natural companions of the implementation.
