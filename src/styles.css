@@ -1478,7 +1478,13 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 }
 .chat-input:focus-visible { outline: none; }
 .chat-input::placeholder { color: var(--ink-3); }
-.chat-composer-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px 6px 8px; }
+.chat-composer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 6px 8px;
+}
 .chat-hint { flex: 1; min-width: 0; color: var(--ink-3); font-size: 10.5px; }
 .chat-attach {
   flex: none;
@@ -1584,30 +1590,55 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   min-width: 0;
   margin-top: 8px;
 }
-.agent-mode-group {
+.chat-mode-toggle {
   display: inline-flex;
   flex: none;
-  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
   border-radius: 999px;
   background: var(--wash);
-}
-.agent-mode {
-  height: 24px;
-  padding: 0 10px;
-  border: 0;
-  background: transparent;
-  color: var(--ink-2);
+  color: var(--ink);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
 }
-.agent-mode:hover { color: var(--ink); }
-.agent-mode.active {
-  background: var(--raise);
+.chat-mode-toggle:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.agent-mode-pop { bottom: 96px; right: 58px; min-width: 220px; }
+.agent-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--ink);
-  font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
 }
+.agent-mode-option:hover { background: var(--wash); }
+.agent-mode-option-main { flex: none; font-weight: 550; }
+.agent-mode-option-sub {
+  min-width: 0;
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.agent-mode-option.current {
+  background: var(--azurite-wash);
+  color: var(--azurite-deep);
+  font-weight: 600;
+}
+.agent-mode-option.current .agent-mode-option-sub { color: color-mix(in srgb, var(--azurite-deep) 78%, transparent); }
 
 .agent-root-mismatch {
   flex: none;

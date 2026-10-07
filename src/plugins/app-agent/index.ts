@@ -126,6 +126,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let modelPop: HTMLElement | null = null;
   let modelPill: HTMLElement | null = null;
   let modelToggle: HTMLButtonElement | null = null;
+  let modePop: HTMLElement | null = null;
+  let modeToggle: HTMLButtonElement | null = null;
   let morePop: HTMLElement | null = null;
   let endpointGroups: Array<{ name: string; models: ModelEntry[] }> = [];
   let rootNotice: HTMLElement | null = null;
@@ -155,14 +157,15 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
     const running = turnRunning || session?.running === true;
     if (sendButton) sendButton.disabled = running;
-    if (stopButton) stopButton.disabled = false;
+    if (stopButton) stopButton.hidden = !running;
   };
 
   /** Close every header popover; opening one closes the others. */
   const closePops = (): void => {
-    for (const pop of [historyPop, modelPop, morePop]) {
+    for (const pop of [historyPop, modelPop, modePop, morePop]) {
       pop?.classList.remove("open");
     }
+    modeToggle?.setAttribute("aria-expanded", "false");
   };
   const togglePop = (pop: HTMLElement | null): void => {
     const willOpen = pop ? !pop.classList.contains("open") : false;
@@ -170,10 +173,20 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     pop?.classList.toggle("open", willOpen);
   };
 
-  const paintModes = (): void => {
-    const mode = session?.mode ?? "ask";
-    modeAsk?.classList.toggle("active", mode === "ask");
-    modeAuto?.classList.toggle("active", mode === "auto");
+  const paintModes = (mode: "ask" | "auto" = session?.mode ?? "ask"): void => {
+    modeAsk?.classList.toggle("current", mode === "ask");
+    modeAuto?.classList.toggle("current", mode === "auto");
+    if (modeToggle) {
+      modeToggle.textContent = mode === "ask" ? "🛡" : "⚡";
+      modeToggle.setAttribute(
+        "aria-label",
+        mode === "ask" ? "写操作批准模式：请求批准" : "写操作批准模式：帮我批准",
+      );
+      modeToggle.setAttribute(
+        "aria-expanded",
+        String(modePop?.classList.contains("open") === true),
+      );
+    }
   };
 
   const paintTitle = (): void => {
@@ -643,10 +656,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   const onDocClick = (event: MouseEvent): void => {
     if (disposed) return;
     const target = event.target as Node;
-    const inPops = [historyPop, modelPop, morePop].some((pop) =>
+    const inPops = [historyPop, modelPop, modePop, morePop].some((pop) =>
       pop?.classList.contains("open") && (pop.contains(target) || pop === target),
     );
-    const inTriggers = [historyToggle, modelToggle].some((trigger) => trigger?.contains(target));
+    const inTriggers = [historyToggle, modelToggle, modeToggle].some((trigger) => trigger?.contains(target));
     if (!inPops && !inTriggers) closePops();
     if (!approvalDetail?.classList.contains("open")) return;
     if (approvalDetail.contains(target) || approvalToggle?.contains(target)) return;
@@ -878,6 +891,35 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     modelPop = document.createElement("div");
     modelPop.className = "agent-pop agent-model-pop";
 
+    // 审批模式 popover：普通态只占一个图标座位。
+    modePop = document.createElement("div");
+    modePop.className = "agent-pop agent-mode-pop";
+    const modeTitle = document.createElement("div");
+    modeTitle.className = "agent-pop-title";
+    modeTitle.textContent = "写操作批准模式";
+    const makeModeOption = (mode: "ask" | "auto", label: string, detail: string): HTMLButtonElement => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "agent-mode-option";
+      button.dataset[mode === "ask" ? "modeAsk" : "modeAuto"] = "";
+      const main = document.createElement("span");
+      main.className = "agent-mode-option-main";
+      main.textContent = label;
+      const sub = document.createElement("span");
+      sub.className = "agent-mode-option-sub";
+      sub.textContent = detail;
+      button.append(main, sub);
+      button.addEventListener("click", () => {
+        session?.setMode(mode);
+        closePops();
+        paintModes(mode);
+      });
+      return button;
+    };
+    modeAsk = makeModeOption("ask", "请求批准", "写入前确认");
+    modeAuto = makeModeOption("auto", "帮我批准", "本次会话自动处理");
+    modePop.append(modeTitle, modeAsk, modeAuto);
+
     rootNotice = document.createElement("div");
     rootNotice.className = "agent-root-mismatch";
     rootNotice.hidden = true;
@@ -923,7 +965,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     input.addEventListener("keydown", onKeyDown);
     input.addEventListener("paste", onPaste);
 
-    // composer 座位：附件 · 模型 pill · 模式分段 · 发送/停止。
+    // composer 座位：附件 · 模型 pill · 模式图标 · 发送/停止。
     modelToggle = document.createElement("button");
     modelToggle.type = "button";
     modelToggle.className = "chat-model-pill";
@@ -936,36 +978,22 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     modelToggle.append(modelPill, pillCaret);
     modelToggle.addEventListener("click", () => togglePop(modelPop));
 
-    const modeGroup = document.createElement("div");
-    modeGroup.className = "agent-mode-group";
-    modeGroup.setAttribute("role", "group");
-    modeGroup.setAttribute("aria-label", "写操作批准模式");
-    modeAsk = document.createElement("button");
-    modeAsk.type = "button";
-    modeAsk.className = "agent-mode";
-    modeAsk.dataset.modeAsk = "";
-    modeAsk.textContent = "请求批准";
-    modeAsk.addEventListener("click", () => {
-      session?.setMode("ask");
+    modeToggle = document.createElement("button");
+    modeToggle.type = "button";
+    modeToggle.className = "chat-mode-toggle";
+    modeToggle.dataset.modeToggle = "";
+    modeToggle.setAttribute("aria-haspopup", "menu");
+    modeToggle.addEventListener("click", () => {
+      togglePop(modePop);
       paintModes();
     });
-    modeAuto = document.createElement("button");
-    modeAuto.type = "button";
-    modeAuto.className = "agent-mode";
-    modeAuto.dataset.modeAuto = "";
-    modeAuto.textContent = "帮我批准";
-    modeAuto.addEventListener("click", () => {
-      session?.setMode("auto");
-      paintModes();
-    });
-    modeGroup.append(modeAsk, modeAuto);
 
     const row = document.createElement("div");
     row.className = "chat-composer-row";
     composerRow = row;
     const spacer = document.createElement("span");
     spacer.className = "chat-row-spacer";
-    row.append(attach, modelToggle, spacer, modeGroup, sendButton, stopButton);
+    row.append(attach, modelToggle, spacer, modeToggle, sendButton, stopButton);
     composer.append(input, row);
     statusline = document.createElement("div");
     statusline.className = "agent-statusline";
@@ -980,6 +1008,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (historyPop) pops.push(historyPop);
     if (morePop) pops.push(morePop);
     if (modelPop) pops.push(modelPop);
+    if (modePop) pops.push(modePop);
     panel.append(...pops);
     panel.append(rootNotice, contextRow, transcript, chips, notice, composer, statusline);
     panel.addEventListener("dragover", onDragOver);

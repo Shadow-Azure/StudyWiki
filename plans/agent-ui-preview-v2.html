@@ -96,9 +96,12 @@
   .composer textarea::placeholder{color:var(--ink-3)}
   .composer-row{display:flex;align-items:center;gap:6px;padding:5px 7px 7px 8px}
   .attach{width:25px;height:25px;border:0;border-radius:7px;background:transparent;color:var(--ink-2);font-size:13px;cursor:not-allowed;opacity:.4}
-  .segment{display:inline-flex;overflow:hidden;border-radius:999px;background:var(--wash)}
-  .segment button{height:23px;padding:0 9px;border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:10.5px;cursor:pointer}
-  .segment button.active{background:var(--raise);color:var(--ink);font-weight:650;box-shadow:inset 0 0 0 1px var(--hairline)}
+  .mode-toggle{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:999px;background:var(--wash);color:var(--ink);font:inherit;font-size:12px;line-height:1;cursor:pointer}
+  .mode-toggle:hover{background:color-mix(in srgb,var(--ink) 9%,transparent)}
+  .mode-pop{bottom:96px;right:58px;min-width:220px}
+  .mode-item{display:flex;align-items:center;gap:8px}
+  .mode-item span:last-child{margin-left:auto;color:var(--ink-3);font-size:10.5px;white-space:nowrap}
+  .mode-item.current span:last-child{color:color-mix(in srgb,var(--azurite-deep) 78%,transparent)}
   .send{height:26px;padding:0 13px;border:0;border-radius:999px;background:var(--azurite);color:#fff;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
   .send:hover{background:var(--azurite-deep)}
   .hint{padding:0 4px;color:var(--ink-3);font-size:10px}
@@ -271,8 +274,8 @@
           <div class="composer-row">
             <button class="attach" title="粘贴或拖入图片/音频">📎</button>
             <button class="pill pop-trigger" data-pop="model-b">MiniMax · M2.7 <span class="caret">▾</span></button>
-            <div class="segment"><button class="active">请求批准</button><button>帮我批准</button></div>
             <span style="flex:1"></span>
+            <button class="mode-toggle pop-trigger" data-pop="mode-b" aria-label="写操作批准模式：请求批准" aria-haspopup="menu" aria-expanded="false">🛡</button>
             <button class="send">停止</button>
           </div>
         </div>
@@ -284,6 +287,11 @@
         <button class="item">线代复习计划 <span class="sub">昨天</span></button>
         <button class="item">操作系统错题 <span class="sub">10-05</span></button>
         <div class="sep"></div><button class="item">＋ 新建会话</button>
+      </div>
+      <div class="pop mode-pop" id="mode-b" style="bottom:96px;right:58px">
+        <div class="p-title">写操作批准模式</div>
+        <button class="item mode-item current">请求批准 <span class="sub">写入前确认</span></button>
+        <button class="item mode-item">帮我批准 <span class="sub">本次会话自动处理</span></button>
       </div>
       <div class="pop" id="model-b" style="bottom:96px;left:12px">
         <div class="p-title">MiniMax</div>

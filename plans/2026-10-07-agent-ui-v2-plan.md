@@ -256,7 +256,7 @@ it("模型 pill 菜单按厂商分组", async () => { /* fakeCtx 两组 models�
   - header: 标题 + 状态点 + `[data-new-session]` + `[data-history-toggle]` + `[data-more]`；移除头部 session/model/default-mode 控件。
   - 历史 popover：搜索框 + 列表（当前高亮）+ 新建；外点/Esc 关。
   - 模型 pill（composer 内）+ 分组菜单；选择调 `setModel`。
-  - 模式分段保留 composer；默认模式移入 `[data-more]` 菜单。
+  - 模式收为 composer 24px 图标 + 浮层切换；默认模式移入 `[data-more]` 菜单。
   - 附件按钮改 hint 样式（title 保持“粘贴或拖入”）。
 
 - [x] **Step 4: 测试通过**

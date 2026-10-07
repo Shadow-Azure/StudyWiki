@@ -92,13 +92,17 @@ describe("app-agent 面板", () => {
   });
 
   it("发送按钮调 session.send；停止调 abort", async () => {
-    const { ctx, el, calls } = fakeCtx([]);
+    const { ctx, el, calls, sessionEvents } = fakeCtx([]);
     apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(el.querySelector<HTMLButtonElement>("[data-send]")!.hidden).toBe(false);
+    expect(el.querySelector<HTMLButtonElement>("[data-stop]")!.hidden).toBe(true);
     el.querySelector<HTMLTextAreaElement>("textarea")!.value = "总结一下";
     el.querySelector<HTMLButtonElement>("[data-send]")!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(calls).toContainEqual(["send", "总结一下", undefined]);
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    expect(el.querySelector<HTMLButtonElement>("[data-stop]")!.hidden).toBe(false);
     el.querySelector<HTMLButtonElement>("[data-stop]")!.click();
+    expect(calls).toContainEqual(["send", "总结一下", undefined]);
     expect(calls).toContainEqual(["abort"]);
   });
 
@@ -156,12 +160,19 @@ describe("app-agent 面板", () => {
     expect(composer.dataset.approvalId).toBe("a2");
   });
 
-  it("模式胶囊切换调 setMode", async () => {
+  it("批准模式用图标浮窗切换", async () => {
     const { ctx, el, calls } = fakeCtx([]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    const toggle = el.querySelector<HTMLButtonElement>("[data-mode-toggle]")!;
+    expect(toggle.textContent).toBe("🛡");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     el.querySelector<HTMLButtonElement>("[data-mode-auto]")!.click();
     expect(calls).toContainEqual(["setMode", "auto"]);
+    expect(toggle.textContent).toBe("⚡");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("新会话使用 durable 审批模式；模式胶囊仍只改当前会话", async () => {
@@ -176,6 +187,7 @@ describe("app-agent 面板", () => {
     expect(openCalls.at(-1)).toEqual({ id: null, mode: "auto" });
     expect(session.mode).toBe("auto");
 
+    el.querySelector<HTMLButtonElement>("[data-mode-toggle]")!.click();
     el.querySelector<HTMLButtonElement>("[data-mode-ask]")!.click();
     expect(calls).toContainEqual(["setMode", "ask"]);
     expect(calls).not.toContainEqual(["setDefaultAgentApprovalMode", "ask"]);
