@@ -1,5 +1,5 @@
 import type { Context } from "cordis";
-import type { ContentPart, LlmService, RedactedSettings } from "../../host/llm";
+import type { ContentPart, LlmService, ModelEntry, RedactedSettings } from "../../host/llm";
 import type { PartialAssistant } from "../../host/llm-stream";
 import type { AgentEvent } from "../agent-core/loop";
 import type { AgentSession, SessionMeta } from "../agent-core/service";
@@ -13,7 +13,6 @@ import {
   renderCompactionDivider,
   renderDecisionLine,
   renderToolCard,
-  type ApprovalRequest,
 } from "./render";
 
 /** Plugin id in the manifest and static module table. */
@@ -115,9 +114,17 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   let panel: HTMLElement | null = null;
   let titleEl: HTMLElement | null = null;
-  let sessionSelect: HTMLSelectElement | null = null;
-  let modelSelect: HTMLSelectElement | null = null;
   let defaultModeElement: HTMLSelectElement | null = null;
+  let statusDot: HTMLElement | null = null;
+  let historyPop: HTMLElement | null = null;
+  let historyList: HTMLElement | null = null;
+  let historySearch: HTMLInputElement | null = null;
+  let historyToggle: HTMLButtonElement | null = null;
+  let modelPop: HTMLElement | null = null;
+  let modelPill: HTMLElement | null = null;
+  let modelToggle: HTMLButtonElement | null = null;
+  let morePop: HTMLElement | null = null;
+  let endpointGroups: Array<{ name: string; models: ModelEntry[] }> = [];
   let rootNotice: HTMLElement | null = null;
   let contextRow: HTMLElement | null = null;
   let transcript: HTMLElement | null = null;
@@ -142,6 +149,18 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (stopButton) stopButton.disabled = false;
   };
 
+  /** Close every header popover; opening one closes the others. */
+  const closePops = (): void => {
+    for (const pop of [historyPop, modelPop, morePop]) {
+      pop?.classList.remove("open");
+    }
+  };
+  const togglePop = (pop: HTMLElement | null): void => {
+    const willOpen = pop ? !pop.classList.contains("open") : false;
+    closePops();
+    pop?.classList.toggle("open", willOpen);
+  };
+
   const paintModes = (): void => {
     const mode = session?.mode ?? "ask";
     modeAsk?.classList.toggle("active", mode === "ask");
@@ -150,31 +169,44 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   const paintTitle = (): void => {
     if (titleEl) titleEl.textContent = sessionTitle;
+    if (statusDot) statusDot.classList.toggle("run", session?.running === true);
   };
 
   const paintModel = (): void => {
-    if (modelSelect && selectedModel) modelSelect.value = selectedModel;
+    if (modelPill) modelPill.textContent = selectedModel ?? "选择模型";
   };
 
   const paintSessionOptions = (): void => {
-    if (!sessionSelect) return;
-    sessionSelect.replaceChildren();
-    const current = document.createElement("option");
-    current.value = session?.id ?? "";
-    current.textContent = sessionTitle;
-    sessionSelect.append(current);
+    const list = historyList;
+    if (!list) return;
+    list.replaceChildren();
+    const filter = historySearch?.value.trim() ?? "";
+    const matches = (title: string): boolean => title.includes(filter);
+    const addItem = (id: string, title: string, current: boolean): void => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = current ? "agent-pop-item current" : "agent-pop-item";
+      item.dataset.sessionOption = "";
+      item.dataset.sessionId = id;
+      item.textContent = title;
+      item.addEventListener("click", () => {
+        closePops();
+        void openSession(id);
+      });
+      list.append(item);
+    };
+    if (session && matches(sessionTitle)) addItem(session.id, sessionTitle, true);
     for (const meta of sessions) {
-      if (meta.id === session?.id) {
-        current.value = meta.id;
-        continue;
-      }
-      const option = document.createElement("option");
-      option.value = meta.id;
-      option.dataset.sessionId = meta.id;
-      option.textContent = meta.title;
-      sessionSelect.append(option);
+      if (meta.id !== session?.id && matches(meta.title)) addItem(meta.id, meta.title, false);
+    }
+    if (list.children.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "agent-pop-empty";
+      empty.textContent = "无匹配会话";
+      list.append(empty);
     }
   };
+;
 
   const refreshSessions = async (): Promise<void> => {
     if (disposed) return;
@@ -247,7 +279,6 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   const renderHistory = (): void => {
     if (!transcript || !session) return;
-    const historyCalls = new Map<string, { id: string; name: string; argumentsText: string }>();
 
     const appendMessage = (message: AgentMessage, target: HTMLElement[]): void => {
       if (message.role === "user") {
@@ -265,7 +296,17 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         return;
       }
       if (message.role === "assistant") {
-        for (const call of message.toolCalls) historyCalls.set(call.id, call);
+        if (message.toolCalls.length > 0) {
+          const group = createProcessGroup();
+          for (const call of message.toolCalls) {
+            group.addStep(renderToolCard(
+              call,
+              { content: "历史记录未含结果内容", isError: false },
+            ));
+          }
+          group.settle(`已执行 ${message.toolCalls.length} 个工具动作`, 0);
+          target.push(group.root);
+        }
         const wrapper = document.createElement("div");
         wrapper.className = "chat-message chat-assistant";
         const stream = document.createElement("div");
@@ -277,12 +318,6 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         historyRenderer.finalize();
         return;
       }
-      const call = historyCalls.get(message.callId) ??
-        { id: message.callId, name: message.name, argumentsText: "" };
-      target.push(renderToolCard(
-        call,
-        { content: message.content, isError: message.isError === true },
-      ));
     }
 
     const nodes: HTMLElement[] = [];
@@ -317,15 +352,6 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         ));
         continue;
       }
-      if (line.type !== "tool") continue;
-      if (!historyGroup) historyGroup = createProcessGroup();
-      historySteps += 1;
-      const call = historyCalls.get(line.callId) ??
-        { id: line.callId, name: line.name, argumentsText: line.argumentsText };
-      historyGroup.addStep(renderToolCard(
-        call,
-        { content: line.content, isError: line.isError === true },
-      ));
     }
     flushHistoryGroup();
     transcript.replaceChildren(...nodes);
@@ -550,7 +576,12 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
    * detail popover first, otherwise denies; ⌘/Ctrl+Enter approves. Outside
    * clicks close an open popover without deciding. */
   const onDocKeydown = (event: KeyboardEvent): void => {
-    if (disposed || composerEl?.dataset.state !== "approval") return;
+    if (disposed) return;
+    if (event.key === "Escape" && [historyPop, modelPop, morePop].some((pop) => pop?.classList.contains("open"))) {
+      closePops();
+      return;
+    }
+    if (composerEl?.dataset.state !== "approval") return;
     if (event.key === "Escape") {
       if (approvalDetail?.classList.contains("open")) {
         approvalDetail.classList.remove("open");
@@ -567,8 +598,14 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
   };
   const onDocClick = (event: MouseEvent): void => {
-    if (disposed || !approvalDetail?.classList.contains("open")) return;
+    if (disposed) return;
     const target = event.target as Node;
+    const inPops = [historyPop, modelPop, morePop].some((pop) =>
+      pop?.classList.contains("open") && (pop.contains(target) || pop === target),
+    );
+    const inTriggers = [historyToggle, modelToggle].some((trigger) => trigger?.contains(target));
+    if (!inPops && !inTriggers) closePops();
+    if (!approvalDetail?.classList.contains("open")) return;
     if (approvalDetail.contains(target) || approvalToggle?.contains(target)) return;
     approvalDetail.classList.remove("open");
     approvalToggle?.setAttribute("aria-expanded", "false");
@@ -606,7 +643,6 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
     const text = input.value.trim();
     if (!text && attachments.length === 0) return;
-    if (modelSelect?.value) selectedModel = modelSelect.value;
     if (session && session.model !== selectedModel) session.setModel(selectedModel);
     const content = composeContent(text, attachments);
     addUserMessage(content);
@@ -723,29 +759,146 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     panel.className = "agent-panel";
     const head = document.createElement("header");
     head.className = "agent-head";
-    const titleRow = document.createElement("div");
-    titleRow.className = "agent-head-row";
+    // 单行 header：标题 + 状态点 + 新建/历史/更多，不再堆配置控件。
+    const statusSpan = document.createElement("span");
+    statusSpan.className = "agent-status-dot";
+    statusDot = statusSpan;
     titleEl = document.createElement("h2");
     titleEl.className = "agent-title";
     titleEl.textContent = sessionTitle;
-    sessionSelect = document.createElement("select");
-    sessionSelect.className = "agent-session-select";
-    sessionSelect.setAttribute("aria-label", "历史会话");
-    sessionSelect.addEventListener("change", () => {
-      const id = sessionSelect?.value;
-      if (id) void openSession(id);
-    });
     const newButton = document.createElement("button");
     newButton.type = "button";
-    newButton.className = "agent-new";
-    newButton.textContent = "新建";
-    newButton.setAttribute("aria-label", "新建会话");
+    newButton.className = "btn icon-btn";
     newButton.dataset.newSession = "";
-    newButton.addEventListener("click", () => void openSession(null, "新会话"));
-    titleRow.append(titleEl, sessionSelect, newButton);
+    newButton.textContent = "＋";
+    newButton.setAttribute("aria-label", "新建会话");
+    newButton.addEventListener("click", () => {
+      closePops();
+      void openSession(null, "新会话");
+    });
+    historyToggle = document.createElement("button");
+    historyToggle.type = "button";
+    historyToggle.className = "btn icon-btn";
+    historyToggle.dataset.historyToggle = "";
+    historyToggle.textContent = "▤";
+    historyToggle.setAttribute("aria-label", "历史会话");
+    historyToggle.addEventListener("click", () => {
+      paintSessionOptions();
+      togglePop(historyPop);
+    });
+    const moreToggle = document.createElement("button");
+    moreToggle.type = "button";
+    moreToggle.className = "btn icon-btn";
+    moreToggle.dataset.moreToggle = "";
+    moreToggle.textContent = "⋯";
+    moreToggle.setAttribute("aria-label", "更多设置");
+    moreToggle.addEventListener("click", () => togglePop(morePop));
+    const titleRow = document.createElement("div");
+    titleRow.className = "agent-head-row";
+    titleRow.append(statusSpan, titleEl, newButton, historyToggle, moreToggle);
 
-    const controls = document.createElement("div");
-    controls.className = "agent-controls";
+    // 历史 popover：搜索 + 会话列表 + 新建入口。
+    historyPop = document.createElement("div");
+    historyPop.className = "agent-pop agent-history-pop";
+    historySearch = document.createElement("input");
+    historySearch.type = "search";
+    historySearch.className = "agent-pop-search";
+    historySearch.dataset.historySearch = "";
+    historySearch.placeholder = "搜索会话";
+    historySearch.addEventListener("input", () => paintSessionOptions());
+    historyList = document.createElement("div");
+    historyList.className = "agent-pop-list";
+    historyPop.append(historySearch, historyList);
+
+    // 更多 popover：新会话默认审批模式（持久设置）。
+    morePop = document.createElement("div");
+    morePop.className = "agent-pop agent-more-pop";
+    const moreTitle = document.createElement("div");
+    moreTitle.className = "agent-pop-title";
+    moreTitle.textContent = "默认设置";
+    defaultModeElement = document.createElement("select");
+    defaultModeElement.className = "agent-default-mode";
+    defaultModeElement.setAttribute("aria-label", "新会话默认审批模式");
+    for (const [value, label] of [["ask", "新会话：请求批准"], ["auto", "新会话：帮我批准"]] as const) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      defaultModeElement.append(option);
+    }
+    defaultModeElement.addEventListener("change", () => {
+      const mode = defaultModeElement?.value === "auto" ? "auto" : "ask";
+      durableApprovalMode = mode;
+      if (llm) void llm.setDefaultAgentApprovalMode(mode).catch((error: unknown) => {
+        if (!disposed && notice) {
+          notice.textContent = `${toPanelError(error).code}: ${toPanelError(error).message}`;
+          notice.hidden = false;
+        }
+      });
+    });
+    morePop.append(moreTitle, defaultModeElement);
+
+    // 模型 popover：按厂商/endpoint 分组，composer pill 打开。
+    modelPop = document.createElement("div");
+    modelPop.className = "agent-pop agent-model-pop";
+
+    rootNotice = document.createElement("div");
+    rootNotice.className = "agent-root-mismatch";
+    rootNotice.hidden = true;
+    contextRow = document.createElement("div");
+    contextRow.className = "agent-context";
+    paintContext(contextRow, workspace.activeFile?.name ?? null);
+    transcript = document.createElement("div");
+    transcript.className = "agent-transcript";
+    chips = document.createElement("div");
+    chips.className = "chat-chips";
+    chips.hidden = true;
+    notice = document.createElement("div");
+    notice.className = "chat-notice";
+    notice.hidden = true;
+
+    const composer = document.createElement("div");
+    composer.className = "chat-composer";
+    composer.dataset.state = "normal";
+    composerEl = composer;
+    const attach = document.createElement("button");
+    attach.type = "button";
+    attach.className = "chat-attach";
+    attach.textContent = "📎";
+    attach.title = "请直接粘贴或拖入图片/音频";
+    attach.disabled = true;
+    attach.setAttribute("aria-label", "添加附件（粘贴或拖入）");
+    input = document.createElement("textarea");
+    input.className = "chat-input";
+    input.rows = 3;
+    input.placeholder = "让 Agent 读取、检索或修改当前库…";
+    sendButton = document.createElement("button");
+    sendButton.type = "button";
+    sendButton.className = "chat-send";
+    sendButton.dataset.send = "";
+    sendButton.textContent = "发送";
+    sendButton.addEventListener("click", sendDraft);
+    stopButton = document.createElement("button");
+    stopButton.type = "button";
+    stopButton.className = "chat-send chat-stopping";
+    stopButton.dataset.stop = "";
+    stopButton.textContent = "停止";
+    stopButton.addEventListener("click", stopSession);
+    input.addEventListener("keydown", onKeyDown);
+    input.addEventListener("paste", onPaste);
+
+    // composer 座位：附件 · 模型 pill · 模式分段 · 发送/停止。
+    modelToggle = document.createElement("button");
+    modelToggle.type = "button";
+    modelToggle.className = "chat-model-pill";
+    modelToggle.dataset.modelToggle = "";
+    modelPill = document.createElement("span");
+    modelPill.textContent = selectedModel ?? "选择模型";
+    const pillCaret = document.createElement("span");
+    pillCaret.className = "chat-pill-caret";
+    pillCaret.textContent = "▾";
+    modelToggle.append(modelPill, pillCaret);
+    modelToggle.addEventListener("click", () => togglePop(modelPop));
+
     const modeGroup = document.createElement("div");
     modeGroup.className = "agent-mode-group";
     modeGroup.setAttribute("role", "group");
@@ -769,123 +922,78 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       paintModes();
     });
     modeGroup.append(modeAsk, modeAuto);
-    modelSelect = document.createElement("select");
-    modelSelect.className = "agent-model-select";
-    modelSelect.setAttribute("aria-label", "Agent 模型");
-    modelSelect.addEventListener("change", () => {
-      selectedModel = modelSelect?.value || null;
-      session?.setModel(selectedModel);
-    });
-    defaultModeElement = document.createElement("select");
-    defaultModeElement.className = "agent-default-mode";
-    defaultModeElement.setAttribute("aria-label", "新会话默认审批模式");
-    for (const [value, label] of [["ask", "新会话：请求批准"], ["auto", "新会话：帮我批准"]] as const) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      defaultModeElement.append(option);
-    }
-    defaultModeElement.addEventListener("change", () => {
-      const mode = defaultModeElement?.value === "auto" ? "auto" : "ask";
-      durableApprovalMode = mode;
-      if (llm) void llm.setDefaultAgentApprovalMode(mode).catch((error: unknown) => {
-        if (!disposed && notice) {
-          notice.textContent = `${toPanelError(error).code}: ${toPanelError(error).message}`;
-          notice.hidden = false;
-        }
-      });
-    });
-    controls.append(modeGroup, defaultModeElement, modelSelect);
 
-    rootNotice = document.createElement("div");
-    rootNotice.className = "agent-root-mismatch";
-    rootNotice.hidden = true;
-    contextRow = document.createElement("div");
-    contextRow.className = "agent-context";
-    paintContext(contextRow, workspace.activeFile?.name ?? null);
-    transcript = document.createElement("div");
-    transcript.className = "agent-transcript";
-    chips = document.createElement("div");
-    chips.className = "chat-chips";
-    chips.hidden = true;
-    notice = document.createElement("div");
-    notice.className = "chat-notice";
-    notice.hidden = true;
-    const composer = document.createElement("div");
-    composer.className = "chat-composer";
-    composer.dataset.state = "normal";
-    composerEl = composer;
-    const attach = document.createElement("button");
-    attach.type = "button";
-    attach.className = "chat-attach";
-    attach.textContent = "📎";
-    attach.title = "本版不支持系统文件选择；请直接粘贴或拖入图片/音频。";
-    attach.disabled = true;
-    attach.setAttribute("aria-label", "添加附件（暂不可用）");
-    input = document.createElement("textarea");
-    input.className = "chat-input";
-    input.rows = 3;
-    input.placeholder = "让 Agent 读取、检索或修改当前库…";
-    sendButton = document.createElement("button");
-    sendButton.type = "button";
-    sendButton.className = "chat-send";
-    sendButton.dataset.send = "";
-    sendButton.textContent = "发送";
-    sendButton.addEventListener("click", sendDraft);
-    stopButton = document.createElement("button");
-    stopButton.type = "button";
-    stopButton.className = "chat-send chat-stopping";
-    stopButton.dataset.stop = "";
-    stopButton.textContent = "停止";
-    stopButton.addEventListener("click", stopSession);
-    input.addEventListener("keydown", onKeyDown);
-    input.addEventListener("paste", onPaste);
     const row = document.createElement("div");
     row.className = "chat-composer-row";
     composerRow = row;
-    const hint = document.createElement("span");
-    hint.className = "chat-hint";
-    hint.textContent = "Enter 发送 · Shift+Enter 换行";
-    row.append(attach, hint, sendButton, stopButton);
+    const spacer = document.createElement("span");
+    spacer.className = "chat-row-spacer";
+    row.append(attach, modelToggle, spacer, modeGroup, sendButton, stopButton);
     composer.append(input, row);
-    head.append(titleRow, controls);
-    panel.append(head, rootNotice, contextRow, transcript, chips, notice, composer);
+
+    head.append(titleRow);
+    panel.append(head);
+    const pops: HTMLElement[] = [];
+    if (historyPop) pops.push(historyPop);
+    if (morePop) pops.push(morePop);
+    if (modelPop) pops.push(modelPop);
+    panel.append(...pops);
+    panel.append(rootNotice, contextRow, transcript, chips, notice, composer);
     panel.addEventListener("dragover", onDragOver);
     panel.addEventListener("drop", onDrop);
     el.append(panel);
     paintModes();
     paintButtons();
     paintSessionOptions();
+    paintSessionOptions();
   });
 
   const loadModels = async (): Promise<void> => {
-    if (!llm || !modelSelect) return;
+    if (!llm || !modelPop) return;
     await llm.listEndpoints().then(async (settings: RedactedSettings) => {
-      if (disposed || !modelSelect) return;
-      const models = settings.endpoints
+      if (disposed || !modelPop) return;
+      endpointGroups = settings.endpoints
         .filter((endpoint) => endpoint.kind === "chat")
-        .flatMap((endpoint) => endpoint.models);
-      const unique = new Map(models.map((model) => [model.id, model]));
-      modelSelect.replaceChildren();
+        .map((endpoint) => ({ name: endpoint.name, models: endpoint.models }));
       endpointDefault = settings.defaultModel;
       durableApprovalMode = settings.agentApprovalMode === "auto" ? "auto" : "ask";
       if (defaultModeElement) defaultModeElement.value = durableApprovalMode;
-      const requested = session?.model ?? settings.defaultModel;
-      selectedModel = requested && unique.has(requested)
-        ? requested
-        : modelSelect.options[0]?.value ?? null;
-      for (const model of unique.values()) {
-        const option = document.createElement("option");
-        option.value = model.id;
-        option.textContent = modelLabel(model.id, model.capabilities);
-        modelSelect.append(option);
+      const unique = new Map<string, ModelEntry>();
+      for (const group of endpointGroups) {
+        for (const model of group.models) {
+          if (!unique.has(model.id)) unique.set(model.id, model);
+        }
       }
+      modelPop.replaceChildren();
+      for (const group of endpointGroups) {
+        const title = document.createElement("div");
+        title.className = "agent-pop-title";
+        title.textContent = group.name;
+        modelPop.append(title);
+        for (const model of group.models) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "agent-pop-item";
+          item.dataset.modelOption = model.id;
+          item.textContent = modelLabel(model.id, model.capabilities);
+          item.addEventListener("click", () => {
+            selectedModel = model.id;
+            session?.setModel(selectedModel);
+            paintModel();
+            closePops();
+          });
+          modelPop.append(item);
+        }
+      }
+      const requested = session?.model ?? settings.defaultModel;
+      selectedModel = requested && unique.has(requested) ? requested : unique.keys().next().value ?? null;
       paintModel();
     }).catch((error: unknown) => {
       if (disposed || !contextRow) return;
       contextRow.textContent = `模型配置不可用：${toPanelError(error).code}`;
     });
   };
+
 
   queueMicrotask(() => {
     void (async () => {

@@ -58,10 +58,10 @@ test("ui preview: mounts the app-agent panel in the right rail", async () => {
   const teardown = await mountUiPreview(root);
   await new Promise((resolve) => setTimeout(resolve, 50));
 
-  console.log("UI HTML", root.querySelector(".agent-panel")?.outerHTML.slice(0,1000));
-  expect(root.querySelector(".agent-model-select")).not.toBeNull();
-  expect([...root.querySelectorAll<HTMLSelectElement>(".agent-model-select option")]
-    .map((option) => option.value)).toContain("demo-model");
+  expect(root.querySelector(".chat-model-pill")).not.toBeNull();
+  root.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
+  expect([...root.querySelectorAll<HTMLElement>("[data-model-option]")]
+    .map((option) => option.dataset.modelOption)).toContain("demo-model");
 
   teardown();
   root.remove();

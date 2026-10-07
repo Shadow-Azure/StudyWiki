@@ -8,6 +8,7 @@ function fakeCtx(
   opts: {
     lines?: unknown[];
     models?: Array<{ id: string; capabilities: string[] }>;
+    endpointNames?: string[];
     defaultModel?: string | null;
     root?: string | null;
   } = {},
@@ -60,8 +61,13 @@ function fakeCtx(
     ...(opts.models ? {
       llm: {
         listEndpoints: async () => ({
-          endpoints: [{ id: "e1", kind: "chat", models: opts.models }],
-          defaultModel: opts.defaultModel ?? opts.models[0]?.id ?? null,
+          endpoints: (opts.endpointNames ?? ["e1"]).map((name, index) => ({
+            id: `e${index + 1}`,
+            name,
+            kind: "chat",
+            models: index === 0 ? opts.models ?? [] : [],
+          })),
+          defaultModel: opts.defaultModel ?? opts.models?.[0]?.id ?? null,
           agentApprovalMode: durableMode,
         }),
         setDefaultAgentApprovalMode: async (mode: "ask" | "auto") => {
@@ -195,17 +201,31 @@ describe("app-agent 面板", () => {
     expect(session.mode).toBe("ask");
   });
 
-  it("模型选择回写 session.setModel", async () => {
+  it("模型 pill 菜单选择回写 session.setModel", async () => {
     const { ctx, el, calls } = fakeCtx([], {
       models: [{ id: "m1", capabilities: [] }, { id: "m2", capabilities: ["vision"] }],
       defaultModel: "m1",
     });
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const select = el.querySelector<HTMLSelectElement>(".agent-model-select")!;
-    select.value = "m2";
-    select.dispatchEvent(new Event("change"));
+    el.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
+    el.querySelector<HTMLElement>("[data-model-option='m2']")!.click();
     expect(calls).toContainEqual(["setModel", "m2"]);
+  });
+
+  it("模型菜单按厂商分组展示", async () => {
+    const { ctx, el } = fakeCtx([], {
+      models: [{ id: "m1", capabilities: [] }],
+      endpointNames: ["MiniMax", "Mock"],
+      defaultModel: "m1",
+    });
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    el.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
+    const pop = el.querySelector<HTMLElement>(".agent-model-pop")!;
+    expect(pop.textContent).toContain("MiniMax");
+    expect(pop.textContent).toContain("Mock");
+    expect(el.querySelectorAll("[data-model-option]").length).toBe(1);
   });
 
   it("历史审批行渲染为只读决策行", async () => {
@@ -220,12 +240,32 @@ describe("app-agent 面板", () => {
     expect(line?.querySelector("button")).toBeNull();
   });
 
-  it("历史会话下拉列出并打开", async () => {
-    const { ctx, el } = fakeCtx([{ id: "s9", title: "旧会话" }]);
+  it("历史浮层列出会话并点击切换", async () => {
+    const { ctx, el, openCalls } = fakeCtx([{ id: "s9", title: "旧会话" }]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const item = el.querySelector<HTMLElement>("[data-session-id='s9']");
-    expect(item?.textContent).toContain("旧会话");
+    el.querySelector<HTMLButtonElement>("[data-history-toggle]")!.click();
+    expect(el.querySelector<HTMLElement>(".agent-history-pop")!.classList.contains("open")).toBe(true);
+    const item = el.querySelector<HTMLElement>("[data-session-id='s9']")!;
+    expect(item.textContent).toContain("旧会话");
+    item.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(openCalls.at(-1)).toMatchObject({ id: "s9" });
+    expect(el.querySelector<HTMLElement>(".agent-history-pop")!.classList.contains("open")).toBe(false);
+  });
+
+  it("header 单行且历史可搜索", async () => {
+    const { ctx, el } = fakeCtx([{ id: "s1", title: "总结笔记" }, { id: "s2", title: "线代复习" }]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(el.querySelectorAll(".agent-head-row > *").length).toBeLessThanOrEqual(5);
+    el.querySelector<HTMLButtonElement>("[data-history-toggle]")!.click();
+    const search = el.querySelector<HTMLInputElement>("[data-history-search]")!;
+    search.value = "线代";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    const items = el.querySelectorAll("[data-session-option]");
+    expect(items.length).toBe(1);
+    expect(items[0].textContent).toContain("线代复习");
   });
 
   it("root 从未开库变为有值时重置并重建 agent 会话", async () => {
@@ -348,7 +388,7 @@ describe("agent-ui v2 回合过程组", () => {
     const { ctx, el } = fakeCtx([], {
       lines: [
         { type: "message", message: { role: "user", content: "读一下" } },
-        { type: "tool", callId: "h1", name: "read", argumentsText: "{}", content: "内容", isError: false },
+        { type: "message", message: { role: "assistant", reasoning: null, text: "", toolCalls: [{ id: "h1", name: "read", argumentsText: "{}", index: 0 }], usage: null, finishReason: "tool_calls" } },
         { type: "message", message: { role: "assistant", reasoning: null, text: "好了", toolCalls: [], usage: null, finishReason: "stop" } },
       ],
     });
