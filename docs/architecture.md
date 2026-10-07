@@ -40,8 +40,8 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/agent-core/tools.ts       agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
   plugins/agent-core/types.ts       agent-core 消息、批准与会话日志类型契约（→ llm.ts）
   plugins/app-agent/attachments.ts  app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
-  plugins/app-agent/index.ts        app-agent 右栏插件：会话列表/模式/模型选择、流式回合、审批卡、附件 composer 与清理（→ service.ts、loop.ts、tools.ts、llm.ts、attachments.ts、render.ts）（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts）
-  plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、工具结果折叠卡、审批 pending/decided 卡与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
+  plugins/app-agent/index.ts        app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts）
+  plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
   plugins/app-shell/index.ts        app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
   plugins/app-windows/index.ts      app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts      doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）

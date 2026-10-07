@@ -33,7 +33,7 @@
   "src/plugins/app-shell/index.ts": "app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态",
   "src/plugins/app-windows/index.ts": "app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口",
   "src/plugins/app-agent/attachments.ts": "app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝",
-  "src/plugins/app-agent/render.ts": "app-agent 渲染纯函数：流式快照合帧重绘、工具结果折叠卡、审批 pending/decided 卡与 compaction 分隔",
+  "src/plugins/app-agent/render.ts": "app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔",
   "src/plugins/doc-markdown/editor.ts": "doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂",
   "src/plugins/doc-markdown/index.ts": "doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 加载/错误态 + 乱序读取防护 + 脏标记/保存重试 + 全局 Mod-S + 关窗/切换守卫（file-opened 挂渲染，kind 不符清空）",
   "src/plugins/doc-markdown/mode.ts": "doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）",
@@ -65,5 +65,5 @@
   "src/plugins/agent-core/loop.ts": "agent-core 回合状态机：wire 组装、快照事件、串行工具回灌与半截不落账",
   "src/plugins/agent-core/service.ts": "agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction 与生命周期",
   "src/plugins/agent-core/index.ts": "agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话",
-  "src/plugins/app-agent/index.ts": "app-agent 右栏插件：会话列表/模式/模型选择、流式回合、审批卡、附件 composer 与清理（→ service.ts、loop.ts、tools.ts、llm.ts、attachments.ts、render.ts）"
+  "src/plugins/app-agent/index.ts": "app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理"
 }

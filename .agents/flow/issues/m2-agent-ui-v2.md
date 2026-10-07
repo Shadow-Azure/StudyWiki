@@ -6,13 +6,19 @@
 kind: issue
 milestone: m2
 priority: P1
-status: backlog
+status: ready
 scope:
+  - .agents/flow/issues/m2-agent-ui-v2.*
+  - .agents/notes/implemented/feature/2026-10-07-agent-ui-v2.*
+  - docs/architecture.*
+  - scripts/code-map.manifest.json
   - src/plugins/app-agent/**
   - src/styles.css
   - tests/app-agent*.ts
   - plans/2026-10-07-agent-ui-*.md
-adr: []
+  - plans/agent-ui-preview-v2.html
+adr:
+  - ../../notes/implemented/feature/2026-10-07-agent-ui-v2.md
 github:
   number: 52
   url: https://github.com/Shadow-Azure/StudyWiki/issues/52

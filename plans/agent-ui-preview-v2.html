@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StudyWiki Agent 面板交互预览 · dsh 风格</title>
+<style>
+  :root{
+    --chrome:#f4f5f7; --paper:#fff; --raise:#fff; --code-bg:#f4f6f9;
+    --hairline:#d9dee5; --hairline-soft:#e7ebef;
+    --ink:#20242a; --ink-2:#5d6673; --ink-3:#8d96a2;
+    --azurite:#2563eb; --azurite-deep:#1d4ed8; --azurite-wash:rgba(37,99,235,.1);
+    --cinnabar:#dc2626; --cinnabar-deep:#b91c1c; --cinnabar-wash:rgba(220,38,38,.09);
+    --jade:#16803c; --jade-wash:rgba(22,128,60,.1);
+    --wash:rgba(32,36,42,.055); --shadow:0 18px 44px rgba(23,27,33,.16);
+    --r-s:5px; --r-m:8px; --r-l:8px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#eef1f5,#e6e9ef);color:var(--ink);font-family:var(--font);min-height:100vh;padding:28px 24px 60px}
+  header.page{max-width:1280px;margin:0 auto 18px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+  .page h1{margin:0;font-size:19px;letter-spacing:.2px}
+  .page p{margin:6px 0 0;color:var(--ink-2);font-size:13px}
+  .badge{display:inline-flex;height:22px;align-items:center;padding:0 9px;border-radius:999px;background:var(--azurite-wash);color:var(--azurite-deep);font-size:11px;font-weight:600}
+  .stage{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+  .panel-card{background:var(--paper);border:1px solid var(--hairline);border-radius:14px;box-shadow:0 10px 30px rgba(23,27,33,.08);overflow:hidden;display:flex;flex-direction:column;height:760px;position:relative}
+  .panel-tag{position:absolute;top:10px;right:10px;z-index:5;height:22px;display:inline-flex;align-items:center;padding:0 9px;border-radius:999px;background:var(--wash);color:var(--ink-2);font-size:11px;font-weight:600}
+  .panel-tag.bad{background:var(--cinnabar-wash);color:var(--cinnabar-deep)}
+  .panel-tag.good{background:var(--jade-wash);color:var(--jade)}
+
+  /* ---------- 通用面板 ---------- */
+  .agent{display:flex;flex:1;flex-direction:column;min-height:0;background:var(--paper)}
+  .agent-head{flex:none;padding:10px 12px 8px;border-bottom:1px solid var(--hairline-soft)}
+  .head-row{display:flex;align-items:center;gap:7px;min-width:0}
+  .title{flex:1;min-width:0;overflow:hidden;font-size:13px;font-weight:650;white-space:nowrap;text-overflow:ellipsis}
+  .status-dot{width:7px;height:7px;border-radius:50%;background:var(--jade);box-shadow:0 0 0 3px var(--jade-wash)}
+  .status-dot.run{background:var(--azurite);box-shadow:0 0 0 3px var(--azurite-wash);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.45}}
+  .icon-btn{width:26px;height:26px;border:0;border-radius:8px;background:transparent;color:var(--ink-2);font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .icon-btn:hover{background:var(--wash);color:var(--ink)}
+  .pill{height:24px;padding:0 10px;border:0;border-radius:999px;background:var(--wash);color:var(--ink);font-size:11.5px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+  .pill:hover{background:rgba(32,36,42,.09)}
+  .pill .caret{font-size:8px;color:var(--ink-3)}
+  .agent-context{display:flex;align-items:center;gap:5px;padding:8px 12px 0;color:var(--ink-3);font-size:11.5px}
+  .ctx-dot{color:var(--azurite);font-size:7px;line-height:1}
+  .transcript{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+  .msg-user{align-self:flex-end;max-width:78%;padding:8px 11px;border-radius:12px 12px 3px 12px;background:var(--azurite-wash);color:var(--ink);font-size:12.5px;line-height:1.55}
+  .msg-assistant{max-width:100%;color:var(--ink);font-size:12.5px;line-height:1.65}
+  .msg-assistant .meta{display:flex;align-items:center;gap:6px;margin-bottom:5px;color:var(--ink-3);font-size:10.5px}
+  .msg-assistant .meta .model{color:var(--ink-2);font-weight:600}
+  .caret{display:inline-block;width:2px;height:12px;margin-left:2px;background:var(--azurite);vertical-align:-1px;animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* ---------- 过程摘要条（核心新交互） ---------- */
+  .process{border:1px solid var(--hairline-soft);border-radius:10px;background:var(--raise);overflow:hidden}
+  .process.open{border-color:var(--hairline)}
+  .process-summary{display:flex;align-items:center;gap:7px;min-height:30px;padding:5px 9px;cursor:pointer;user-select:none}
+  .process-summary:hover{background:var(--wash)}
+  .process-summary .chev{width:12px;color:var(--ink-3);font-size:9px;transition:transform .15s}
+  .process.open .chev{transform:rotate(90deg)}
+  .process-summary .state{width:14px;display:inline-flex;justify-content:center;color:var(--jade);font-size:11px}
+  .process.running .state{color:var(--azurite)}
+  .process-summary .text{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--ink-2);font-size:11.5px}
+  .process.running .text{color:var(--ink)}
+  .process-summary .time{flex:none;color:var(--ink-3);font-size:10.5px}
+  .process-body{display:none;border-top:1px solid var(--hairline-soft);padding:7px 9px 8px 24px}
+  .process.open .process-body{display:block}
+  .step{display:grid;grid-template-columns:14px 62px 1fr auto;gap:7px;align-items:center;padding:4px 0;color:var(--ink-2);font-size:11.5px}
+  .step+.step{border-top:1px dashed var(--hairline-soft)}
+  .step .ic{color:var(--ink-3);font-size:10px;text-align:center}
+  .step .name{color:var(--ink);font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px}
+  .step .target{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .step .dur{color:var(--ink-3);font-size:10px}
+  .step.ok .ic{color:var(--jade)}
+  .step.err .ic{color:var(--cinnabar)}
+
+  /* ---------- 审批卡 ---------- */
+  .approval{position:relative;padding:10px 11px 11px 13px;border:1px solid color-mix(in srgb,var(--cinnabar) 30%,transparent);border-left:2px solid var(--cinnabar);border-radius:10px;background:var(--raise);box-shadow:0 6px 18px rgba(23,27,33,.06)}
+  .approval.done{border:1px solid var(--hairline-soft);border-left:2px solid var(--jade);box-shadow:none;padding:7px 10px 7px 12px;display:flex;align-items:center;gap:7px;color:var(--ink-2);font-size:11.5px}
+  .approval.done .dot{color:var(--jade);font-size:10px}
+  .approval .kind{color:var(--cinnabar-deep);font-weight:650;font-size:11px}
+  .approval .path{margin-top:4px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--ink);overflow-wrap:anywhere}
+  .approval .actions{display:flex;gap:7px;margin-top:9px}
+  .btn{height:27px;padding:0 12px;border:0;border-radius:999px;background:var(--azurite);color:#fff;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+  .btn:hover{background:var(--azurite-deep)}
+  .btn.ghost{background:transparent;color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--hairline)}
+  .btn.ghost:hover{background:var(--wash);color:var(--ink)}
+  .btn.text{background:transparent;color:var(--azurite);padding:0 4px}
+  .btn.text:hover{background:transparent;text-decoration:underline}
+
+  /* ---------- Composer ---------- */
+  .composer-wrap{flex:none;padding:10px 12px 12px;border-top:1px solid var(--hairline-soft)}
+  .composer{border:1px solid var(--hairline);border-radius:12px;background:var(--raise);transition:border-color .15s,box-shadow .15s}
+  .composer:focus-within{border-color:var(--azurite);box-shadow:0 0 0 3px var(--azurite-wash)}
+  .composer textarea{display:block;width:100%;min-height:52px;max-height:140px;padding:9px 11px 2px;border:0;background:transparent;color:var(--ink);font:inherit;font-size:12.5px;line-height:1.5;resize:none;outline:none}
+  .composer textarea::placeholder{color:var(--ink-3)}
+  .composer-row{display:flex;align-items:center;gap:6px;padding:5px 7px 7px 8px}
+  .attach{width:25px;height:25px;border:0;border-radius:7px;background:transparent;color:var(--ink-2);font-size:13px;cursor:not-allowed;opacity:.4}
+  .segment{display:inline-flex;overflow:hidden;border-radius:999px;background:var(--wash)}
+  .segment button{height:23px;padding:0 9px;border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:10.5px;cursor:pointer}
+  .segment button.active{background:var(--raise);color:var(--ink);font-weight:650;box-shadow:inset 0 0 0 1px var(--hairline)}
+  .send{height:26px;padding:0 13px;border:0;border-radius:999px;background:var(--azurite);color:#fff;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+  .send:hover{background:var(--azurite-deep)}
+  .hint{padding:0 4px;color:var(--ink-3);font-size:10px}
+  .statusline{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;padding:0 4px;color:var(--ink-3);font-size:10px}
+  .statusline .tokens{color:var(--ink-2)}
+
+  /* ---------- Popovers ---------- */
+  .pop{position:absolute;z-index:20;min-width:210px;background:var(--raise);border:1px solid var(--hairline);border-radius:10px;box-shadow:var(--shadow);padding:6px;display:none}
+  .pop.open{display:block}
+  .pop .p-title{padding:5px 7px;color:var(--ink-3);font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase}
+  .pop .item{display:flex;align-items:center;gap:7px;width:100%;padding:6px 7px;border:0;border-radius:7px;background:transparent;color:var(--ink);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+  .pop .item:hover{background:var(--wash)}
+  .pop .item.current{background:var(--azurite-wash);color:var(--azurite-deep);font-weight:650}
+  .pop .item .sub{margin-left:auto;color:var(--ink-3);font-size:10px}
+  .pop .sep{height:1px;margin:5px 2px;background:var(--hairline-soft)}
+
+  /* ---------- 现状面板 ---------- */
+  .legacy-controls{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:8px}
+  .legacy-mode{display:inline-flex;overflow:hidden;border-radius:999px;background:var(--wash)}
+  .legacy-mode button{height:23px;padding:0 9px;border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:10.5px;cursor:pointer}
+  .legacy-mode button.active{background:var(--raise);color:var(--ink);font-weight:650;box-shadow:inset 0 0 0 1px var(--hairline)}
+  select.legacy{height:23px;padding:0 20px 0 8px;border:0;border-radius:999px;background:var(--wash) url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%235d6673' fill='none' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center;appearance:none;color:var(--ink);font:inherit;font-size:11px;cursor:pointer}
+  .toolcard{min-width:0;padding:8px 10px;border:1px solid var(--hairline-soft);border-radius:var(--r-m);background:var(--raise);font-size:11.5px}
+  .toolcard .t{display:flex;align-items:baseline;gap:6px}
+  .toolcard .name{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--ink)}
+  .toolcard .args{color:var(--ink-2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .toolcard .res{margin-top:5px;color:var(--ink-2);font-size:10.5px;line-height:1.45;max-height:44px;overflow:hidden}
+  .toolcard.pending{border-color:color-mix(in srgb,var(--azurite) 25%,transparent)}
+  .notice{margin:0 12px;padding:7px 10px;border-radius:var(--r-m);background:var(--cinnabar-wash);color:var(--cinnabar-deep);font-size:11px}
+  .legacy-head-note{padding:8px 12px 0;color:var(--ink-3);font-size:10.5px}
+
+  /* ---------- Toast ---------- */
+  .toast{position:absolute;right:12px;bottom:96px;z-index:30;display:flex;gap:8px;align-items:flex-start;max-width:280px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--cinnabar) 26%,transparent);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);color:var(--ink);font-size:11px;line-height:1.45}
+  .toast .x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;padding:0}
+  .toast .t{color:var(--cinnabar-deep);font-weight:650}
+
+  .legend{max-width:1280px;margin:16px auto 0;display:flex;gap:12px;flex-wrap:wrap;color:var(--ink-2);font-size:11.5px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+  @media (max-width:1000px){.stage{grid-template-columns:1fr}.panel-card{height:680px}}
+
+  /* ---------- v2：审批接管 composer ---------- */
+  .composer.approval-mode{border-color:color-mix(in srgb,var(--cinnabar) 32%,transparent);box-shadow:0 0 0 3px var(--cinnabar-wash)}
+  .composer.approval-mode:focus-within{border-color:var(--cinnabar);box-shadow:0 0 0 3px var(--cinnabar-wash)}
+  .approval-input{display:flex;gap:8px;min-height:52px;padding:9px 11px 2px;color:var(--ink);font-size:12.5px;line-height:1.5}
+  .approval-input .warn{flex:none;color:var(--cinnabar);font-size:12px;line-height:1.4}
+  .approval-input .body{min-width:0}
+  .approval-input .q{font-weight:650}
+  .approval-input .sub{margin-top:3px;color:var(--ink-2)}
+  .approval-input .path{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--ink)}
+  .btn.approve{background:var(--cinnabar)}
+  .btn.approve:hover{background:var(--cinnabar-deep)}
+  .detail-trigger{display:inline-flex;align-items:center;gap:4px;height:25px;padding:0 9px;border:0;border-radius:999px;background:var(--wash);color:var(--ink-2);font:inherit;font-size:10.5px;cursor:pointer}
+  .detail-trigger:hover{background:rgba(32,36,42,.09);color:var(--ink)}
+  .detail-trigger .caret{font-size:8px;transition:transform .15s}
+  .detail-trigger[aria-expanded="true"] .caret{transform:rotate(180deg)}
+  .approval-pop{position:absolute;left:12px;right:12px;bottom:118px;z-index:40;background:var(--raise);border:1px solid var(--hairline);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;display:none}
+  .approval-pop.open{display:block}
+  .ap-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-bottom:1px solid var(--hairline-soft)}
+  .ap-title{display:flex;align-items:center;gap:6px;color:var(--ink);font-size:12px;font-weight:650}
+  .ap-title .dot{width:7px;height:7px;border-radius:50%;background:var(--cinnabar)}
+  .ap-close{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);font-size:12px;cursor:pointer}
+  .ap-close:hover{background:var(--wash);color:var(--ink)}
+  .ap-body{padding:9px 11px 11px;display:flex;flex-direction:column;gap:8px}
+  .ap-row{display:grid;grid-template-columns:52px 1fr;gap:8px;font-size:11.5px}
+  .ap-row .k{color:var(--ink-3)}
+  .ap-row .v{color:var(--ink);min-width:0;overflow-wrap:anywhere}
+  .ap-row .v.mono{font-family:ui-monospace,Menlo,monospace;font-size:11px}
+  .ap-diff{border:1px solid var(--hairline-soft);border-radius:8px;background:var(--code-bg);overflow:auto;max-height:132px;padding:7px 8px;font:11px/1.55 ui-monospace,Menlo,monospace;color:var(--ink-2)}
+  .ap-diff .add{color:#1a7f37;background:rgba(22,128,60,.08);display:block}
+  .ap-note{color:var(--ink-3);font-size:10.5px;line-height:1.5}
+  .composer-note{display:flex;align-items:center;gap:6px;margin-top:6px;padding:0 4px;color:var(--ink-3);font-size:10px}
+  .composer-note .k{padding:1px 5px;border-radius:4px;background:var(--wash);color:var(--ink-2);font-family:inherit;font-size:9.5px}
+
+</style>
+</head>
+<body>
+<header class="page">
+  <div>
+    <h1>StudyWiki Agent 面板 · dsh 风格交互预览</h1>
+    <p>核心：过程默认折叠，未展开时只给结论；模型/审批模式归 composer，历史归会话菜单，审批只在决策时展开。</p>
+  </div>
+  <span class="badge">可交互原型 · 2026-10-07</span>
+</header>
+
+<div class="stage">
+
+  <!-- A. 现状 -->
+  <section class="panel-card">
+    <span class="panel-tag bad">现状</span>
+    <div class="agent">
+      <header class="agent-head">
+        <div class="head-row">
+          <span class="status-dot"></span>
+          <div class="title">总结学习笔记</div>
+          <select class="pill legacy" style="height:24px" aria-label="历史会话"><option>总结学习笔记</option><option>昨天：线代复习</option></select>
+          <button class="pill">新建</button>
+        </div>
+        <div class="legacy-controls">
+          <div class="legacy-mode"><button class="active">请求批准</button><button>帮我批准</button></div>
+          <select class="legacy">新会话：请求批准</select>
+          <select class="legacy">minimax-m2.7</select>
+        </div>
+      </header>
+      <div class="legacy-head-note">● 01-线性代数.md</div>
+      <div class="transcript">
+        <div class="msg-user">读三篇笔记，总结每篇主题，写入 summary.md</div>
+        <div class="toolcard"><div class="t"><span class="name">grep</span><span class="args">pattern=主题 query=笔记</span></div><div class="res">01-线性代数.md:…特征值…</div></div>
+        <div class="toolcard"><div class="t"><span class="name">read</span><span class="args">path=01-线性代数.md</span></div><div class="res">返回 18 行…</div></div>
+        <div class="toolcard"><div class="t"><span class="name">read</span><span class="args">path=02-概率论.md</span></div><div class="res">返回 14 行…</div></div>
+        <div class="toolcard"><div class="t"><span class="name">read</span><span class="args">path=03-操作系统.md</span></div><div class="res">返回 12 行…</div></div>
+        <div class="toolcard pending"><div class="t"><span class="name">write</span><span class="args">path=summary.md bytes=322</span></div><div class="res">等待审批</div></div>
+        <div class="msg-assistant">我已读取三篇笔记，接下来会写入总结…<span class="caret"></span></div>
+      </div>
+      <div class="notice">MOCK: 仅观测演示，此条为现状问题示意</div>
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea placeholder="让 Agent 读取、检索或修改当前库…">写入 summary.md</textarea>
+          <div class="composer-row"><button class="attach" title="暂不可用">📎</button><span class="hint">Enter 发送</span><button class="send">发送</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- B. 优化后 · 运行中 -->
+  <section class="panel-card">
+    <span class="panel-tag good">优化后 · 运行中</span>
+    <div class="agent">
+      <header class="agent-head">
+        <div class="head-row">
+          <span class="status-dot run"></span>
+          <div class="title">总结学习笔记</div>
+          <button class="icon-btn" title="新建会话">＋</button>
+          <button class="icon-btn pop-trigger" data-pop="history-b" title="历史会话">▤</button>
+          <button class="icon-btn" title="更多">⋯</button>
+        </div>
+      </header>
+      <div class="agent-context"><span class="ctx-dot">●</span> 01-线性代数.md</div>
+      <div class="transcript">
+        <div class="msg-user">读三篇笔记，总结每篇主题，写入 summary.md</div>
+        <div class="msg-assistant">
+          <div class="meta"><span class="model">MiniMax · M2.7</span><span>·</span><span>12.4k tokens</span></div>
+          已读取三篇笔记，主题分别为：线性代数（特征值与对角化）、概率论（贝叶斯与大数定律）、操作系统（进程与死锁）。正在整理并写入 summary.md。<span class="caret"></span>
+        </div>
+        <div class="process running open" onclick="this.classList.toggle('open')">
+          <div class="process-summary">
+            <span class="chev">▶</span><span class="state">◎</span>
+            <span class="text">正在写入 summary.md · 已完成 4 个动作</span>
+            <span class="time">2.4s</span>
+          </div>
+          <div class="process-body">
+            <div class="step ok"><span class="ic">✓</span><span class="name">grep</span><span class="target">主题 · 笔记</span><span class="dur">0.3s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">01-线性代数.md</span><span class="dur">0.2s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">02-概率论.md</span><span class="dur">0.2s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">03-操作系统.md</span><span class="dur">0.2s</span></div>
+            <div class="step"><span class="ic">◎</span><span class="name">write</span><span class="target">summary.md · 322 B</span><span class="dur">…</span></div>
+          </div>
+        </div>
+        <div class="process" onclick="this.classList.toggle('open')">
+          <div class="process-summary"><span class="chev">▶</span><span class="state">✓</span><span class="text">已检索并阅读 2 个文件</span><span class="time">0.7s</span></div>
+          <div class="process-body">
+            <div class="step ok"><span class="ic">✓</span><span class="name">grep</span><span class="target">特征值</span><span class="dur">0.2s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">01-线性代数.md</span><span class="dur">0.5s</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea placeholder="问 Agent 关于当前库的问题…（Enter 发送 · Shift+Enter 换行）"></textarea>
+          <div class="composer-row">
+            <button class="attach" title="粘贴或拖入图片/音频">📎</button>
+            <button class="pill pop-trigger" data-pop="model-b">MiniMax · M2.7 <span class="caret">▾</span></button>
+            <div class="segment"><button class="active">请求批准</button><button>帮我批准</button></div>
+            <span style="flex:1"></span>
+            <button class="send">停止</button>
+          </div>
+        </div>
+        <div class="statusline"><span>回合进行中 · 可随时停止</span><span class="tokens">12.4k → 1.2k tokens</span></div>
+      </div>
+      <div class="pop" id="history-b" style="top:46px;right:10px">
+        <div class="p-title">历史会话</div>
+        <button class="item current">总结学习笔记 <span class="sub">今天</span></button>
+        <button class="item">线代复习计划 <span class="sub">昨天</span></button>
+        <button class="item">操作系统错题 <span class="sub">10-05</span></button>
+        <div class="sep"></div><button class="item">＋ 新建会话</button>
+      </div>
+      <div class="pop" id="model-b" style="bottom:96px;left:12px">
+        <div class="p-title">MiniMax</div>
+        <button class="item current">minimax-m2.7 <span class="sub">tools</span></button>
+        <button class="item">minimax-m3 <span class="sub">tools</span></button>
+        <div class="sep"></div><div class="p-title">Mock</div><button class="item">glm-5.3 <span class="sub">vision</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- C. 优化后 · 待审批（v2：composer 接管 + 上方详情浮层） -->
+  <section class="panel-card">
+    <span class="panel-tag good">优化后 · 待审批 v2</span>
+    <div class="agent">
+      <header class="agent-head">
+        <div class="head-row">
+          <span class="status-dot run"></span>
+          <div class="title">总结学习笔记</div>
+          <button class="icon-btn" title="新建会话">＋</button>
+          <button class="icon-btn pop-trigger" data-pop="history-c" title="历史会话">▤</button>
+          <button class="icon-btn" title="更多">⋯</button>
+        </div>
+      </header>
+      <div class="agent-context"><span class="ctx-dot">●</span> 01-线性代数.md</div>
+      <div class="transcript">
+        <div class="msg-user">读三篇笔记，总结每篇主题，写入 summary.md</div>
+        <div class="msg-assistant">
+          <div class="meta"><span class="model">MiniMax · M2.7</span><span>·</span><span>已分析 3 个文件</span></div>
+          三篇笔记主题已梳理完成，等待你确认写入。
+        </div>
+        <div class="process" onclick="this.classList.toggle('open')">
+          <div class="process-summary"><span class="chev">▶</span><span class="state">✓</span><span class="text">已分析 3 个文件 · 检索 1 次</span><span class="time">1.1s</span></div>
+          <div class="process-body">
+            <div class="step ok"><span class="ic">✓</span><span class="name">grep</span><span class="target">主题 · 笔记</span><span class="dur">0.3s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">01-线性代数.md</span><span class="dur">0.2s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">02-概率论.md</span><span class="dur">0.2s</span></div>
+            <div class="step ok"><span class="ic">✓</span><span class="name">read</span><span class="target">03-操作系统.md</span><span class="dur">0.2s</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer approval-mode" id="approval-composer">
+          <div class="approval-input">
+            <span class="warn">⚠</span>
+            <div class="body">
+              <div class="q">Agent 请求写入 1 个文件</div>
+              <div class="sub"><span class="path">summary.md</span> · 322 B · 批准后将继续执行</div>
+            </div>
+          </div>
+          <div class="composer-row">
+            <button class="detail-trigger" id="detail-trigger" aria-expanded="false">查看详情 <span class="caret">▾</span></button>
+            <span class="pill" style="cursor:default">MiniMax · M2.7</span>
+            <span style="flex:1"></span>
+            <button class="btn approve" onclick="decide('approved')">批准 <span style="opacity:.75">⌘⏎</span></button>
+            <button class="btn ghost" onclick="decide('denied')">拒绝 <span style="opacity:.75">Esc</span></button>
+          </div>
+        </div>
+        <div class="composer-note">
+          <span>决策仅作用于本次请求</span>
+          <span class="k">⌘⏎</span><span>批准</span>
+          <span class="k">Esc</span><span>拒绝</span>
+          <span style="flex:1"></span>
+          <span>详情浮层不会遮挡 transcript 滚动</span>
+        </div>
+
+        <div class="approval-pop" id="approval-pop">
+          <div class="ap-head">
+            <div class="ap-title"><span class="dot"></span>写入文件 · 等待批准</div>
+            <button class="ap-close" onclick="toggleDetail(false)">×</button>
+          </div>
+          <div class="ap-body">
+            <div class="ap-row"><span class="k">目标</span><span class="v mono">/tmp/sw-testlib/summary.md</span></div>
+            <div class="ap-row"><span class="k">变更</span><span class="v">+12 行 · 0 行删除 · 322 B</span></div>
+            <div class="ap-row"><span class="k">工具</span><span class="v mono">write(path, content)</span></div>
+            <div class="ap-diff"><span class="add">+# 笔记总结</span><span class="add"></span><span class="add">## 1. 线性代数笔记</span><span class="add">**主题**：矩阵理论基础</span><span class="add"></span><span class="add">## 2. 概率论笔记</span><span class="add">**主题**：概率推断与极限定理</span><span class="add"></span><span class="add">## 3. 操作系统笔记</span><span class="add">**主题**：进程管理与死锁</span></div>
+            <div class="ap-note">本次批准仅允许这一次写入；“帮我批准”模式的默认值可在模型设置中修改。拒绝后 Agent 会收到拒绝原因并可继续对话。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast" id="toast-c"><div><div class="t">网络波动</div>已自动重试 1 次，会话未中断。</div><button class="x" onclick="this.closest('.toast').remove()">×</button></div>
+      <div class="pop" id="history-c" style="top:46px;right:10px">
+        <div class="p-title">历史会话</div>
+        <button class="item current">总结学习笔记 <span class="sub">今天</span></button>
+        <button class="item">线代复习计划 <span class="sub">昨天</span></button>
+        <div class="sep"></div><button class="item">＋ 新建会话</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="legend">
+  <span><i style="background:var(--azurite)"></i> 运行中/主操作</span>
+  <span><i style="background:var(--jade)"></i> 已完成</span>
+  <span><i style="background:var(--cinnabar)"></i> 待审批/错误</span>
+  <span>点击“已分析…”或“正在写入…”可展开详细工具时间线</span>
+</div>
+
+<script>
+const panelCard=document.querySelectorAll('.panel-card');
+document.querySelectorAll('.pop-trigger').forEach(btn=>{
+  btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const pop=document.getElementById(btn.dataset.pop);
+    const wasOpen=pop.classList.contains('open');
+    document.querySelectorAll('.pop').forEach(p=>p.classList.remove('open'));
+    if(!wasOpen)pop.classList.add('open');
+  });
+});
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.pop'))document.querySelectorAll('.pop').forEach(p=>p.classList.remove('open'));
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.pop').forEach(p=>p.classList.remove('open'))});
+function setApproval(doneText,cls){
+  const a=document.getElementById('approval-c');
+  a.className='approval done '+cls;
+  a.innerHTML='<span class="dot">✓</span><span>'+doneText+'</span>';
+}
+function approve(){setApproval('已批准写入 summary.md · 用户','ok')}
+function deny(){setApproval('已拒绝写入 summary.md · 用户','deny')}
+
+const detailTrigger=document.getElementById('detail-trigger');
+const approvalPop=document.getElementById('approval-pop');
+function toggleDetail(open){
+  const next=open??!approvalPop.classList.contains('open');
+  approvalPop.classList.toggle('open',next);
+  detailTrigger.setAttribute('aria-expanded',String(next));
+}
+if(detailTrigger){
+  detailTrigger.addEventListener('click',e=>{e.stopPropagation();toggleDetail()});
+  approvalPop.addEventListener('click',e=>e.stopPropagation());
+}
+function decide(kind){
+  toggleDetail(false);
+  const c=document.getElementById('approval-composer');
+  const ok=kind==='approved';
+  c.classList.remove('approval-mode');
+  c.innerHTML='<div class="approval-input"><span class="warn" style="color:'+(ok?'var(--jade)':'var(--ink-3)')+'">'+(ok?'✓':'✕')+'</span><div class="body"><div class="q">'+(ok?'已批准写入 summary.md':'已拒绝写入 summary.md')+'</div><div class="sub">决策者：用户 · Agent 将继续执行</div></div></div><div class="composer-row"><span class="hint">Enter 继续对话</span><span style="flex:1"></span><button class="send">发送</button></div>';
+}
+
+</script>
+</body>
+</html>
