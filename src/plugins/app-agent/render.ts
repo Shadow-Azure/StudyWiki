@@ -333,3 +333,80 @@ async function copyText(text: string, button: HTMLButtonElement): Promise<void> 
     // 剪贴板不可用：保持原样，不打断对话
   }
 }
+
+/** One collapsible turn process group: live tool steps stay hidden until the
+ * user expands the summary; settling hides the body again unless focus is
+ * inside, so keyboard users never lose their place.
+ * @returns Group facade owned by the caller; steps appended via addStep. */
+export function createProcessGroup(): {
+  root: HTMLElement;
+  body: HTMLElement;
+  addStep(step: HTMLElement): void;
+  settle(label: string, durationMs: number): void;
+  setRunning(text: string): void;
+} {
+  const root = document.createElement("section");
+  root.className = "agent-process";
+  const summary = document.createElement("button");
+  summary.type = "button";
+  summary.className = "agent-process-summary";
+  summary.setAttribute("aria-expanded", "false");
+  const chev = document.createElement("span");
+  chev.className = "agent-process-chevron";
+  chev.textContent = "▸";
+  const state = document.createElement("span");
+  state.className = "agent-process-state";
+  state.textContent = "●";
+  const text = document.createElement("span");
+  text.className = "agent-process-text";
+  const time = document.createElement("span");
+  time.className = "agent-process-time";
+  summary.append(chev, state, text, time);
+  summary.addEventListener("click", () => {
+    const open = root.classList.toggle("open");
+    summary.setAttribute("aria-expanded", String(open));
+  });
+  const body = document.createElement("div");
+  body.className = "agent-process-body";
+  root.append(summary, body);
+  return {
+    root,
+    body,
+    addStep(step: HTMLElement): void {
+      body.append(step);
+    },
+    setRunning(value: string): void {
+      text.textContent = value;
+      root.classList.add("running");
+    },
+    settle(label: string, durationMs: number): void {
+      text.textContent = label;
+      time.textContent = `${(durationMs / 1000).toFixed(1)}s`;
+      root.classList.remove("running");
+      root.classList.add("done");
+      if (!root.contains(document.activeElement)) root.classList.remove("open");
+    },
+  };
+}
+
+/** Compact read-only record of one settled approval; replaces the legacy bulky
+ * decided card in the transcript.
+ * @param decision Final decision recorded for the request.
+ * @param label Human summary of the approved or denied action.
+ * @param decider Who decided: “用户” or “审查模型”.
+ * @returns Decision line root owned by the caller. */
+export function renderDecisionLine(decision: "allow" | "deny", label: string, decider: string): HTMLElement {
+  const line = document.createElement("div");
+  line.className = "agent-decision-line";
+  line.dataset.decision = decision;
+  const dot = document.createElement("span");
+  dot.className = "agent-decision-line-dot";
+  dot.textContent = decision === "allow" ? "✓" : "✕";
+  const text = document.createElement("span");
+  text.textContent = label;
+  const source = document.createElement("span");
+  source.className = "agent-decision-line-source";
+  source.textContent = decider;
+  line.append(dot, text, source);
+  return line;
+}
