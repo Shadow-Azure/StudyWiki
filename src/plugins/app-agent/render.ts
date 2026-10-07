@@ -3,11 +3,6 @@ import type { AgentToolCall } from "../agent-core/types";
 import type { ApprovalOutcome, ApprovalRequest } from "../agent-core/tools";
 import { renderMarkdown } from "../../ui/markdown";
 
-/** Pending or persisted decision shown by an approval card. */
-type ApprovalCardState =
-  | "pending"
-  | { decision: ApprovalOutcome["decision"]; decider: "human" | "guardian"; reason?: string };
-
 /** App-agent stream renderer：把同一帧内多次 update 合并为一次重绘，
  * `finalize` 立即落最后快照，避免流结束后尾部 delta 因等待动画帧丢失。
  * @param el Assistant stream container owned by the caller.
