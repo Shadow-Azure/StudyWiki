@@ -13,9 +13,14 @@ pub struct GrepArgs {
     pub pattern: String,
     pub path: String,
     pub glob: Option<String>,
+    /// 可选布尔/数值参数缺省时按工具契约闭合；`limit == 0` 由运行侧落到默认预算。
+    #[serde(default)]
     pub ignore_case: bool,
+    #[serde(default)]
     pub literal: bool,
+    #[serde(default)]
     pub context: u32,
+    #[serde(default)]
     pub limit: u32,
 }
 
@@ -290,14 +295,22 @@ fn tail_chars(value: &str, count: usize) -> String {
     value[start..].to_owned()
 }
 
+/// Tauri `externalBin` 打包时剥掉目标三元组后缀，发布面使用通用 `rg` 名。
+fn sidecar_file_name() -> String {
+    if cfg!(windows) {
+        "rg.exe".into()
+    } else {
+        "rg".into()
+    }
+}
+
 /// 解析发布包内与主程序同级的 ripgrep sidecar；缺失时要求重新构建。
 pub fn sidecar_path() -> Result<PathBuf, GrepError> {
-    let extension = if cfg!(windows) { ".exe" } else { "" };
     let path = std::env::current_exe()
         .map_err(|e| failed(format!("定位主程序失败：{e}")))?
         .parent()
         .ok_or_else(|| failed("主程序路径没有父目录"))?
-        .join(format!("rg-{}{extension}", env!("TARGET_TRIPLE")));
+        .join(sidecar_file_name());
     if path.exists() {
         Ok(path)
     } else {
@@ -521,6 +534,34 @@ mod tests {
             context: 0,
             limit: DEFAULT_LIMIT,
         }
+    }
+
+    #[test]
+    fn packaged_sidecar_uses_tauri_generic_external_bin_name() {
+        let expected = if cfg!(windows) { "rg.exe" } else { "rg" };
+        assert_eq!(sidecar_file_name(), expected);
+    }
+
+    #[test]
+    fn optional_wire_fields_default_like_tool_declaration() {
+        let a: GrepArgs = serde_json::from_value(serde_json::json!({
+            "pattern": "线",
+            "path": "/lib/root",
+        }))
+        .unwrap();
+        assert!(!a.ignore_case);
+        assert!(!a.literal);
+        assert_eq!(a.context, 0);
+        assert_eq!(a.limit, 0);
+
+        let partial: GrepArgs = serde_json::from_value(serde_json::json!({
+            "pattern": "线",
+            "path": "/lib/root",
+            "ignoreCase": true,
+        }))
+        .unwrap();
+        assert!(partial.ignore_case);
+        assert!(!partial.literal);
     }
 
     #[test]

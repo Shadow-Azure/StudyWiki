@@ -21,7 +21,11 @@ export const inject = ["agent", "slots", "workspace"];
 /** Shape of the workspace projection used by the panel chrome. */
 interface AgentWorkspace {
   activeFile: { name: string } | null;
-  events: { on: (event: string, listener: (file?: { name: string } | null) => void) => () => void };
+  events: {
+    on(event: "file-opened", listener: (file?: { name: string } | null) => void): () => void;
+    on(event: "root-changed", listener: (root: string | null) => void): () => void;
+    on(event: string, listener: (value?: unknown) => void): () => void;
+  };
 }
 
 /** One pending tool card tracked until its result event arrives. */
@@ -81,12 +85,15 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let session: AgentSession | null = null;
   let offSession: (() => void) | null = null;
   let offApprovals: (() => void) | null = null;
+  let offRootChanged: (() => void) | null = null;
+  let rootGeneration = 0;
   let renderer: ReturnType<typeof createStreamRenderer> | null = null;
   let activeStream: HTMLElement | null = null;
   let activeWrapper: HTMLElement | null = null;
   let activeTools = new Map<string, ActiveToolCard>();
   let selectedModel: string | null = null;
   let endpointDefault: string | null = null;
+  let durableApprovalMode: "ask" | "auto" = "ask";
   let attachments: PendingAttachment[] = [];
   let sessionTitle = "新会话";
   let sessions: SessionMeta[] = [];
@@ -96,6 +103,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let titleEl: HTMLElement | null = null;
   let sessionSelect: HTMLSelectElement | null = null;
   let modelSelect: HTMLSelectElement | null = null;
+  let defaultModeElement: HTMLSelectElement | null = null;
   let rootNotice: HTMLElement | null = null;
   let contextRow: HTMLElement | null = null;
   let transcript: HTMLElement | null = null;
@@ -108,7 +116,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let modeAuto: HTMLButtonElement | null = null;
 
   const offWorkspace = workspace.events.on("file-opened", (file) => {
-    if (contextRow) paintContext(contextRow, file?.name ?? null);
+    if (contextRow) paintContext(contextRow, file === null || file === undefined ? null : file.name);
+  });
+  offRootChanged = workspace.events.on("root-changed", (root) => {
+    void handleRootChanged(root);
   });
 
   const paintButtons = (): void => {
@@ -338,6 +349,48 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
   };
 
+  const detachSession = (abortOld: boolean): void => {
+    offSession?.();
+    offApprovals?.();
+    offSession = null;
+    offApprovals = null;
+    finishActive();
+    if (abortOld) void session?.abort().catch(() => {});
+    session = null;
+    sessionTitle = "新会话";
+    sessions = [];
+    pendingSend = false;
+    if (transcript) transcript.replaceChildren();
+    paintTitle();
+    paintSessionOptions();
+    paintButtons();
+  };
+
+  const handleRootChanged = async (root: string | null): Promise<void> => {
+    if (disposed) return;
+    const generation = ++rootGeneration;
+    detachSession(true);
+    if (rootNotice) {
+      rootNotice.hidden = true;
+      rootNotice.textContent = "";
+    }
+    if (notice) {
+      notice.hidden = true;
+      notice.textContent = "";
+    }
+    if (contextRow) paintContext(contextRow, null);
+    if (root === null) {
+      if (notice) {
+        notice.textContent = "打开学习库后可使用 Agent";
+        notice.hidden = false;
+      }
+      return;
+    }
+    await openSession(null);
+    if (disposed || generation !== rootGeneration) return;
+    await refreshSessions();
+  };
+
   const attachSession = (next: AgentSession): void => {
     offSession?.();
     offApprovals?.();
@@ -377,11 +430,16 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     transcript.scrollTop = transcript.scrollHeight;
   };
 
-  const openSession = async (id: string | null, title?: string): Promise<void> => {
+  const openSession = async (
+    id: string | null,
+    title?: string,
+    defaultMode: "ask" | "auto" = durableApprovalMode,
+  ): Promise<void> => {
     if (disposed) return;
     try {
-      const next = await ctx.agent.openSession(id);
-      if (disposed) return;
+      const generation = rootGeneration;
+      const next = await ctx.agent.openSession(id, id === null ? defaultMode : undefined);
+      if (disposed || generation !== rootGeneration) return;
       if (title) sessionTitle = title;
       attachSession(next);
       await refreshSessions();
@@ -535,6 +593,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     newButton.className = "agent-new";
     newButton.textContent = "新建";
     newButton.setAttribute("aria-label", "新建会话");
+    newButton.dataset.newSession = "";
     newButton.addEventListener("click", () => void openSession(null, "新会话"));
     titleRow.append(titleEl, sessionSelect, newButton);
 
@@ -570,7 +629,26 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       selectedModel = modelSelect?.value || null;
       session?.setModel(selectedModel);
     });
-    controls.append(modeGroup, modelSelect);
+    defaultModeElement = document.createElement("select");
+    defaultModeElement.className = "agent-default-mode";
+    defaultModeElement.setAttribute("aria-label", "新会话默认审批模式");
+    for (const [value, label] of [["ask", "新会话：请求批准"], ["auto", "新会话：帮我批准"]] as const) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      defaultModeElement.append(option);
+    }
+    defaultModeElement.addEventListener("change", () => {
+      const mode = defaultModeElement?.value === "auto" ? "auto" : "ask";
+      durableApprovalMode = mode;
+      if (llm) void llm.setDefaultAgentApprovalMode(mode).catch((error: unknown) => {
+        if (!disposed && notice) {
+          notice.textContent = `${toPanelError(error).code}: ${toPanelError(error).message}`;
+          notice.hidden = false;
+        }
+      });
+    });
+    controls.append(modeGroup, defaultModeElement, modelSelect);
 
     rootNotice = document.createElement("div");
     rootNotice.className = "agent-root-mismatch";
@@ -630,9 +708,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     paintSessionOptions();
   });
 
-  const loadModels = (): void => {
+  const loadModels = async (): Promise<void> => {
     if (!llm || !modelSelect) return;
-    void llm.listEndpoints().then((settings: RedactedSettings) => {
+    await llm.listEndpoints().then(async (settings: RedactedSettings) => {
       if (disposed || !modelSelect) return;
       const models = settings.endpoints
         .filter((endpoint) => endpoint.kind === "chat")
@@ -640,6 +718,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       const unique = new Map(models.map((model) => [model.id, model]));
       modelSelect.replaceChildren();
       endpointDefault = settings.defaultModel;
+      durableApprovalMode = settings.agentApprovalMode === "auto" ? "auto" : "ask";
+      if (defaultModeElement) defaultModeElement.value = durableApprovalMode;
       const requested = session?.model ?? settings.defaultModel;
       selectedModel = requested && unique.has(requested)
         ? requested
@@ -657,9 +737,13 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     });
   };
 
-  void openSession(null, "新会话");
-  void refreshSessions();
-  queueMicrotask(loadModels);
+  queueMicrotask(() => {
+    void (async () => {
+      await loadModels();
+      await openSession(null, "新会话");
+      await refreshSessions();
+    })();
+  });
 
   return () => {
     disposed = true;
@@ -668,6 +752,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     finishActive();
     void session?.abort().catch(() => {});
     offWorkspace();
+    offRootChanged?.();
     offSlot();
   };
 }

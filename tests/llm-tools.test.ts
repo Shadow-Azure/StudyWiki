@@ -68,18 +68,28 @@ describe("LlmService tools 口", () => {
     expect((seen?.req as { tools: ToolDeclaration[] }).tools[0].name).toBe("read");
   });
 
+  it("setDefaultAgentApprovalMode 调全局设置命令", async () => {
+    let seen: [string, unknown] | undefined;
+    const svc = serviceWith(["text", "tools"], async (cmd, args) => {
+      seen = [cmd, args];
+      return { content: "ok", finishReason: "stop" };
+    });
+    await svc.setDefaultAgentApprovalMode("auto");
+    expect(seen).toEqual(["agent_set_default_approval_mode", { mode: "auto" }]);
+  });
+
   it("assistant toolCalls 与 toolCallId 消息原样透传", async () => {
     let seen: Record<string, unknown> | undefined;
     const svc = serviceWith(["text", "tools"], async (_cmd, args) => {
       seen = args; return { content: "ok", finishReason: "stop" };
     });
     await svc.chat({ model: "m1", tools: TOOLS, messages: [
-      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", argumentsText: "{\"path\":\"/a\"}" }] },
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", arguments: "{\"path\":\"/a\"}" }] },
       { role: "tool", content: "结果", toolCallId: "c1" },
     ] });
     const msgs = (seen?.req as { messages: unknown[] }).messages;
     expect(msgs).toEqual([
-      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", argumentsText: "{\"path\":\"/a\"}" }] },
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", arguments: "{\"path\":\"/a\"}" }] },
       { role: "tool", content: "结果", toolCallId: "c1" },
     ]);
   });

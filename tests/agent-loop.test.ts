@@ -157,7 +157,7 @@ describe("runTurn", () => {
       { role: "tool", callId: "c1", name: "read", content: "结果" },
     ];
     expect(toChatMessages(history)).toEqual([
-      { role: "assistant", content: "t", toolCalls: [{ id: "c1", name: "read", argumentsText: "{}" }] },
+      { role: "assistant", content: "t", toolCalls: [{ id: "c1", name: "read", arguments: "{}" }] },
       { role: "tool", content: "结果", toolCallId: "c1" },
     ]);
   });

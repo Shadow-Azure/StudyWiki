@@ -740,6 +740,7 @@ pub fn llm_list_endpoints(app: AppHandle) -> Result<serde_json::Value, String> {
             })
             .collect::<Vec<_>>(),
         "defaultModel": s.default_model,
+        "agentApprovalMode": s.agent_approval_mode,
     }))
 }
 
@@ -770,6 +771,21 @@ pub fn llm_remove_endpoint(app: AppHandle, id: String) -> Result<(), LlmError> {
 
 /// 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；
 /// 命令面仅内置插件可达——guard.ts 外置白名单不含本命令）。
+/// 设置新建 agent 会话的 durable 默认审批模式；当前会话不受影响。
+#[tauri::command]
+pub fn agent_set_default_approval_mode(app: AppHandle, mode: String) -> Result<(), LlmError> {
+    if mode != "ask" && mode != "auto" {
+        return Err(LlmError::new(
+            "INVALID_CONFIG",
+            "agentApprovalMode 只能是 ask 或 auto",
+        ));
+    }
+    let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+    let mut s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+    s.agent_approval_mode = Some(mode);
+    config::save_settings(&dir, &s).map_err(|e| LlmError::new("INVALID_CONFIG", e))
+}
+
 #[tauri::command]
 pub fn llm_reveal_key(app: AppHandle, id: String) -> Result<String, LlmError> {
     let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
@@ -1134,6 +1150,7 @@ mod tests {
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         let mut incoming = ep("https://h", "");
         incoming.id = "e1".into();
@@ -1149,6 +1166,7 @@ mod tests {
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         let mut incoming = ep("https://h", "new-key");
         incoming.id = "e1".into();
@@ -1164,6 +1182,7 @@ mod tests {
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         assert_eq!(reveal_key(&s, "e1").unwrap(), "secret");
         assert_eq!(reveal_key(&s, "nope").unwrap_err().code, "ENDPOINT_UNKNOWN");
@@ -1176,6 +1195,7 @@ mod tests {
             endpoints: vec![ep("https://h", "secret")],
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         let mut incoming = ep("https://h", "");
         incoming.id = "e1".into();
@@ -1190,6 +1210,7 @@ mod tests {
             endpoints: vec![ep("https://h", "")],
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         set_default_into(&mut s, Some("m1".into())).unwrap();
         assert_eq!(s.default_model.as_deref(), Some("m1"));
@@ -1694,6 +1715,7 @@ mod tests {
             endpoints: vec![],
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         assert_eq!(
             find_endpoint(&s, "nope").unwrap_err().code,

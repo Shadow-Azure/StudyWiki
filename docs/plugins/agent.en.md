@@ -21,11 +21,11 @@ Oversized output is truncated and marked. Outside reads/searches ask first; appr
 
 ## Approval modes
 
-Approvals cover in-boundary write/edit and outside read/grep. `ask` waits for a human; `auto` uses the session model for an independent history-free guardian review with a 30-second timeout; failure denies. Abort records pending items `unavailable`; decisions and reasons enter the log.
+The durable default approval mode for new sessions is `agentApprovalMode` in settings (default ask). Switching inside a session writes only that session log and does not rewrite the default. Approvals cover in-boundary write/edit and outside read/grep. `ask` waits for a human; `auto` uses the session model for an independent history-free guardian review with a shared 30-second deadline; JSON wrapped in reasoning/prose is extracted, parse failures and transient 408/429/5xx use two exponential-backoff retries, valid denials do not retry, and final failure denies. Abort records pending items `unavailable`; decisions and reasons enter the log.
 
 ## Session format
 
-Path `<library root>/.study-wiki/sessions/<id>.jsonl`; the first line is a v1 header with `v`, `id`, `rootPath`, `title`, `createdAt`. Later lines are completed events; halves never persist and crash tails drop:
+Path `~/.study-wiki/sessions/<library-key>/<id>.jsonl`; `<library-key>` is generated from the library-root path by sanitizing plus a stable hash. The first line is a v1 header with `v`, `id`, `rootPath`, `title`, `createdAt`. Legacy in-library sessions migrate when listed. Later lines are completed events; halves never persist and crash tails drop;
 
 | Line kind | Payload |
 | --- | --- |

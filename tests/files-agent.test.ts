@@ -19,16 +19,22 @@ describe("files agent facades", () => {
       .rejects.toEqual({ code: "SEARCH_INVALID_PATTERN", message: "bad regex" });
   });
 
-  it("authorizeReadPath / appendSessionEvent / deleteSessionFile 命令名与参数", async () => {
+  it("agent session storage commands use the user-level per-root session domain", async () => {
     const calls: [string, unknown][] = [];
     const f = filesWith(async (cmd, args) => { calls.push([cmd, args]); });
-    await f.authorizeReadPath("/outside/a.md");
-    await f.appendSessionEvent("/lib/.study-wiki/sessions/s1.jsonl", "{\"type\":\"x\"}");
-    await f.deleteSessionFile("/lib/.study-wiki/sessions/s1.jsonl");
+    await f.agentSessionPaths("/lib/root");
+    await f.agentSessionPath("/lib/root", "s1");
+    await f.readAgentSessionFile("/home/.study-wiki/sessions/root-key/s1.jsonl");
+    await f.writeAgentSessionFile("/home/.study-wiki/sessions/root-key/s1.jsonl", "header\n");
+    await f.appendSessionEvent("/home/.study-wiki/sessions/root-key/s1.jsonl", "{\"type\":\"x\"}");
+    await f.deleteSessionFile("/home/.study-wiki/sessions/root-key/s1.jsonl");
     expect(calls).toEqual([
-      ["authorize_read_path", { path: "/outside/a.md" }],
-      ["append_session_event", { path: "/lib/.study-wiki/sessions/s1.jsonl", line: "{\"type\":\"x\"}" }],
-      ["delete_session_file", { path: "/lib/.study-wiki/sessions/s1.jsonl" }],
+      ["agent_session_paths", { root: "/lib/root" }],
+      ["agent_session_path", { root: "/lib/root", id: "s1" }],
+      ["read_agent_session_file", { path: "/home/.study-wiki/sessions/root-key/s1.jsonl" }],
+      ["write_agent_session_file", { path: "/home/.study-wiki/sessions/root-key/s1.jsonl", contents: "header\n" }],
+      ["append_session_event", { path: "/home/.study-wiki/sessions/root-key/s1.jsonl", line: "{\"type\":\"x\"}" }],
+      ["delete_session_file", { path: "/home/.study-wiki/sessions/root-key/s1.jsonl" }],
     ]);
   });
 });

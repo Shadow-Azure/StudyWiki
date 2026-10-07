@@ -154,6 +154,10 @@ export async function mountUiPreview(root: HTMLElement): Promise<() => void> {
       return path === markdownPath ? markdown : "# 研究笔记\n";
     },
     writeText: async (path: string, content: string) => { previewSessions.set(path, content); },
+    agentSessionPaths: async () => [...previewSessions.keys()],
+    agentSessionPath: async (_root: string, id: string) => `/home/.study-wiki/sessions/preview/${id}.jsonl`,
+    readAgentSessionFile: async (path: string) => previewSessions.get(path) ?? "",
+    writeAgentSessionFile: async (path: string, content: string) => { previewSessions.set(path, content); },
     appendSessionEvent: async (path: string, line: string) => {
       previewSessions.set(path, `${previewSessions.get(path) ?? ""}${line}\n`);
     },

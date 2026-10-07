@@ -11,6 +11,15 @@ function fakeHost(rootFiles: Record<string, string>) {
     files,
     svc: {
       readText: async (p: string) => { if (!(p in files)) throw new Error("ENOENT"); return files[p]; },
+      agentSessionPaths: async (_root: string) => Object.keys(files)
+        .filter((p) => p.startsWith("/home/.study-wiki/sessions/lib-root/")),
+      agentSessionPath: async (_root: string, id: string) =>
+        `/home/.study-wiki/sessions/lib-root/${id}.jsonl`,
+      readAgentSessionFile: async (p: string) => {
+        if (!(p in files)) throw new Error("ENOENT");
+        return files[p];
+      },
+      writeAgentSessionFile: async (p: string, c: string) => { files[p] = c; },
       readTree: async (root: string) => Object.keys(files).filter((p) => p.startsWith(root))
         .map((p) => ({ name: p.split("/").pop()!, path: p, kind: "markdown" as const })),
       writeText: async (p: string, c: string) => { files[p] = c; },
@@ -159,6 +168,18 @@ describe("AgentService", () => {
       .toEqual([expect.objectContaining({ role: "assistant", text: "下一回合" })]);
   });
 
+  it("新会话使用显式默认审批模式；会话内切换不改全局", async () => {
+    const { svc, host } = serviceWith({}, { scripts: [TEXT("好")] });
+    const session = await svc.openSession(null, "auto");
+    expect(session.mode).toBe("auto");
+    await session.send("开始");
+    session.setMode("ask");
+    expect(session.mode).toBe("ask");
+    expect(Object.keys(host.files).some((path) => path.includes("settings.json"))).toBe(false);
+    const next = await svc.openSession(null, "auto");
+    expect(next.mode).toBe("auto");
+  });
+
   it("附件-only 首发保留标题改写资格，后续文本重写文件头", async () => {
     const { svc, host } = serviceWith({}, {
       scripts: [TEXT("附件回合"), TEXT("文字回合")],
@@ -172,7 +193,7 @@ describe("AgentService", () => {
 
     await session.send("第二问");
     expect(session.title).toBe("第二问");
-    const path = Object.keys(host.files).find((p) => p.includes(".study-wiki/sessions/"))!;
+    const path = Object.keys(host.files).find((p) => p.includes("/home/.study-wiki/sessions/lib-root/"))!;
     const content = host.files[path]!;
     expect(content).toContain('"title":"第二问"');
     expect(content).toContain("附件回合");
@@ -186,7 +207,7 @@ describe("AgentService", () => {
     const { svc, host } = serviceWith({}, { scripts: [TEXT("你好，我是 agent")] });
     const session = await svc.openSession(null);
     await session.send("你好");
-    const path = Object.keys(host.files).find((p) => p.includes(".study-wiki/sessions/"))!;
+    const path = Object.keys(host.files).find((p) => p.includes("/home/.study-wiki/sessions/lib-root/"))!;
     expect(host.files[path]).toContain("\"type\":\"header\"");
     expect(host.files[path]).toContain("你好");
     expect(host.files[path]).toContain("你好，我是 agent");
@@ -194,8 +215,8 @@ describe("AgentService", () => {
 
   it("listSessions 按库根目录读 header，坏文件跳过", async () => {
     const { svc } = serviceWith({
-      "/lib/.study-wiki/sessions/a.jsonl": `{"type":"header","header":{"v":1,"id":"a","rootPath":"/lib","title":"会话甲","createdAt":"x"}}\n`,
-      "/lib/.study-wiki/sessions/bad.jsonl": "不是json",
+      "/home/.study-wiki/sessions/lib-root/a.jsonl": `{"type":"header","header":{"v":1,"id":"a","rootPath":"/lib","title":"会话甲","createdAt":"x"}}\n`,
+      "/home/.study-wiki/sessions/lib-root/bad.jsonl": "不是json",
     }, { scripts: [] });
     expect(await svc.listSessions()).toEqual([{ id: "a", title: "会话甲", createdAt: "x" }]);
   });
@@ -203,14 +224,14 @@ describe("AgentService", () => {
   it("加载历史会话只读不跑，发新消息才续", async () => {
     const existing = HEADER_S1("/lib")
       + `{"type":"message","message":{"role":"user","content":"老问题"}}\n`;
-    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": existing }, { scripts: [] });
+    const { svc } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": existing }, { scripts: [] });
     const session = await svc.openSession("s1");
     expect(session.messages().map((m) => m.role)).toEqual(["user"]);
     expect(session.running).toBe(false);
   });
 
   it("会话 rootPath 与当前库不符：rootMismatch 暴露原路径但仍加载", async () => {
-    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": HEADER_S1("/old-lib") }, { scripts: [] });
+    const { svc } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": HEADER_S1("/old-lib") }, { scripts: [] });
     const session = await svc.openSession("s1");
     expect(session.rootMismatch).toBe("/old-lib");
   });
@@ -241,7 +262,7 @@ describe("AgentService", () => {
     await session.send("第一问");   // assistant usage 90k > 阈值 80k
     await session.send("第二问");   // 先压缩再跑回合
     expect(summaries).toHaveLength(1);
-    const path = Object.keys(host.files).find((p) => p.includes("sessions/"))!;
+    const path = Object.keys(host.files).find((p) => p.includes("/home/.study-wiki/sessions/lib-root/"))!;
     expect(host.files[path]).toContain("\"type\":\"compaction\"");
     expect(session.messages()[0]).toMatchObject({ role: "user", content: expect.stringContaining("摘要：早前聊了甲") });
   });
@@ -266,7 +287,7 @@ describe("AgentService", () => {
     await session.send("第三问");
     expect(summaries).toHaveLength(1);
 
-    const path = Object.keys(host.files).find((p) => p.includes("sessions/"))!;
+    const path = Object.keys(host.files).find((p) => p.includes("/home/.study-wiki/sessions/lib-root/"))!;
     const compactions = host.files[path]!.trimEnd().split("\n")
       .map((line) => JSON.parse(line) as { type?: string; covered?: number })
       .filter((line) => line.type === "compaction");
@@ -313,12 +334,12 @@ describe("AgentService", () => {
       + `{"type":"message","message":{"role":"user","content":"完整问题"}}\n`
       + `{"type":"message","message":{"role":"user","content":"partial-tail-marker"}`;
     const { svc, host } = serviceWith({
-      "/lib/.study-wiki/sessions/s1.jsonl": existing,
+      "/home/.study-wiki/sessions/lib-root/s1.jsonl": existing,
     }, { scripts: [] });
     const session = await svc.openSession("s1");
     await session.send("新问题");
 
-    const content = host.files["/lib/.study-wiki/sessions/s1.jsonl"];
+    const content = host.files["/home/.study-wiki/sessions/lib-root/s1.jsonl"];
     expect(content).not.toContain("partial-tail-marker");
     const lines = content.trimEnd().split("\n");
     expect(lines).toHaveLength(3);
@@ -341,7 +362,7 @@ describe("AgentService", () => {
     const existing = HEADER_S1("/lib")
       + `{"type":"approval","id":"a1","kind":"edit","tool":"edit","path":"/lib/a.md","decider":"human","decision":"deny","reason":"不对"}
 `;
-    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": existing }, { scripts: [] });
+    const { svc } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": existing }, { scripts: [] });
     const session = await svc.openSession("s1");
     const lines = session.lines();
     expect(lines).toHaveLength(1);
@@ -351,7 +372,7 @@ describe("AgentService", () => {
   });
 
   it("加载历史会话暴露 header 标题", async () => {
-    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
+    const { svc } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
     const session = await svc.openSession("s1");
     expect(session.title).toBe("旧");
   });
@@ -359,7 +380,7 @@ describe("AgentService", () => {
   it("加载历史会话恢复最后一次持久化模式", async () => {
     const existing = HEADER_S1("/lib")
       + `{"type":"mode","mode":"auto"}\n`;
-    const { svc } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": existing }, { scripts: [] });
+    const { svc } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": existing }, { scripts: [] });
     const session = await svc.openSession("s1");
     expect(session.mode).toBe("auto");
   });
@@ -367,7 +388,7 @@ describe("AgentService", () => {
   it("运行中的会话拒绝删除且文件保留，空闲会话可删除", async () => {
     const { svc, host } = serviceWith({}, { scripts: [WRITE_CALL, TEXT("已写好")] });
     const session = await svc.openSession(null);
-    const path = Object.keys(host.files).find((p) => p.includes(".study-wiki/sessions/"))!;
+    const path = Object.keys(host.files).find((p) => p.includes("/home/.study-wiki/sessions/lib-root/"))!;
     const reqs: ApprovalRequest[] = [];
     session.onApproval((r) => reqs.push(r));
     const done = session.send("记个笔记");
@@ -383,8 +404,8 @@ describe("AgentService", () => {
   });
 
   it("deleteSession 调 deleteSessionFile", async () => {
-    const { svc, host } = serviceWith({ "/lib/.study-wiki/sessions/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
+    const { svc, host } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
     await svc.deleteSession("s1");
-    expect(host.files["/lib/.study-wiki/sessions/s1.jsonl"]).toBeUndefined();
+    expect(host.files["/home/.study-wiki/sessions/lib-root/s1.jsonl"]).toBeUndefined();
   });
 });

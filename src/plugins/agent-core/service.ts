@@ -56,8 +56,8 @@ export interface AgentSession {
 export interface AgentService {
   /** List valid session headers in the current library root. */
   listSessions(): Promise<SessionMeta[]>;
-  /** Open an existing session by id, or create a new session when null. */
-  openSession(id: string | null): Promise<AgentSession>;
+  /** Open an existing session by id, or create a new session using `defaultMode` when null. */
+  openSession(id: string | null, defaultMode?: ApprovalMode): Promise<AgentSession>;
   /** Delete the backing JSONL file and detach any open session instance. */
   deleteSession(id: string): Promise<void>;
   /** Abort every open session; used by the cordis plugin disposer. */
@@ -136,9 +136,6 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
     if (!root) throw new Error("尚未打开学习库");
     return root;
   };
-
-  const sessionPath = (id: string, root = requireRoot()): string =>
-    `${root}/.study-wiki/sessions/${id}.jsonl`;
 
   function readHeader(text: string): SessionHeader | null {
     try {
@@ -260,7 +257,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
             internal.header.title = sessionTitle(titleSource);
             internal.isNew = false;
             await enqueue(internal, () =>
-              deps.files.writeText(internal.path, [
+              deps.files.writeAgentSessionFile(internal.path, [
                 encodeLine({ type: "header", header: internal.header }),
                 ...internal.lines.map(encodeLine),
               ].join("\n") + "\n"),
@@ -372,16 +369,16 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
   return {
     async listSessions() {
       const root = requireRoot();
-      let entries;
+      let paths: string[];
       try {
-        entries = await deps.files.readTree(`${root}/.study-wiki/sessions`);
+        paths = await deps.files.agentSessionPaths(root);
       } catch {
         return [];
       }
       const metas: SessionMeta[] = [];
-      for (const entry of entries) {
+      for (const path of paths) {
         try {
-          const header = readHeader(await deps.files.readText(entry.path));
+          const header = readHeader(await deps.files.readAgentSessionFile(path));
           if (header) metas.push({ id: header.id, title: header.title, createdAt: header.createdAt });
         } catch {
           // Bad or unreadable session files are skipped so one record cannot break listing.
@@ -390,15 +387,15 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       return metas;
     },
 
-    async openSession(id) {
+    async openSession(id, defaultMode: ApprovalMode = "ask") {
       const root = requireRoot();
       if (id !== null) {
         const existing = sessions.get(id);
         if (existing) return existing.session;
-        const path = sessionPath(id, root);
-        const parsed = parseSession(await deps.files.readText(path));
+        const path = await deps.files.agentSessionPath(root, id);
+        const parsed = parseSession(await deps.files.readAgentSessionFile(path));
         if (parsed.tailTruncated) {
-          await deps.files.writeText(
+          await deps.files.writeAgentSessionFile(
             path,
             `${parsed.lines.map((line) => encodeLine(line)).join("\n")}\n`,
           );
@@ -422,8 +419,8 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         title: DEFAULT_TITLE,
         createdAt: new Date().toISOString(),
       };
-      const path = sessionPath(sessionId, root);
-      const created = createSession(header, root, [], path, null, true);
+      const path = await deps.files.agentSessionPath(root, sessionId);
+      const created = createSession(header, root, [], path, null, true, defaultMode);
       await enqueue(created.internal, () =>
         deps.files.appendSessionEvent(path, encodeLine({ type: "header", header })),
       );
@@ -437,7 +434,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       }
       sessions.delete(id);
       await entry?.session.abort();
-      await deps.files.deleteSessionFile(sessionPath(id));
+      await deps.files.deleteSessionFile(await deps.files.agentSessionPath(requireRoot(), id));
     },
 
     dispose() {

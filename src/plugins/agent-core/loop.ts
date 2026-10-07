@@ -47,10 +47,12 @@ export function toChatMessages(history: AgentMessage[]): ChatMessage[] {
       return {
         role: message.role,
         content: message.text,
+        // Internal calls keep the raw-text name `argumentsText`; the Chat
+        // Completions wire contract names the same value `arguments`.
         toolCalls: message.toolCalls.map(({ id, name, argumentsText }) => ({
           id,
           name,
-          argumentsText,
+          arguments: argumentsText,
         })),
       };
     }

@@ -40,6 +40,7 @@ export const GUARDIAN_SYSTEM_PROMPT = [
  * Create a pure approval gate that routes requests by the current mode.
  * @param deps Injected mode source, human approver, guardian chat client, and session logger.
  * @param guardianTimeoutMs Guardian review deadline in milliseconds; production defaults to 30 seconds.
+ * @param retry Parse failures and transient transport failures get bounded exponential retries; valid denials do not.
  * @returns A gate whose canceled approvals resolve fail-closed exactly once.
  */
 export function createApprovalGate(
@@ -50,7 +51,10 @@ export function createApprovalGate(
     log: (line: SessionLine) => void;
   },
   guardianTimeoutMs = 30_000,
+  retry: { maxRetries?: number; sleep?: (ms: number) => Promise<void> } = {},
 ): ApprovalGate {
+  const maxRetries = retry.maxRetries ?? 2;
+  const sleep = retry.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const pending = new Set<PendingApproval>();
 
   function recordAndResolve(
@@ -104,31 +108,41 @@ export function createApprovalGate(
   }
 
   async function askGuardian(req: ApprovalRequest): Promise<ApprovalOutcome> {
-    let response: { content: string };
-    try {
-      response = await withTimeout(
-        deps.chat({
-          messages: [
-            { role: "system", content: GUARDIAN_SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: JSON.stringify({
-                tool: req.tool,
-                kind: req.kind,
-                path: req.path,
-                summary: req.summary,
-                oldText: req.oldText,
-                newText: req.newText,
-              }),
-            },
-          ],
-        }),
-        guardianTimeoutMs,
-      );
-    } catch (cause) {
-      return { decision: "deny", reason: describeError("Guardian 审查失败：", cause) };
+    const prompt = {
+      messages: [
+        { role: "system", content: GUARDIAN_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: JSON.stringify({
+            tool: req.tool,
+            kind: req.kind,
+            path: req.path,
+            summary: req.summary,
+            oldText: req.oldText,
+            newText: req.newText,
+          }),
+        },
+      ],
+    };
+    const startedAt = Date.now();
+    for (let attempt = 0; ; attempt += 1) {
+      const remaining = Math.max(0, guardianTimeoutMs - (Date.now() - startedAt));
+      let response: { content: string };
+      try {
+        response = await withTimeout(deps.chat(prompt), remaining);
+      } catch (cause) {
+        if (attempt >= maxRetries || !isRetryableGuardianTransport(cause)) {
+          return { decision: "deny", reason: describeError("Guardian 审查失败：", cause) };
+        }
+        await sleep(200 * 2 ** attempt);
+        continue;
+      }
+      const parsed = parseGuardianResponseWithStatus(response.content);
+      if (parsed.valid || attempt >= maxRetries) {
+        return parsed.outcome;
+      }
+      await sleep(200 * 2 ** attempt);
     }
-    return parseGuardianResponse(response.content);
   }
 
   return {
@@ -160,12 +174,37 @@ function stripOptionalCodeFence(content: string): string {
   return (fenced?.[1] ?? trimmed).trim();
 }
 
+type GuardianParseResult =
+  | { valid: true; outcome: ApprovalOutcome }
+  | { valid: false; outcome: ApprovalOutcome; reason: string };
+
+function parseGuardianResponseWithStatus(content: string): GuardianParseResult {
+  const outcome = parseGuardianResponse(content);
+  const valid = !(outcome.decision === "deny" && outcome.reason?.startsWith("Guardian 响应"));
+  return valid ? { valid, outcome } : { valid, outcome, reason: outcome.reason ?? "Guardian 响应无效" };
+}
+
 function parseGuardianResponse(content: string): ApprovalOutcome {
   let value: unknown;
+  const normalized = stripOptionalCodeFence(content);
   try {
-    value = JSON.parse(stripOptionalCodeFence(content));
-  } catch (cause) {
-    return { decision: "deny", reason: describeError("Guardian 响应不是有效 JSON：", cause) };
+    value = JSON.parse(normalized);
+  } catch {
+    // Thin recovery for reasoning/prose wrappers: codex uses the same
+    // first-`{`/last-`}` extraction, while required-field validation stays strict.
+    const start = normalized.indexOf("{");
+    const end = normalized.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      return {
+        decision: "deny",
+        reason: `Guardian 响应不是有效 JSON：${normalized.slice(0, 120)}`,
+      };
+    }
+    try {
+      value = JSON.parse(normalized.slice(start, end + 1));
+    } catch (cause) {
+      return { decision: "deny", reason: describeError("Guardian 响应不是有效 JSON：", cause) };
+    }
   }
 
   if (!isRecord(value) || typeof value.approve !== "boolean" || typeof value.reason !== "string") {
@@ -176,6 +215,14 @@ function parseGuardianResponse(content: string): ApprovalOutcome {
     decision: value.approve ? "allow" : "deny",
     reason: value.reason,
   };
+}
+
+/** Transient provider failures may be retried; semantic/protocol errors and deadlines may not. */
+function isRetryableGuardianTransport(cause: unknown): boolean {
+  const code = (cause as { code?: unknown } | null | undefined)?.code;
+  if (code === "RATE_LIMITED" || code === "TIMEOUT") return true;
+  const message = describeError("", cause);
+  return /\bHTTP (408|429|5\d\d)\b/.test(message) || /\b(429|408|5\d\d)\b/.test(message);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

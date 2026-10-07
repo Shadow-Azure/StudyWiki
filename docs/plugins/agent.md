@@ -21,11 +21,11 @@
 
 ## 审批两模式
 
-审批覆盖授权内写改和越界读搜。`ask` 等人操作；`auto` 用会话模型做独立无历史 guardian 审查，30 秒超时，失败拒绝。中止记悬挂项 `unavailable`，裁决与理由进日志。
+新会话默认审批模式持久化在 settings 的 `agentApprovalMode`（缺省 ask）。会话内切换只写当前会话日志，不回写默认。审批覆盖授权内写改和越界读搜。`ask` 等人操作；`auto` 用会话模型做独立无历史 guardian 审查，30 秒共享超时；JSON 包在推理/说明文本中可提取解析，解析失败与 408/429/5xx 瞬态错误指数退避重试两次，有效拒绝不重试，最终失败拒绝。中止记悬挂项 `unavailable`，裁决与理由进日志。
 
 ## 会话格式
 
-路径 `<库根>/.study-wiki/sessions/<id>.jsonl`；首行 v1 header 带 `v`、`id`、`rootPath`、`title`、`createdAt`。后续每行一条完成事件，半截不落盘，崩溃尾丢弃：
+路径 `~/.study-wiki/sessions/<library-key>/<id>.jsonl`；`library-key` 由库根路径 sanitize 加稳定 hash 生成，首行 v1 header 带 `v`、`id`、`rootPath`、`title`、`createdAt`。旧库内会话在列出时迁移。后续每行一条完成事件，半截不落盘，崩溃尾丢弃；首行 v1 header 带 `v`、`id`、`rootPath`、`title`、`createdAt`。后续每行一条完成事件，半截不落盘，崩溃尾丢弃：
 
 | 行型 | 载荷 |
 | --- | --- |

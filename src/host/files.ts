@@ -126,12 +126,32 @@ export class FilesService {
     return this.#deps.invoke("authorize_read_path", { path }) as Promise<void>;
   }
 
+  /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
+  agentSessionPaths(root: string): Promise<string[]> {
+    return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;
+  }
+
+  /** Allocate the user-level per-root path for one new session. */
+  agentSessionPath(root: string, id: string): Promise<string> {
+    return this.#deps.invoke("agent_session_path", { root, id }) as Promise<string>;
+  }
+
+  /** Read one agent session file from the user-level per-root session domain. */
+  readAgentSessionFile(path: string): Promise<string> {
+    return this.#deps.invoke("read_agent_session_file", { path }) as Promise<string>;
+  }
+
+  /** Atomically rewrite one agent session file in the user-level per-root session domain. */
+  writeAgentSessionFile(path: string, contents: string): Promise<void> {
+    return this.#deps.invoke("write_agent_session_file", { path, contents }) as Promise<void>;
+  }
+
   /** Append one newline-free JSONL session event inside the original authorized root. */
   appendSessionEvent(path: string, line: string): Promise<void> {
     return this.#deps.invoke("append_session_event", { path, line }) as Promise<void>;
   }
 
-  /** Delete an authorized session file confined to `.study-wiki/sessions`; success does not broadcast. */
+  /** Delete an agent session file confined to the user-level per-root session domain; success does not broadcast. */
   deleteSessionFile(path: string): Promise<void> {
     return this.#deps.invoke("delete_session_file", { path }) as Promise<void>;
   }

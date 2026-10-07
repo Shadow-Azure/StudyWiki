@@ -64,6 +64,8 @@ export interface RedactedEndpoint {
 export interface RedactedSettings {
   endpoints: RedactedEndpoint[];
   defaultModel: string | null;
+  /** Durable default for newly created agent sessions; existing sessions keep their own mode. */
+  agentApprovalMode?: "ask" | "auto" | null;
 }
 
 /** Endpoint payload accepted by `llm_upsert_endpoint` (camelCase wire form). */
@@ -106,7 +108,7 @@ export interface ChatMessage {
   /** Plain text or multimodal content parts. */
   content: string | ContentPart[];
   /** Assistant requests emitted by a prior model response, in order. */
-  toolCalls?: { id: string; name: string; argumentsText: string }[];
+  toolCalls?: { id: string; name: string; arguments: string }[];
   /** Identifies the assistant tool call satisfied by a tool-role message. */
   toolCallId?: string;
 }
@@ -183,6 +185,11 @@ export class LlmService {
   /** 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达；未知模型 INVALID_CONFIG）。 */
   setDefaultModel(model: string | null): Promise<void> {
     return this.#call<void>("llm_set_default_model", { model });
+  }
+
+  /** 设置新建 agent 会话的 durable 审批模式；当前会话不跟随改写。 */
+  setDefaultAgentApprovalMode(mode: "ask" | "auto"): Promise<void> {
+    return this.#call<void>("agent_set_default_approval_mode", { mode });
   }
 
   /** 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；

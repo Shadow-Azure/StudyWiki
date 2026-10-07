@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::{InvokeBody, Request, Response};
@@ -155,19 +155,119 @@ fn append_line_to(path: &str, line: &str) -> Result<(), String> {
         .map_err(|e| format!("write {path}: {e}"))
 }
 
-/// 删除面收窄：路径必须真正位于 `.study-wiki/sessions` 两级组件之下，
-/// 防止授权后的普通库内文件或只有单一关键词的路径进入删除命令。
-fn session_file_path_is_confined(path: &str) -> bool {
-    let components: Vec<_> = Path::new(path)
-        .components()
-        .filter_map(|component| match component {
-            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
+/// 用户级 agent 会话根：不落在任何学习库内，因此通用 grep 不会产生日志回声。
+fn user_sessions_dir(home: &Path) -> PathBuf {
+    home.join(".study-wiki").join("sessions")
+}
+
+/// FNV-1a 64：跨启动稳定的短路径 hash，不依赖 Rust HashMap 迭代种子。
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// 库根 → 会话目录 key：sanitize 保留可读性，stable hash 防止 `/a-b` 与 `/a b`
+/// 这类 sanitize 后同形路径互相串库。
+fn library_session_key(root: &Path) -> Result<String, String> {
+    let canonical =
+        fs::canonicalize(root).map_err(|e| format!("canonicalize {}: {e}", root.display()))?;
+    let text = canonical.to_string_lossy();
+    let sanitized: String = text
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '-'
+            }
         })
         .collect();
-    components
-        .windows(2)
-        .any(|pair| pair == [".study-wiki", "sessions"])
+    let trimmed: String = sanitized.chars().take(100).collect();
+    let hash = fnv1a64(text.as_bytes());
+    Ok(format!("{trimmed}-{hash:016x}"))
+}
+
+/// 计算一个学习库的用户级会话目录；root 必须已存在（打开库后的调用才到达）。
+fn agent_session_dir(home: &Path, root: &Path) -> Result<PathBuf, String> {
+    Ok(user_sessions_dir(home).join(library_session_key(root)?))
+}
+
+/// 校验并返回会话文件路径：必须在用户级 sessions 域、目录深度恰好为
+/// `sessions/<library-key>/<file>.jsonl`，且拒绝 `..`。
+fn ensure_agent_session_file<'a>(home: &Path, path: &'a Path) -> Result<&'a Path, String> {
+    if !path.is_absolute() {
+        return Err(format!("会话路径必须是绝对路径：{}", path.display()));
+    }
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("会话路径不得含 .. 组件：{}", path.display()));
+    }
+    let base = user_sessions_dir(home);
+    if !path.starts_with(&base) {
+        return Err(format!(
+            "会话文件必须位于 {}: {}",
+            base.display(),
+            path.display()
+        ));
+    }
+    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return Err(format!("会话文件必须是 .jsonl：{}", path.display()));
+    }
+    let relative = path
+        .strip_prefix(&base)
+        .map_err(|_| format!("会话文件必须位于 {}: {}", base.display(), path.display()))?;
+    let mut components = relative.components();
+    match (components.next(), components.next(), components.next()) {
+        (Some(std::path::Component::Normal(key)), Some(std::path::Component::Normal(_)), None) => {
+            if key.is_empty() {
+                return Err(format!("会话库 key 不能为空：{}", path.display()));
+            }
+        }
+        _ => return Err(format!("会话路径深度不合法：{}", path.display())),
+    }
+    Ok(path)
+}
+
+/// 一次性迁移旧库内 `<root>/.study-wiki/sessions/*.jsonl` 到用户级 per-root
+/// 目录；同名新文件不覆盖。迁移后删除空的旧 sessions / .study-wiki 目录。
+fn migrate_library_sessions(home: &Path, root: &Path) -> Result<PathBuf, String> {
+    let target = agent_session_dir(home, root)?;
+    let legacy = root.join(".study-wiki").join("sessions");
+    if legacy.exists() {
+        fs::create_dir_all(&target).map_err(|e| format!("mkdir {}: {e}", target.display()))?;
+        let entries =
+            fs::read_dir(&legacy).map_err(|e| format!("read {}: {e}", legacy.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("read {}: {e}", legacy.display()))?;
+            let source = entry.path();
+            if !source.is_file() || source.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let name = source
+                .file_name()
+                .ok_or_else(|| format!("会话文件没有文件名：{}", source.display()))?;
+            let destination = target.join(name);
+            if !destination.exists() {
+                fs::rename(&source, &destination).map_err(|e| {
+                    format!(
+                        "rename {} -> {}: {e}",
+                        source.display(),
+                        destination.display()
+                    )
+                })?;
+            }
+        }
+        // 只删除空目录；还有未知残留时保守保留，供后续排查。
+        let _ = fs::remove_dir(&legacy);
+        let _ = fs::remove_dir(root.join(".study-wiki"));
+    }
+    Ok(target)
 }
 
 /// 写命令与非读命令根域校验：先拒用户配置域——
@@ -403,34 +503,108 @@ fn authorize_read_path<R: tauri::Runtime>(
     Ok(())
 }
 
-/// 追加一条会话 JSONL 事件。路径须在原始授权 root 内；line 不得含换行符，
-/// 否则 JSONL 帧边界不可信。目录按需创建，OS 失败原样上抛。
+/// 列出某学习库在用户级会话域中的 JSONL 文件；调用前迁移旧库内文件。
 #[tauri::command]
-fn append_session_event(
+fn agent_session_paths(
     app: tauri::AppHandle,
     state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
-    path: String,
-    line: String,
-) -> Result<(), String> {
+    root: String,
+) -> Result<Vec<String>, String> {
     let config_root = config::app_studywiki_dir(&app)?;
-    ensure_authorized(&state, &path, &config_root)?;
+    ensure_authorized(&state, &root, &config_root)?;
+    let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+        .parent()
+        .ok_or("home 没有父目录")?
+        .to_path_buf();
+    let canonical_root =
+        fs::canonicalize(&root).map_err(|e| format!("canonicalize {root}: {e}"))?;
+    let target = migrate_library_sessions(&home, &canonical_root)?;
+    let entries = fs::read_dir(&target).map_err(|e| format!("read {}: {e}", target.display()))?;
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read {}: {e}", target.display()))?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            paths.push(path.to_string_lossy().into_owned());
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+/// 为新会话分配用户级 per-root JSONL 路径；只创建目录，不创建空文件。
+#[tauri::command]
+fn agent_session_path(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    root: String,
+    id: String,
+) -> Result<String, String> {
+    let config_root = config::app_studywiki_dir(&app)?;
+    ensure_authorized(&state, &root, &config_root)?;
+    if Path::new(&id).file_name().and_then(|name| name.to_str()) != Some(id.as_str())
+        || id.contains('\\')
+    {
+        return Err(format!("非法会话 id：{id}"));
+    }
+    let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+        .parent()
+        .ok_or("home 没有父目录")?
+        .to_path_buf();
+    let dir = agent_session_dir(&home, Path::new(&root))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    Ok(dir
+        .join(format!("{id}.jsonl"))
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// 读取用户级会话 JSONL；路径必须来自 Rust 分配/列表命令。
+#[tauri::command]
+fn read_agent_session_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+        .parent()
+        .ok_or("home 没有父目录")?
+        .to_path_buf();
+    let path = ensure_agent_session_file(&home, Path::new(&path))?;
+    fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
+}
+
+/// 原子改写用户级会话 JSONL（崩溃尾巴归一化 / 标题重写）。
+#[tauri::command]
+fn write_agent_session_file(
+    app: tauri::AppHandle,
+    path: String,
+    contents: String,
+) -> Result<(), String> {
+    let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+        .parent()
+        .ok_or("home 没有父目录")?
+        .to_path_buf();
+    let path = ensure_agent_session_file(&home, Path::new(&path))?;
+    atomic_write(path, contents.as_bytes())
+}
+
+/// 追加一条会话 JSONL 事件；line 不得含换行符，否则 JSONL 帧边界不可信。
+#[tauri::command]
+fn append_session_event(app: tauri::AppHandle, path: String, line: String) -> Result<(), String> {
+    let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+        .parent()
+        .ok_or("home 没有父目录")?
+        .to_path_buf();
+    ensure_agent_session_file(&home, Path::new(&path))?;
     append_line_to(&path, &line)
 }
 
-/// 删除会话文件。路径须在原始授权 root 内，且组件中必须出现 `.study-wiki/sessions`
-/// 两级收窄域；删除失败携带 OS 错误原文，成功不广播文件树变更。
+/// 删除用户级会话 JSONL；成功不广播文件树变更。
 #[tauri::command]
-fn delete_session_file(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
-    path: String,
-) -> Result<(), String> {
-    let config_root = config::app_studywiki_dir(&app)?;
-    ensure_authorized(&state, &path, &config_root)?;
-    if !session_file_path_is_confined(&path) {
-        return Err(format!("会话文件必须位于 .study-wiki/sessions 内：{path}"));
-    }
-    fs::remove_file(&path).map_err(|e| format!("remove {path}: {e}"))
+fn delete_session_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+        .parent()
+        .ok_or("home 没有父目录")?
+        .to_path_buf();
+    let path = ensure_agent_session_file(&home, Path::new(&path))?;
+    fs::remove_file(path).map_err(|e| format!("remove {}: {e}", path.display()))
 }
 
 /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
@@ -496,6 +670,10 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         read_binary_file,
         write_binary_file,
         authorize_read_path,
+        agent_session_paths,
+        agent_session_path,
+        read_agent_session_file,
+        write_agent_session_file,
         append_session_event,
         delete_session_file,
         windows::create_window,
@@ -519,6 +697,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         llm::llm_reveal_key,
         llm::llm_probe,
         llm::llm_set_default_model,
+        llm::agent_set_default_approval_mode,
         llm::llm_chat,
         llm::llm_chat_stream,
         llm::llm_chat_abort
@@ -677,15 +856,47 @@ mod tests {
     }
 
     #[test]
-    fn session_file_deletion_requires_study_wiki_sessions_components() {
-        assert!(session_file_path_is_confined(
-            "/lib/.study-wiki/sessions/a.jsonl"
-        ));
-        assert!(!session_file_path_is_confined(
-            "/lib/.study-wiki/other/a.jsonl"
-        ));
-        assert!(!session_file_path_is_confined("/lib/sessions/a.jsonl"));
-        assert!(!session_file_path_is_confined("/lib/a.jsonl"));
+    fn library_session_keys_are_sanitized_and_collision_resistant() {
+        let dir = std::env::temp_dir().join(format!("sw-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = library_session_key(&dir).unwrap();
+        assert!(key.starts_with('-'));
+        assert_eq!(library_session_key(&dir).unwrap(), key);
+        let ab = dir.join("a-b");
+        let ab_space = dir.join("a b");
+        std::fs::create_dir_all(&ab).unwrap();
+        std::fs::create_dir_all(&ab_space).unwrap();
+        assert_ne!(
+            library_session_key(&ab).unwrap(),
+            library_session_key(&ab_space).unwrap()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn agent_session_files_are_confined_to_exact_user_domain() {
+        let home = Path::new("/home/u");
+        let base = user_sessions_dir(home);
+        assert!(ensure_agent_session_file(home, &base.join("lib-key").join("s.jsonl")).is_ok());
+        assert!(ensure_agent_session_file(home, &base.join("s.jsonl")).is_err());
+        assert!(ensure_agent_session_file(home, &base.join("lib-key").join("s.txt")).is_err());
+        assert!(ensure_agent_session_file(home, Path::new("/other/s.jsonl")).is_err());
+    }
+
+    #[test]
+    fn legacy_library_sessions_migrate_into_user_domain() {
+        let home = std::env::temp_dir().join(format!("sw-sessions-home-{}", std::process::id()));
+        let root = home.join("library");
+        let legacy = root.join(".study-wiki").join("sessions");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("old.jsonl"), "old").unwrap();
+        let target = migrate_library_sessions(&home, &root).unwrap();
+        let migrated = target.join("old.jsonl");
+        assert_eq!(std::fs::read_to_string(&migrated).unwrap(), "old");
+        assert!(!legacy.exists());
+        assert!(!root.join(".study-wiki").exists());
+        assert!(ensure_agent_session_file(&home, &migrated).is_ok());
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]
