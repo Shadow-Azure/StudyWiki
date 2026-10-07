@@ -875,12 +875,13 @@ mod tests {
 
     #[test]
     fn agent_session_files_are_confined_to_exact_user_domain() {
-        let home = Path::new("/home/u");
-        let base = user_sessions_dir(home);
-        assert!(ensure_agent_session_file(home, &base.join("lib-key").join("s.jsonl")).is_ok());
-        assert!(ensure_agent_session_file(home, &base.join("s.jsonl")).is_err());
-        assert!(ensure_agent_session_file(home, &base.join("lib-key").join("s.txt")).is_err());
-        assert!(ensure_agent_session_file(home, Path::new("/other/s.jsonl")).is_err());
+        let home = std::env::temp_dir().join(format!("sw-session-domain-{}", std::process::id()));
+        let base = user_sessions_dir(&home);
+        assert!(ensure_agent_session_file(&home, &base.join("lib-key").join("s.jsonl")).is_ok());
+        assert!(ensure_agent_session_file(&home, &base.join("s.jsonl")).is_err());
+        assert!(ensure_agent_session_file(&home, &base.join("lib-key").join("s.txt")).is_err());
+        assert!(ensure_agent_session_file(&home, &home.join("other").join("s.jsonl")).is_err());
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]
