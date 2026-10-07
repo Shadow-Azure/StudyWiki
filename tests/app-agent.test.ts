@@ -275,3 +275,47 @@ describe("app-agent 面板", () => {
     expect(classes.indexOf("agent-approval-card")).toBeLessThan(classes.indexOf("chat-message chat-assistant"));
   });
 });
+
+describe("agent-ui v2 回合过程组", () => {
+  it("工具事件进过程组，turn-end 后默认折叠", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    sessionEvents.emit("e", { type: "tool-start", call: { id: "t1", name: "read", argumentsText: "{}" } } as never);
+    sessionEvents.emit("e", { type: "tool-end", call: { id: "t1", name: "read", argumentsText: "{}" }, content: "ok", isError: false } as never);
+    sessionEvents.emit("e", { type: "turn-end" } as never);
+    const group = el.querySelector<HTMLElement>(".agent-process")!;
+    expect(group).not.toBeNull();
+    expect(group.classList.contains("open")).toBe(false);
+    expect(group.textContent).toContain("已完成");
+    expect(group.querySelector(".agent-tool-card")).not.toBeNull();
+  });
+
+  it("运行中摘要显示当前动作", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    sessionEvents.emit("e", { type: "tool-start", call: { id: "t2", name: "grep", argumentsText: "{}" } } as never);
+    const group = el.querySelector<HTMLElement>(".agent-process")!;
+    expect(group.classList.contains("running")).toBe(true);
+    expect(group.textContent).toContain("正在");
+  });
+
+  it("历史中的工具行渲染为折叠过程组", async () => {
+    const { ctx, el } = fakeCtx([], {
+      lines: [
+        { type: "message", message: { role: "user", content: "读一下" } },
+        { type: "tool", callId: "h1", name: "read", argumentsText: "{}", content: "内容", isError: false },
+        { type: "message", message: { role: "assistant", reasoning: null, text: "好了", toolCalls: [], usage: null, finishReason: "stop" } },
+      ],
+    });
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const group = el.querySelector<HTMLElement>(".agent-process")!;
+    expect(group).not.toBeNull();
+    expect(group.classList.contains("open")).toBe(false);
+    expect(group.querySelector(".agent-tool-card")).not.toBeNull();
+  });
+});

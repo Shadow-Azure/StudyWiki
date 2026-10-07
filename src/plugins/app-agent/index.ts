@@ -7,6 +7,7 @@ import type { ApprovalOutcome, ApprovalRequest } from "../agent-core/tools";
 import type { AgentMessage } from "../agent-core/types";
 import { fileToAttachment, type PendingAttachment } from "./attachments";
 import {
+  createProcessGroup,
   createStreamRenderer,
   renderApprovalCard,
   renderCompactionDivider,
@@ -91,6 +92,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let activeStream: HTMLElement | null = null;
   let activeWrapper: HTMLElement | null = null;
   let activeTools = new Map<string, ActiveToolCard>();
+  let processGroup: ReturnType<typeof createProcessGroup> | null = null;
+  let turnStartedAt = 0;
+  let turnStepCount = 0;
   let selectedModel: string | null = null;
   let endpointDefault: string | null = null;
   let durableApprovalMode: "ask" | "auto" = "ask";
@@ -272,31 +276,55 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
 
     const nodes: HTMLElement[] = [];
+    let historyGroup: ReturnType<typeof createProcessGroup> | null = null;
+    let historySteps = 0;
+    const flushHistoryGroup = (): void => {
+      if (!historyGroup) return;
+      historyGroup.settle(`已执行 ${historySteps} 个工具动作`, 0);
+      nodes.push(historyGroup.root);
+      historyGroup = null;
+      historySteps = 0;
+    };
     for (const line of session.lines()) {
       if (line.type === "message") {
+        flushHistoryGroup();
         appendMessage(line.message, nodes);
         continue;
       }
       if (line.type === "compaction") {
+        flushHistoryGroup();
         nodes.length = 0;
         nodes.push(renderCompactionDivider(line.summary));
         continue;
       }
-      if (line.type !== "approval") continue;
-      const request = {
-        id: line.id,
-        kind: line.kind,
-        tool: line.tool,
-        path: line.path,
-        summary: "历史审批",
-      };
-      const state = {
-        decision: line.decision === "allow" ? "allow" as const : "deny" as const,
-        decider: line.decider,
-        reason: line.reason ?? (line.decision === "unavailable" ? "审批不可用" : undefined),
-      };
-      nodes.push(renderApprovalCard(request, state));
+      if (line.type === "approval") {
+        flushHistoryGroup();
+        const request = {
+          id: line.id,
+          kind: line.kind,
+          tool: line.tool,
+          path: line.path,
+          summary: "历史审批",
+        };
+        const state = {
+          decision: line.decision === "allow" ? "allow" as const : "deny" as const,
+          decider: line.decider,
+          reason: line.reason ?? (line.decision === "unavailable" ? "审批不可用" : undefined),
+        };
+        nodes.push(renderApprovalCard(request, state));
+        continue;
+      }
+      if (line.type !== "tool") continue;
+      if (!historyGroup) historyGroup = createProcessGroup();
+      historySteps += 1;
+      const call = historyCalls.get(line.callId) ??
+        { id: line.callId, name: line.name, argumentsText: line.argumentsText };
+      historyGroup.addStep(renderToolCard(
+        call,
+        { content: line.content, isError: line.isError === true },
+      ));
     }
+    flushHistoryGroup();
     transcript.replaceChildren(...nodes);
     transcript.scrollTop = transcript.scrollHeight;
   };
@@ -307,6 +335,12 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     switch (event.type) {
       case "turn-start":
         activeTools = new Map();
+        if (transcript) {
+          processGroup = createProcessGroup();
+          transcript.append(processGroup.root);
+        }
+        turnStartedAt = Date.now();
+        turnStepCount = 0;
         beginAssistant();
         break;
       case "snapshot":
@@ -314,34 +348,42 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         renderer?.update(event.snapshot);
         break;
       case "tool-start": {
-        if (!transcript) break;
         const card = renderToolCard(event.call);
         activeTools.set(event.call.id, { card, callId: event.call.id });
-        transcript.append(card);
-        transcript.scrollTop = transcript.scrollHeight;
+        turnStepCount += 1;
+        processGroup?.addStep(card);
+        processGroup?.setRunning(`正在执行 ${event.call.name}`);
+        if (transcript) transcript.scrollTop = transcript.scrollHeight;
         break;
       }
       case "tool-end": {
         const pending = activeTools.get(event.call.id);
         const card = renderToolCard(event.call, { content: event.content, isError: event.isError });
         if (pending) pending.card.replaceWith(card);
-        else transcript?.append(card);
+        else processGroup?.addStep(card);
         activeTools.delete(event.call.id);
+        processGroup?.setRunning(activeTools.size === 0 ? `已执行 ${turnStepCount} 个动作` : `正在执行下一动作`);
         break;
       }
       case "message":
         if (event.message.role === "assistant") renderer?.update(assistantSnapshot(event.message));
         break;
       case "turn-end":
+        processGroup?.settle(`已完成 ${turnStepCount} 个动作`, Date.now() - turnStartedAt);
+        processGroup = null;
         finishActive();
         paintButtons();
         break;
       case "aborted":
+        processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
+        processGroup = null;
         appendInterrupted();
         finishActive();
         paintButtons();
         break;
       case "error":
+        processGroup?.settle("回合出错", Date.now() - turnStartedAt);
+        processGroup = null;
         appendError(event.message);
         finishActive();
         paintButtons();
@@ -354,6 +396,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     offApprovals?.();
     offSession = null;
     offApprovals = null;
+    processGroup = null;
     finishActive();
     if (abortOld) void session?.abort().catch(() => {});
     session = null;
