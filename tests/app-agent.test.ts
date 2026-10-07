@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { apply, name, inject } from "../src/plugins/app-agent";
 import { createEmitter } from "../src/host/emitter";
 
@@ -398,5 +398,39 @@ describe("agent-ui v2 回合过程组", () => {
     expect(group).not.toBeNull();
     expect(group.classList.contains("open")).toBe(false);
     expect(group.querySelector(".agent-tool-card")).not.toBeNull();
+  });
+});
+
+describe("agent-ui v2 反馈", () => {
+  it("错误显示为可关闭 toast，5 秒自动消失", async () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, el, sessionEvents } = fakeCtx([]);
+      apply(ctx as never);
+      await vi.advanceTimersByTimeAsync(50);
+      sessionEvents.emit("e", { type: "error", message: "网络断了" } as never);
+      const toast = el.querySelector<HTMLElement>(".agent-toast")!;
+      expect(toast.textContent).toContain("网络断了");
+      toast.querySelector<HTMLButtonElement>("[data-toast-close]")!.click();
+      expect(el.querySelector(".agent-toast")).toBeNull();
+      sessionEvents.emit("e", { type: "error", message: "又断了" } as never);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(el.querySelector(".agent-toast")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("composer 状态行随会话运行态更新", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const line = el.querySelector<HTMLElement>(".agent-statusline")!;
+    expect(line.classList.contains("run")).toBe(false);
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    expect(line.classList.contains("run")).toBe(true);
+    expect(line.textContent).toContain("运行中");
+    sessionEvents.emit("e", { type: "turn-end" } as never);
+    expect(line.classList.contains("run")).toBe(false);
   });
 });

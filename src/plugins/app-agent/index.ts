@@ -104,6 +104,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let composerEl: HTMLElement | null = null;
   let composerRow: HTMLElement | null = null;
   let decideTimer: ReturnType<typeof setTimeout> | null = null;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let statusline: HTMLElement | null = null;
+  let turnRunning = false;
   let selectedModel: string | null = null;
   let endpointDefault: string | null = null;
   let durableApprovalMode: "ask" | "auto" = "ask";
@@ -144,7 +147,13 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   });
 
   const paintButtons = (): void => {
-    const running = session?.running === true;
+    if (statusline) {
+      const running = turnRunning || session?.running === true;
+      statusline.classList.toggle("run", running);
+      const text = statusline.firstElementChild;
+      if (text) text.textContent = running ? "回合运行中 · 可随时停止" : "Enter 发送 · Shift+Enter 换行";
+    }
+    const running = turnRunning || session?.running === true;
     if (sendButton) sendButton.disabled = running;
     if (stopButton) stopButton.disabled = false;
   };
@@ -265,17 +274,40 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     transcript.scrollTop = transcript.scrollHeight;
   };
 
-  const appendError = (message: string): void => {
-    if (!transcript) return;
-    const error = document.createElement("div");
-    error.className = "chat-error";
+  /** Show a transient, closable error toast on the panel; auto-dismisses in 5s. */
+  const showError = (message: string): void => {
+    if (!panel || disposed) return;
+    panel.querySelector(".agent-toast")?.remove();
+    if (toastTimer) clearTimeout(toastTimer);
+    const toast = document.createElement("div");
+    toast.className = "agent-toast";
     const text = document.createElement("div");
-    text.className = "chat-error-text";
     text.textContent = message;
-    error.append(text);
-    transcript.append(error);
-    transcript.scrollTop = transcript.scrollHeight;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "agent-toast-close";
+    close.dataset.toastClose = "";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "关闭错误提示");
+    const dismiss = (): void => {
+      toast.remove();
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+    };
+    close.addEventListener("click", dismiss);
+    toastTimer = setTimeout(dismiss, 5000);
+    toast.append(text, close);
+    panel.append(toast);
   };
+
+  /** Stream-level errors surface as toasts; the turn process group already
+   * collapsed with an error label. */
+  const appendError = (message: string): void => {
+    showError(message);
+  };
+
 
   const renderHistory = (): void => {
     if (!transcript || !session) return;
@@ -363,6 +395,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     paintButtons();
     switch (event.type) {
       case "turn-start":
+        turnRunning = true;
         activeTools = new Map();
         if (transcript) {
           processGroup = createProcessGroup();
@@ -371,6 +404,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         turnStartedAt = Date.now();
         turnStepCount = 0;
         beginAssistant();
+        paintButtons();
         break;
       case "snapshot":
         if (!renderer && !activeStream) beginAssistant();
@@ -398,12 +432,14 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         if (event.message.role === "assistant") renderer?.update(assistantSnapshot(event.message));
         break;
       case "turn-end":
+        turnRunning = false;
         processGroup?.settle(`已完成 ${turnStepCount} 个动作`, Date.now() - turnStartedAt);
         processGroup = null;
         finishActive();
         paintButtons();
         break;
       case "aborted":
+        turnRunning = false;
         processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
         processGroup = null;
         appendInterrupted();
@@ -411,6 +447,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         paintButtons();
         break;
       case "error":
+        turnRunning = false;
         processGroup?.settle("回合出错", Date.now() - turnStartedAt);
         processGroup = null;
         appendError(event.message);
@@ -426,6 +463,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     offSession = null;
     offApprovals = null;
     processGroup = null;
+    turnRunning = false;
     approvalQueue = [];
     activeApproval = null;
     approvalDetail?.remove();
@@ -435,6 +473,11 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       clearTimeout(decideTimer);
       decideTimer = null;
     }
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    panel?.querySelector(".agent-toast")?.remove();
     if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
     finishActive();
     if (abortOld) void session?.abort().catch(() => {});
@@ -661,11 +704,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         await refreshSessions();
       })
       .catch((error: unknown) => {
-        if (disposed && notice) return;
-        if (notice) {
-          notice.textContent = `${toPanelError(error).code}: ${toPanelError(error).message}`;
-          notice.hidden = false;
-        }
+        if (disposed) return;
+        showError(`${toPanelError(error).code}: ${toPanelError(error).message}`);
       })
       .finally(() => {
         paintButtons();
@@ -675,10 +715,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   const stopSession = (): void => {
     if (!session) return;
     void session.abort().catch((error: unknown) => {
-      if (!disposed && notice) {
-        notice.textContent = `停止失败：${toPanelError(error).message}`;
-        notice.hidden = false;
-      }
+      if (!disposed) showError(`停止失败：${toPanelError(error).message}`);
     });
   };
 
@@ -930,6 +967,12 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     spacer.className = "chat-row-spacer";
     row.append(attach, modelToggle, spacer, modeGroup, sendButton, stopButton);
     composer.append(input, row);
+    statusline = document.createElement("div");
+    statusline.className = "agent-statusline";
+    const statusText = document.createElement("span");
+    statusText.className = "agent-statusline-text";
+    statusText.textContent = "Enter 发送 · Shift+Enter 换行";
+    statusline.append(statusText);
 
     head.append(titleRow);
     panel.append(head);
@@ -938,7 +981,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (morePop) pops.push(morePop);
     if (modelPop) pops.push(modelPop);
     panel.append(...pops);
-    panel.append(rootNotice, contextRow, transcript, chips, notice, composer);
+    panel.append(rootNotice, contextRow, transcript, chips, notice, composer, statusline);
     panel.addEventListener("dragover", onDragOver);
     panel.addEventListener("drop", onDrop);
     el.append(panel);
@@ -1008,6 +1051,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     document.removeEventListener("keydown", onDocKeydown);
     document.removeEventListener("click", onDocClick);
     if (decideTimer) clearTimeout(decideTimer);
+    if (toastTimer) clearTimeout(toastTimer);
     offSession?.();
     offApprovals?.();
     finishActive();
