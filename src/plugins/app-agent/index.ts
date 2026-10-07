@@ -9,9 +9,11 @@ import { fileToAttachment, type PendingAttachment } from "./attachments";
 import {
   createProcessGroup,
   createStreamRenderer,
-  renderApprovalCard,
+  renderApprovalPrompt,
   renderCompactionDivider,
+  renderDecisionLine,
   renderToolCard,
+  type ApprovalRequest,
 } from "./render";
 
 /** Plugin id in the manifest and static module table. */
@@ -95,6 +97,14 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let processGroup: ReturnType<typeof createProcessGroup> | null = null;
   let turnStartedAt = 0;
   let turnStepCount = 0;
+  let approvalQueue: ApprovalRequest[] = [];
+  let activeApproval: ApprovalRequest | null = null;
+  let savedDraft = "";
+  let approvalDetail: HTMLElement | null = null;
+  let approvalToggle: HTMLButtonElement | null = null;
+  let composerEl: HTMLElement | null = null;
+  let composerRow: HTMLElement | null = null;
+  let decideTimer: ReturnType<typeof setTimeout> | null = null;
   let selectedModel: string | null = null;
   let endpointDefault: string | null = null;
   let durableApprovalMode: "ask" | "auto" = "ask";
@@ -299,19 +309,12 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       }
       if (line.type === "approval") {
         flushHistoryGroup();
-        const request = {
-          id: line.id,
-          kind: line.kind,
-          tool: line.tool,
-          path: line.path,
-          summary: "历史审批",
-        };
-        const state = {
-          decision: line.decision === "allow" ? "allow" as const : "deny" as const,
-          decider: line.decider,
-          reason: line.reason ?? (line.decision === "unavailable" ? "审批不可用" : undefined),
-        };
-        nodes.push(renderApprovalCard(request, state));
+        const decided = line.decision === "allow";
+        nodes.push(renderDecisionLine(
+          decided ? "allow" : "deny",
+          `${decided ? "已批准" : "已拒绝"} ${line.tool} ${line.path}${line.reason ? ` · ${line.reason}` : ""}`,
+          line.decider === "guardian" ? "审查模型" : "用户",
+        ));
         continue;
       }
       if (line.type !== "tool") continue;
@@ -397,6 +400,16 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     offSession = null;
     offApprovals = null;
     processGroup = null;
+    approvalQueue = [];
+    activeApproval = null;
+    approvalDetail?.remove();
+    approvalDetail = null;
+    approvalToggle = null;
+    if (decideTimer) {
+      clearTimeout(decideTimer);
+      decideTimer = null;
+    }
+    if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
     finishActive();
     if (abortOld) void session?.abort().catch(() => {});
     session = null;
@@ -462,16 +475,107 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
   };
 
-  const showApproval = (target: AgentSession, request: ApprovalRequest): void => {
-    if (!transcript || disposed) return;
-    const pending = renderApprovalCard(request, "pending", (outcome: ApprovalOutcome) => {
-      const decided = renderApprovalCard(request, { decision: outcome.decision, decider: "human", reason: outcome.reason });
-      pending.replaceWith(decided);
-      target.respond(request.id, outcome);
-    });
-    transcript.append(pending);
-    transcript.scrollTop = transcript.scrollHeight;
+  /** Queue one approval and present it by taking over the composer. */
+  const showApproval = (_target: AgentSession, request: ApprovalRequest): void => {
+    if (disposed) return;
+    approvalQueue.push(request);
+    presentNextApproval();
   };
+
+  /** Present the next queued approval: save the draft, swap the composer into
+   * approval state, and mount the detail popover on the panel. */
+  const presentNextApproval = (): void => {
+    if (disposed || !composerEl || !panel || composerEl.dataset.state !== "normal") return;
+    const next = approvalQueue.shift();
+    if (!next || !input || !composerRow) return;
+    activeApproval = next;
+    savedDraft = input.value;
+    input.value = "";
+    if (approvalDetail) approvalDetail.remove();
+    const prompt = renderApprovalPrompt(next, decideApproval);
+    approvalDetail = prompt.detail;
+    approvalToggle = prompt.toggle;
+    panel.append(approvalDetail);
+    composerEl.dataset.state = "approval";
+    composerEl.dataset.approvalId = next.id;
+    composerEl.replaceChildren(prompt.root);
+    paintButtons();
+  };
+
+  /** Record the decision, collapse the composer to a one-line record, restore
+   * the draft, then present the next queued approval. */
+  const decideApproval = (outcome: ApprovalOutcome): void => {
+    const active = activeApproval;
+    if (!active || !composerEl) return;
+    session?.respond(active.id, outcome);
+    if (transcript) {
+      const label = outcome.decision === "allow"
+        ? `已批准 ${active.tool} ${active.path}${outcome.grant === "dir" ? "（所在目录）" : outcome.grant === "file" ? "（仅此文件）" : ""}`
+        : `已拒绝 ${active.tool} ${active.path}`;
+      transcript.append(renderDecisionLine(outcome.decision, label, "用户"));
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+    approvalQueue = approvalQueue.filter((item) => item.id !== active.id);
+    activeApproval = null;
+    approvalDetail?.remove();
+    approvalDetail = null;
+    approvalToggle = null;
+    composerEl.dataset.state = "decided";
+    delete composerEl.dataset.approvalId;
+    const decided = document.createElement("div");
+    decided.className = "agent-approval-decided";
+    decided.textContent = outcome.decision === "allow" ? "✓ 已批准，Agent 继续执行" : "✕ 已拒绝，Agent 可继续对话";
+    composerEl.replaceChildren(decided);
+    paintButtons();
+    if (decideTimer) clearTimeout(decideTimer);
+    decideTimer = setTimeout(() => {
+      decideTimer = null;
+      restoreComposer();
+      presentNextApproval();
+    }, 400);
+  };
+
+  /** Return the composer to normal input state and restore the saved draft. */
+  const restoreComposer = (): void => {
+    if (!composerEl || !input || !composerRow) return;
+    composerEl.dataset.state = "normal";
+    delete composerEl.dataset.approvalId;
+    composerEl.replaceChildren(input, composerRow);
+    input.value = savedDraft;
+    savedDraft = "";
+    paintButtons();
+  };
+
+  /** Global shortcuts while an approval owns the composer: Esc closes the
+   * detail popover first, otherwise denies; ⌘/Ctrl+Enter approves. Outside
+   * clicks close an open popover without deciding. */
+  const onDocKeydown = (event: KeyboardEvent): void => {
+    if (disposed || composerEl?.dataset.state !== "approval") return;
+    if (event.key === "Escape") {
+      if (approvalDetail?.classList.contains("open")) {
+        approvalDetail.classList.remove("open");
+        approvalToggle?.setAttribute("aria-expanded", "false");
+      } else {
+        event.preventDefault();
+        decideApproval({ decision: "deny" });
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      decideApproval({ decision: "allow" });
+    }
+  };
+  const onDocClick = (event: MouseEvent): void => {
+    if (disposed || !approvalDetail?.classList.contains("open")) return;
+    const target = event.target as Node;
+    if (approvalDetail.contains(target) || approvalToggle?.contains(target)) return;
+    approvalDetail.classList.remove("open");
+    approvalToggle?.setAttribute("aria-expanded", "false");
+  };
+  document.addEventListener("keydown", onDocKeydown);
+  document.addEventListener("click", onDocClick);
+
 
   const openSession = async (
     id: string | null,
@@ -709,6 +813,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     notice.hidden = true;
     const composer = document.createElement("div");
     composer.className = "chat-composer";
+    composer.dataset.state = "normal";
+    composerEl = composer;
     const attach = document.createElement("button");
     attach.type = "button";
     attach.className = "chat-attach";
@@ -736,6 +842,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     input.addEventListener("paste", onPaste);
     const row = document.createElement("div");
     row.className = "chat-composer-row";
+    composerRow = row;
     const hint = document.createElement("span");
     hint.className = "chat-hint";
     hint.textContent = "Enter 发送 · Shift+Enter 换行";
@@ -790,6 +897,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   return () => {
     disposed = true;
+    document.removeEventListener("keydown", onDocKeydown);
+    document.removeEventListener("click", onDocClick);
+    if (decideTimer) clearTimeout(decideTimer);
     offSession?.();
     offApprovals?.();
     finishActive();

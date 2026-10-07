@@ -1,41 +1,41 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { renderApprovalCard, renderToolCard, renderCompactionDivider, createProcessGroup, renderDecisionLine } from "../src/plugins/app-agent/render";
+import { renderApprovalPrompt, renderToolCard, renderCompactionDivider, createProcessGroup, renderDecisionLine } from "../src/plugins/app-agent/render";
 
 describe("app-agent render", () => {
-  it("write 审批卡 pending：批准/拒绝回传", () => {
+  it("审批 prompt：批准/拒绝回传，详情含 diff 文本", () => {
     const outcomes: string[] = [];
-    const card = renderApprovalCard(
+    const h = renderApprovalPrompt(
       { id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入笔记", newText: "# 笔记" },
-      "pending",
       (o) => outcomes.push(o.decision),
     );
-    expect(card.textContent).toContain("/lib/n.md");
-    card.querySelector<HTMLButtonElement>("[data-approve]")!.click();
-    card.querySelector<HTMLButtonElement>("[data-deny]")!.click();
+    expect(h.root.textContent).toContain("/lib/n.md");
+    expect(h.detail.textContent).toContain("# 笔记");
+    h.root.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    h.root.querySelector<HTMLButtonElement>("[data-deny]")!.click();
     expect(outcomes).toEqual(["allow", "deny"]);
   });
 
-  it("read-outside 卡带粒度选择", () => {
+  it("read-outside prompt 带粒度选择", () => {
     const outcomes: { grant?: string }[] = [];
-    const card = renderApprovalCard(
+    const h = renderApprovalPrompt(
       { id: "a2", kind: "read-outside", tool: "read", path: "/out/a.md", summary: "读取库外文件" },
-      "pending",
       (o) => outcomes.push(o),
     );
-    card.querySelector<HTMLButtonElement>("[data-grant-dir]")!.click();
+    h.root.querySelector<HTMLButtonElement>("[data-grant-dir]")!.click();
     expect(outcomes[0]).toMatchObject({ decision: "allow", grant: "dir" });
   });
 
-  it("decided 卡只读且 guardian 标注", () => {
-    const card = renderApprovalCard(
-      { id: "a3", kind: "edit", tool: "edit", path: "/lib/a.md", summary: "替换", oldText: "甲", newText: "乙" },
-      { decision: "deny", decider: "guardian", reason: "可疑" },
+  it("详情浮层 toggle 状态由 handle 暴露", () => {
+    const h = renderApprovalPrompt(
+      { id: "a4", kind: "write", tool: "write", path: "/lib/b.md", summary: "写", newText: "x" },
+      () => {},
     );
-    expect(card.textContent).toContain("审查模型");
-    expect(card.textContent).toContain("可疑");
-    expect(card.querySelector("button")).toBeNull();
-    expect(card.textContent).toContain("甲").and.toContain("乙");
+    expect(h.detail.classList.contains("open")).toBe(false);
+    h.toggle.click();
+    expect(h.detail.classList.contains("open")).toBe(true);
+    h.toggle.click();
+    expect(h.detail.classList.contains("open")).toBe(false);
   });
 
   it("工具卡结果折叠与错误样式", () => {

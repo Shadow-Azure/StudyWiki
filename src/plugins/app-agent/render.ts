@@ -125,64 +125,6 @@ export function renderToolCard(
   return card;
 }
 
-/** Render an approval request in exactly one interactive or read-only state.
- * Pending write/edit cards expose `[data-approve]` and `[data-deny]`; pending
- * read-outside cards expose grant choices `[data-grant-file]` / `[data-grant-dir]`
- * plus `[data-deny]`. Decided cards contain no controls and preserve decision
- * source and denial reason. The renderer does not mutate its own state after a
- * click; the host must replace the card with its decided rendering.
- * @param req Approval payload to display.
- * @param state Whether approval is pending, or the persisted decision record.
- * @param onRespond Optional sink for pending-card decisions.
- * @returns Approval card root owned by the caller. */
-export function renderApprovalCard(
-  req: ApprovalRequest,
-  state: ApprovalCardState,
-  onRespond?: (outcome: ApprovalOutcome) => void,
-): HTMLElement {
-  const card = document.createElement("article");
-  card.className = "agent-approval-card";
-  card.dataset.approvalId = req.id;
-  card.dataset.state = typeof state === "string" ? "pending" : "decided";
-
-  const heading = document.createElement("div");
-  heading.className = "agent-approval-card-title";
-  const action = document.createElement("strong");
-  action.textContent = req.summary;
-  const target = document.createElement("span");
-  target.textContent = req.path;
-  heading.append(action, target);
-
-  const kind = document.createElement("div");
-  kind.className = "agent-approval-card-kind";
-  kind.textContent = `工具 ${req.tool} · ${req.kind}`;
-
-  card.append(heading, kind);
-  appendApprovalBody(card, req);
-
-  if (state === "pending") {
-    card.append(approvalActions(req, onRespond));
-    return card;
-  }
-
-  const record = document.createElement("div");
-  record.className = "agent-approval-card-record";
-  const source = document.createElement("span");
-  source.className = "agent-approval-card-source";
-  source.textContent = state.decider === "guardian" ? "审查模型" : "用户";
-  const decision = document.createElement("span");
-  decision.textContent = state.decision === "allow" ? "已批准" : "已拒绝";
-  record.append(source, decision);
-  card.append(record);
-  if (state.reason) {
-    const reason = document.createElement("div");
-    reason.className = "agent-approval-card-reason";
-    reason.textContent = state.reason;
-    card.append(reason);
-  }
-  return card;
-}
-
 /** Render a persisted compaction boundary as an expandable divider. The summary
  * remains out of the collapsed row, while expanding the `<details>` reveals it.
  * @param summary Human-readable summary of the compacted earlier conversation.
@@ -199,67 +141,6 @@ export function renderCompactionDivider(summary: string): HTMLElement {
   details.append(label, text);
   card.append(details);
   return card;
-}
-
-/** Add the kind-specific pending payload: write preview or explicit edit diff. */
-function appendApprovalBody(card: HTMLElement, req: ApprovalRequest): void {
-  if (req.kind === "edit") {
-    card.append(
-      approvalText("旧内容", req.oldText ?? ""),
-      approvalText("新内容", req.newText ?? ""),
-    );
-    return;
-  }
-  if (req.kind === "write" && req.newText) {
-    card.append(approvalText("写入内容", req.newText));
-  }
-}
-
-/** Create a labelled, overflow-safe text block for write/edit previews. */
-function approvalText(label: string, value: string): HTMLElement {
-  const box = document.createElement("div");
-  box.className = "agent-approval-card-text";
-  const name = document.createElement("span");
-  name.textContent = label;
-  const pre = document.createElement("pre");
-  pre.textContent = value;
-  box.append(name, pre);
-  return box;
-}
-
-/** Build pending controls. Read-outside approval intentionally names its grant
- * scope on the allowing button instead of offering an unscooped approve. */
-function approvalActions(
-  req: ApprovalRequest,
-  onRespond?: (outcome: ApprovalOutcome) => void,
-): HTMLElement {
-  const actions = document.createElement("div");
-  actions.className = "agent-approval-card-actions";
-  const respond = (outcome: ApprovalOutcome) => onRespond?.(outcome);
-  if (req.kind === "read-outside") {
-    actions.append(
-      actionButton("仅此文件", "grant-file", () => respond({ decision: "allow", grant: "file" })),
-      actionButton("所在目录", "grant-dir", () => respond({ decision: "allow", grant: "dir" })),
-    );
-  } else {
-    actions.append(actionButton("批准", "approve", () => respond({ decision: "allow" })));
-  }
-  actions.append(actionButton("拒绝", "deny", () => respond({ decision: "deny" })));
-  return actions;
-}
-
-/** Create one pending-card action with its stable data hook. */
-function actionButton(
-  label: string,
-  action: string,
-  onClick: () => void,
-): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.dataset[action.replace(/-([a-z])/g, (_, char: string) => char.toUpperCase())] = "";
-  button.textContent = label;
-  button.addEventListener("click", onClick);
-  return button;
 }
 
 /** Turn provider argument JSON into a one-line human summary without ever
@@ -409,4 +290,159 @@ export function renderDecisionLine(decision: "allow" | "deny", label: string, de
   source.textContent = decider;
   line.append(dot, text, source);
   return line;
+}
+
+/** Human summary of one pending approval request used by the composer prompt. */
+function approvalVerb(req: ApprovalRequest): string {
+  if (req.kind === "read-outside") return "读取库外文件";
+  if (req.kind === "edit") return "修改文件";
+  return "写入文件";
+}
+
+/** Build the composer takeover UI for one pending approval: a compact summary,
+ * a detail popover anchored above the composer, and decision controls. The
+ * renderer is stateless apart from the popover open class.
+ * @param req Approval payload to display.
+ * @param onRespond Sink for the user's decision.
+ * @returns Prompt handle: composer body, detail popover, and toggle button. */
+export function renderApprovalPrompt(
+  req: ApprovalRequest,
+  onRespond: (outcome: ApprovalOutcome) => void,
+): { root: HTMLElement; detail: HTMLElement; toggle: HTMLButtonElement } {
+  const root = document.createElement("div");
+  root.className = "agent-approval-prompt";
+  root.dataset.approvalId = req.id;
+
+  const summary = document.createElement("div");
+  summary.className = "agent-approval-summary";
+  const warn = document.createElement("span");
+  warn.className = "agent-approval-warn";
+  warn.textContent = "⚠";
+  const body = document.createElement("div");
+  body.className = "agent-approval-summary-body";
+  const question = document.createElement("div");
+  question.className = "agent-approval-question";
+  question.textContent = `Agent 请求${approvalVerb(req)}`;
+  const sub = document.createElement("div");
+  sub.className = "agent-approval-sub";
+  const path = document.createElement("span");
+  path.className = "agent-approval-path";
+  path.textContent = req.path;
+  sub.append(path);
+  if (req.newText) {
+    const size = document.createElement("span");
+    size.textContent = ` · ${[...req.newText].length} 字符`;
+    sub.append(size);
+  }
+  body.append(question, sub);
+  summary.append(warn, body);
+
+  const detail = renderApprovalDetail(req);
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "agent-detail-toggle";
+  toggle.dataset.detailToggle = "";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.textContent = "查看详情 ▾";
+  toggle.addEventListener("click", () => {
+    const open = detail.classList.toggle("open");
+    toggle.setAttribute("aria-expanded", String(open));
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "agent-approval-actions";
+  const respond = (outcome: ApprovalOutcome): void => onRespond(outcome);
+  const actionButton = (label: string, action: string, cls: string, onClick: () => void): HTMLButtonElement => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = cls;
+    button.dataset[action.replace(/-([a-z])/g, (_, char: string) => char.toUpperCase())] = "";
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  };
+  if (req.kind === "read-outside") {
+    actions.append(
+      actionButton("仅此文件", "grant-file", "btn", () => respond({ decision: "allow", grant: "file" })),
+      actionButton("所在目录", "grant-dir", "btn", () => respond({ decision: "allow", grant: "dir" })),
+    );
+  } else {
+    actions.append(actionButton("批准", "approve", "btn approve", () => respond({ decision: "allow" })));
+  }
+  actions.append(actionButton("拒绝", "deny", "btn ghost", () => respond({ decision: "deny" })));
+
+  const row = document.createElement("div");
+  row.className = "agent-approval-row";
+  row.append(toggle, actions);
+  root.append(summary, row);
+  return { root, detail, toggle };
+}
+
+/** Detail popover for one approval request: target path, change size, tool
+ * signature, diff preview, and the grant-scope rule note. Read-only.
+ * @param req Approval payload to explain.
+ * @returns Popover root owned by the caller. */
+export function renderApprovalDetail(req: ApprovalRequest): HTMLElement {
+  const detail = document.createElement("div");
+  detail.className = "agent-approval-detail";
+  detail.dataset.approvalId = req.id;
+
+  const head = document.createElement("div");
+  head.className = "agent-approval-detail-head";
+  const title = document.createElement("div");
+  title.className = "agent-approval-detail-title";
+  const dot = document.createElement("span");
+  dot.className = "agent-approval-detail-dot";
+  title.append(dot, document.createTextNode(`${approvalVerb(req)} · 等待批准`));
+  head.append(title);
+  detail.append(head);
+
+  const rows = document.createElement("div");
+  rows.className = "agent-approval-detail-body";
+  const addRow = (key: string, value: string, mono = false): void => {
+    const row = document.createElement("div");
+    row.className = "agent-approval-detail-row";
+    const k = document.createElement("span");
+    k.className = "agent-approval-detail-key";
+    k.textContent = key;
+    const v = document.createElement("span");
+    v.className = mono ? "agent-approval-detail-value mono" : "agent-approval-detail-value";
+    v.textContent = value;
+    row.append(k, v);
+    rows.append(row);
+  };
+  addRow("目标", req.path, true);
+  if (req.newText) {
+    addRow("变更", `+${[...req.newText].length} 字符${req.oldText ? ` · 替换 ${[...req.oldText].length} 字符` : ""}`);
+  }
+  addRow("工具", `${req.tool}(${req.kind})`, true);
+  if (req.newText || req.oldText) {
+    const diff = document.createElement("pre");
+    diff.className = "agent-approval-diff";
+    if (req.oldText) {
+      for (const lineText of req.oldText.split("\n")) {
+        const line = document.createElement("span");
+        line.className = "del";
+        line.textContent = `-${lineText}`;
+        diff.append(line);
+      }
+    }
+    if (req.newText) {
+      for (const lineText of req.newText.split("\n")) {
+        const line = document.createElement("span");
+        line.className = "add";
+        line.textContent = `+${lineText}`;
+        diff.append(line);
+      }
+    }
+    rows.append(diff);
+  }
+  const note = document.createElement("div");
+  note.className = "agent-approval-note";
+  note.textContent = req.kind === "read-outside"
+    ? "本次批准仅作用于该次读取；“所在目录”授予会级目录读取。默认模式可在模型设置修改。"
+    : "本次批准仅作用于这一次写入；拒绝后 Agent 收到拒绝原因并可继续对话。默认模式可在模型设置修改。";
+  rows.append(note);
+  detail.append(rows);
+  return detail;
 }

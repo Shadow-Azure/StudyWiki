@@ -96,17 +96,58 @@ describe("app-agent 面板", () => {
     expect(calls).toContainEqual(["abort"]);
   });
 
-  it("审批事件渲染卡片，点击回传 respond", async () => {
+  it("审批接管 composer；批准后恢复草稿", async () => {
     const { ctx, el, calls, approvalEvents } = fakeCtx([]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    const input = el.querySelector<HTMLTextAreaElement>(".chat-input")!;
+    input.value = "我的草稿";
     approvalEvents.emit("r", {
       id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写", newText: "机密内容",
     } as never);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.state).toBe("approval");
+    expect(el.querySelector(".agent-approval-card")).toBeNull();
+    expect(el.querySelector<HTMLElement>(".agent-approval-detail")!.textContent).toContain("机密内容");
     el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
-    expect(el.querySelector<HTMLElement>("[data-approval-id='a1']")?.textContent).toContain("机密内容");
-    expect(calls[0]?.[0]).toBe("respond");
-    expect(calls[0]?.[1]).toBe("a1");
+    expect(calls[0]).toEqual(["respond", "a1", { decision: "allow" }]);
+    expect(composer.dataset.state).toBe("decided");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(composer.dataset.state).toBe("normal");
+    expect(input.value).toBe("我的草稿");
+  });
+
+  it("审批详情浮层 toggle 与 Esc 关闭", async () => {
+    const { ctx, el, approvalEvents } = fakeCtx([]);
+    document.body.append(el); // 事件冒泡到 document 需要真实树
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    approvalEvents.emit("r", { id: "a2", kind: "write", tool: "write", path: "/lib/n.md", summary: "写", newText: "x" } as never);
+    const detail = el.querySelector<HTMLElement>(".agent-approval-detail")!;
+    expect(detail.classList.contains("open")).toBe(false);
+    el.querySelector<HTMLButtonElement>("[data-detail-toggle]")!.click();
+    expect(detail.classList.contains("open")).toBe(true);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(detail.classList.contains("open")).toBe(false);
+    el.querySelector<HTMLButtonElement>("[data-detail-toggle]")!.click();
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(detail.classList.contains("open")).toBe(false);
+    el.remove();
+  });
+
+  it("多个审批排队，处理完自动显示下一个", async () => {
+    const { ctx, el, calls, approvalEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    approvalEvents.emit("r", { id: "a1", kind: "write", tool: "write", path: "/1.md", summary: "写", newText: "1" } as never);
+    approvalEvents.emit("r", { id: "a2", kind: "write", tool: "write", path: "/2.md", summary: "写", newText: "2" } as never);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.approvalId).toBe("a1");
+    el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    expect(calls[0]).toEqual(["respond", "a1", { decision: "allow" }]);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(composer.dataset.state).toBe("approval");
+    expect(composer.dataset.approvalId).toBe("a2");
   });
 
   it("模式胶囊切换调 setMode", async () => {
@@ -167,16 +208,16 @@ describe("app-agent 面板", () => {
     expect(calls).toContainEqual(["setModel", "m2"]);
   });
 
-  it("历史审批行渲染为只读决定卡", async () => {
+  it("历史审批行渲染为只读决策行", async () => {
     const { ctx, el } = fakeCtx([], {
       lines: [{ type: "approval", id: "a9", kind: "edit", tool: "edit", path: "/lib/a.md", decider: "human", decision: "allow" }],
     });
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const card = el.querySelector<HTMLElement>("[data-approval-id='a9']");
-    expect(card?.dataset.state).toBe("decided");
-    expect(card?.textContent).toContain("/lib/a.md");
-    expect(card?.querySelector("button")).toBeNull();
+    const line = el.querySelector<HTMLElement>(".agent-decision-line");
+    expect(line?.textContent).toContain("/lib/a.md");
+    expect(line?.textContent).toContain("已批准");
+    expect(line?.querySelector("button")).toBeNull();
   });
 
   it("历史会话下拉列出并打开", async () => {
@@ -271,8 +312,8 @@ describe("app-agent 面板", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const classes = [...el.querySelector<HTMLElement>(".agent-transcript")!.children]
       .map((node) => node.className);
-    expect(classes.indexOf("chat-message chat-user")).toBeLessThan(classes.indexOf("agent-approval-card"));
-    expect(classes.indexOf("agent-approval-card")).toBeLessThan(classes.indexOf("chat-message chat-assistant"));
+    expect(classes.indexOf("chat-message chat-user")).toBeLessThan(classes.indexOf("agent-decision-line"));
+    expect(classes.indexOf("agent-decision-line")).toBeLessThan(classes.indexOf("chat-message chat-assistant"));
   });
 });
 
