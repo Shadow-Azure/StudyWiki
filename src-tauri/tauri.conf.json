@@ -15,8 +15,11 @@
         "title": "StudyWiki",
         "width": 1180,
         "height": 760,
-        "minWidth": 720,
-        "minHeight": 480
+        "minWidth": 920,
+        "minHeight": 480,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 12, "y": 12 }
       }
     ],
     "security": {
