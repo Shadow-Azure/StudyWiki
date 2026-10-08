@@ -2,6 +2,14 @@ import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
 import { icon } from "../../ui/icons";
 import { paintTitle } from "../../ui/viewer";
+import {
+  ACTIVITY_WIDTH,
+  clampRailWidth,
+  loadShellLayout,
+  maxRailWidth,
+  saveShellLayout,
+  type RailSide,
+} from "./layout";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-shell";
@@ -10,22 +18,16 @@ export const inject = ["files", "windows", "workspace", "slots"];
 
 /** Config accepted by the app-shell plugin (manifest `config` merged over defaults). */
 export interface ShellConfig {
-  /** Application title shown in the topbar and the welcome state. */
+  /** Application title shown in the welcome state and window-title baseline. */
   title: string;
 }
 
-const SIDEBAR_MIN = 210;
-const SIDEBAR_MAX_RATIO = 0.45;
-const MAIN_MIN = 340;
-const SIDEBAR_DEFAULT = 252;
-const SIDEBAR_KEYBOARD_STEP = 16;
-
-/** Shell layout: topbar (seal brand + actions + active filename) + sidebar + main
- * grid and the four slot containers; main states cover the no-root welcome,
- * no-active-file hint, and explicit unsupported hint for other files.
+/** Shell layout: titlebar (rail toggles + active filename), Activity Rail,
+ * collapsible files/agent rails, and the reader; main states cover the no-root
+ * welcome, no-active-file hint, and explicit unsupported hint for other files.
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
- * @returns Teardown removing the root-changed / file-opened subscriptions. */
+ * @returns Teardown removing the resize listener and workspace subscriptions. */
 export function apply(ctx: Context, config: ShellConfig): () => void {
   let app = document.getElementById("app");
   if (!app) {
@@ -36,26 +38,31 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   }
   app.className = "shell";
   app.replaceChildren();
-  const topbar = document.createElement("header");
-  topbar.className = "topbar";
-  const brand = document.createElement("div");
-  brand.className = "brand";
-  const seal = document.createElement("span");
-  seal.className = "brand-seal";
-  seal.append(icon("iceberg", 14));
-  const brandName = document.createElement("span");
-  brandName.className = "brand-name";
-  brandName.textContent = config.title;
-  brand.append(seal, brandName);
-  const activityLikeHost = document.createElement("div");
-  activityLikeHost.className = "slot-host topbar-left";
+  const titlebar = document.createElement("header");
+  titlebar.className = "topbar titlebar";
+  const filesToggle = labelButton("panel-left", "", {
+    className: "btn btn-ghost icon-btn titlebar-toggle",
+    ariaLabel: "显示或隐藏文件栏",
+  });
+  filesToggle.dataset.railToggle = "files";
   const fileTitle = document.createElement("div");
-  fileTitle.className = "topbar-file";
-  topbar.append(brand, fileTitle, activityLikeHost);
+  fileTitle.className = "topbar-file titlebar-title";
+  const agentToggle = labelButton("panel-right", "", {
+    className: "btn btn-ghost icon-btn titlebar-toggle",
+    ariaLabel: "显示或隐藏 Agent 栏",
+  });
+  agentToggle.dataset.railToggle = "agent";
+  titlebar.append(filesToggle, fileTitle, agentToggle);
+  if (/Macintosh/.test(navigator.userAgent)) app.classList.add("is-macos");
   const body = document.createElement("div");
-  body.className = "body";
+  body.className = "workbench";
+  const activity = document.createElement("aside");
+  activity.className = "activity";
+  const activityHost = document.createElement("div");
+  activityHost.className = "slot-host activity-left";
+  activity.append(activityHost);
   const sidebar = document.createElement("aside");
-  sidebar.className = "sidebar";
+  sidebar.className = "rail files";
   const treeHost = document.createElement("div");
   treeHost.className = "slot-host sidebar-tree";
   sidebar.append(treeHost);
@@ -65,60 +72,68 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   viewerHost.className = "slot-host main-viewer";
   main.append(viewerHost);
   const chatRail = document.createElement("aside");
-  chatRail.className = "chat-rail";
+  chatRail.className = "rail agent";
   const chatHost = document.createElement("div");
   chatHost.className = "slot-host sidebar-right";
   chatRail.append(chatHost);
-  let sidebarSize = SIDEBAR_DEFAULT;
-  const resizer = document.createElement("div");
-  resizer.className = "workspace-resizer line-resizer";
-  resizer.tabIndex = 0;
-  resizer.setAttribute("role", "separator");
-  resizer.setAttribute("aria-orientation", "vertical");
-  resizer.setAttribute("aria-label", "调整文件树宽度");
-  resizer.setAttribute("aria-valuemin", String(SIDEBAR_MIN));
-  const sidebarMax = (): number =>
-    Math.max(
-      SIDEBAR_MIN,
-      Math.floor(Math.min(window.innerWidth * SIDEBAR_MAX_RATIO, window.innerWidth - MAIN_MIN)),
+  const state = loadShellLayout();
+  if (state.files.open) {
+    state.files.width = clampRailWidth(
+      "files", state.files.width, window.innerWidth,
+      state.agent.open ? state.agent.width : 0,
     );
-  resizer.setAttribute("aria-valuemax", String(sidebarMax()));
-  resizer.setAttribute("aria-valuenow", String(sidebarSize));
-  const resize = (next: number): void => {
-    const max = sidebarMax();
-    sidebarSize = Math.min(max, Math.max(SIDEBAR_MIN, Math.round(next)));
-    body.style.setProperty("--sidebar-size", `${sidebarSize}px`);
-    resizer.setAttribute("aria-valuemax", String(max));
-    resizer.setAttribute("aria-valuenow", String(sidebarSize));
+  }
+  if (state.agent.open) {
+    state.agent.width = clampRailWidth(
+      "agent", state.agent.width, window.innerWidth,
+      state.files.open ? state.files.width : 0,
+    );
+  }
+  const filesResizer = document.createElement("div");
+  filesResizer.className = "workspace-resizer rail-resizer";
+  filesResizer.dataset.side = "files";
+  filesResizer.tabIndex = 0;
+  filesResizer.setAttribute("role", "separator");
+  filesResizer.setAttribute("aria-orientation", "vertical");
+  filesResizer.setAttribute("aria-label", "调整文件栏宽度");
+  const agentResizer = document.createElement("div");
+  agentResizer.className = "workspace-resizer rail-resizer";
+  agentResizer.dataset.side = "agent";
+  agentResizer.tabIndex = 0;
+  agentResizer.setAttribute("role", "separator");
+  agentResizer.setAttribute("aria-orientation", "vertical");
+  agentResizer.setAttribute("aria-label", "调整 Agent 栏宽度");
+  const paint = (): void => {
+    const filesWidth = state.files.open ? state.files.width : 0;
+    const agentWidth = state.agent.open ? state.agent.width : 0;
+    body.style.setProperty("--activity-width", `${ACTIVITY_WIDTH}px`);
+    body.style.setProperty("--files-width", `${filesWidth}px`);
+    body.style.setProperty("--agent-width", `${agentWidth}px`);
+    body.dataset.filesOpen = String(state.files.open);
+    body.dataset.agentOpen = String(state.agent.open);
+    filesToggle.setAttribute("aria-pressed", String(state.files.open));
+    agentToggle.setAttribute("aria-pressed", String(state.agent.open));
+    filesResizer.setAttribute("aria-valuenow", String(state.files.width));
+    agentResizer.setAttribute("aria-valuenow", String(state.agent.width));
+    filesResizer.setAttribute("aria-valuemax", String(maxRailWidth(
+      "files", window.innerWidth, state.agent.open ? state.agent.width : 0,
+    )));
+    agentResizer.setAttribute("aria-valuemax", String(maxRailWidth(
+      "agent", window.innerWidth, state.files.open ? state.files.width : 0,
+    )));
   };
-  const onWindowResize = (): void => resize(sidebarSize);
-  const stopDrag = (): void => {
-    body.classList.remove("is-resizing");
-    document.removeEventListener("pointermove", onPointerMove);
-    document.removeEventListener("pointerup", stopDrag);
-    document.removeEventListener("pointercancel", stopDrag);
+  const toggleRail = (side: RailSide): void => {
+    state[side].open = !state[side].open;
+    paint();
+    saveShellLayout(state);
   };
-  const onPointerMove = (event: PointerEvent): void => resize(event.clientX);
-  resizer.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    body.classList.add("is-resizing");
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", stopDrag);
-    document.addEventListener("pointercancel", stopDrag);
-  });
-  resizer.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      resize(sidebarSize + (event.key === "ArrowRight" ? SIDEBAR_KEYBOARD_STEP : -SIDEBAR_KEYBOARD_STEP));
-    } else if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      resize(event.key === "Home" ? SIDEBAR_MIN : sidebarMax());
-    }
-  });
-  body.append(sidebar, resizer, main, chatRail);
-  app.append(topbar, body);
+  filesToggle.addEventListener("click", () => toggleRail("files"));
+  agentToggle.addEventListener("click", () => toggleRail("agent"));
+  body.append(activity, sidebar, filesResizer, main, agentResizer, chatRail);
+  app.append(titlebar, body);
+  paint();
 
-  ctx.slots.mount("activity.left", activityLikeHost);
+  ctx.slots.mount("activity.left", activityHost);
   ctx.slots.mount("sidebar.tree", treeHost);
   ctx.slots.mount("main.viewer", viewerHost);
   ctx.slots.mount("sidebar.right", chatHost);
@@ -179,11 +194,10 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     paintTitle(file, false, config.title);
     syncMainState();
   });
-  window.addEventListener("resize", onWindowResize);
+  window.addEventListener("resize", paint);
   syncWelcome();
   return () => {
-    stopDrag();
-    window.removeEventListener("resize", onWindowResize);
+    window.removeEventListener("resize", paint);
     off();
     offFile();
   };

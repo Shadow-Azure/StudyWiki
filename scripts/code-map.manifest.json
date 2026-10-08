@@ -30,7 +30,7 @@
   "src/host/llm.ts": "LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）",
   "src/main.ts": "入口：调用每窗口 bootstrap（三行）",
   "src/preview.ts": "浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归；含 app-agent 假流式桩",
-  "src/plugins/app-shell/index.ts": "app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态",
+  "src/plugins/app-shell/index.ts": "app-shell 插件：titlebar（双栏开关+活动文件名）/Activity Rail+双折叠栏+reader 四列栅格 + 四槽容器挂载 + 开关状态绘制与保存 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态",
   "src/plugins/app-windows/index.ts": "app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口",
   "src/plugins/app-agent/attachments.ts": "app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝",
   "src/plugins/app-agent/render.ts": "app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔",

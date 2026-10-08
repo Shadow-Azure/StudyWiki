@@ -3,93 +3,50 @@ import { expect, test } from "vitest";
 import { icon } from "../src/ui/icons";
 import { apply } from "../src/plugins/app-shell";
 
-test("shell: separator drags sidebar width within stable bounds", () => {
+test("shell: mounts activity rail and collapsible rails", () => {
   const originalWidth = window.innerWidth;
-  let viewportWidth = 1180;
-  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => viewportWidth });
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem("studywiki.shell-layout.v1");
   const root = document.createElement("div");
   root.id = "app";
   document.body.append(root);
-  const events = new Map<string, (payload?: unknown) => void>();
-  const slots = {
-    mount: (_slot: string, host: HTMLElement) => host.replaceChildren(),
-  };
-  const workspace = {
-    root: null,
-    activeFile: null,
-    events: { on: (name: string, handler: (payload?: unknown) => void) => {
-      events.set(name, handler);
-      return () => events.delete(name);
-    } },
-  };
-
+  const mounted: string[] = [];
+  const slots = { mount: (slot: string, host: HTMLElement) => { mounted.push(slot); host.replaceChildren(); } };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
   const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
-  const body = root.querySelector<HTMLElement>(".body")!;
-  const separator = root.querySelector<HTMLElement>(".workspace-resizer")!;
-  expect(separator.classList.contains("line-resizer")).toBe(true);
-  expect(separator.getAttribute("role")).toBe("separator");
-  expect(separator.getAttribute("aria-orientation")).toBe("vertical");
-  expect(separator.getAttribute("aria-valuemin")).toBe("210");
-  expect(separator.getAttribute("aria-valuemax")).toBe("531");
-  expect(separator.getAttribute("aria-valuenow")).toBe("252");
 
-  const pointer = (target: EventTarget, type: string, clientX: number): void => {
-    target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX, buttons: 1 }));
-  };
-  pointer(separator, "pointerdown", 252);
-  pointer(document, "pointermove", 320);
-  pointer(document, "pointerup", 320);
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("320px");
-  expect(separator.getAttribute("aria-valuenow")).toBe("320");
+  expect(mounted).toEqual(expect.arrayContaining(["activity.left", "sidebar.tree", "main.viewer", "sidebar.right"]));
+  expect(mounted).not.toContain("topbar.left");
+  expect(root.querySelector(".activity .slot-host.activity-left")).toBeTruthy();
+  expect(root.querySelector(".brand-seal")).toBeNull();
+  expect(root.querySelector(".titlebar .titlebar-title")).toBeTruthy();
+  const workbench = root.querySelector<HTMLElement>(".workbench")!;
+  expect(workbench.dataset.filesOpen).toBe("true");
+  expect(workbench.dataset.agentOpen).toBe("true");
+  expect(workbench.style.getPropertyValue("--activity-width")).toBe("54px");
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("252px");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("320px");
+  const filesToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="files"]')!;
+  const agentToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="agent"]')!;
+  expect(root.querySelector('.rail-resizer[data-side="files"]')).toBeTruthy();
+  expect(root.querySelector('.rail-resizer[data-side="agent"]')).toBeTruthy();
+  expect(root.querySelector('.rail-resizer[data-side="files"]')?.getAttribute("aria-valuenow")).toBe("252");
+  expect(root.querySelector('.rail-resizer[data-side="files"]')?.getAttribute("aria-valuemax")).toBe("440");
+  expect(root.querySelector('.rail-resizer[data-side="agent"]')?.getAttribute("aria-valuenow")).toBe("320");
+  expect(root.querySelector('.rail-resizer[data-side="agent"]')?.getAttribute("aria-valuemax")).toBe("520");
 
-  pointer(separator, "pointerdown", 320);
-  pointer(document, "pointermove", 700);
-  pointer(document, "pointerup", 700);
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("531px");
-
-  pointer(separator, "pointerdown", 380);
-  pointer(document, "pointermove", 20);
-  pointer(document, "pointerup", 20);
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("210px");
-
-  separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("226px");
-  separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("210px");
-
+  expect(filesToggle.getAttribute("aria-pressed")).toBe("true");
+  expect(agentToggle.getAttribute("aria-pressed")).toBe("true");
+  filesToggle.click();
+  expect(workbench.dataset.filesOpen).toBe("false");
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("0px");
+  expect(filesToggle.getAttribute("aria-pressed")).toBe("false");
+  expect(root.querySelector(".activity")).toBeTruthy();
+  agentToggle.click();
+  expect(workbench.dataset.agentOpen).toBe("false");
+  expect(agentToggle.getAttribute("aria-pressed")).toBe("false");
   teardown();
-  Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
-  root.remove();
-});
-
-test("shell: narrowing the viewport keeps the main surface at its minimum width", () => {
-  const originalWidth = window.innerWidth;
-  let viewportWidth = 1180;
-  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => viewportWidth });
-  const root = document.createElement("div");
-  root.id = "app";
-  document.body.append(root);
-  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
-  const workspace = {
-    root: null,
-    activeFile: null,
-    events: { on: () => () => {} },
-  };
-
-  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
-  const body = root.querySelector<HTMLElement>(".body")!;
-  const separator = root.querySelector<HTMLElement>(".workspace-resizer")!;
-  separator.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 600, buttons: 1 }));
-  document.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 700, buttons: 1 }));
-  document.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 700, buttons: 1 }));
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("531px");
-
-  viewportWidth = 720;
-  window.dispatchEvent(new Event("resize"));
-  expect(body.style.getPropertyValue("--sidebar-size")).toBe("324px");
-  expect(separator.getAttribute("aria-valuemax")).toBe("324");
-
-  teardown();
+  localStorage.removeItem("studywiki.shell-layout.v1");
   Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
   root.remove();
 });
