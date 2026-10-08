@@ -9,10 +9,10 @@
 外置插件是一个零依赖单文件 ESM 模块，导出三件套：`name`（非空字符串）、`apply(ctx, config)`（函数，可返回清理函数）、`inject`（可选字符串数组）。宿主装载时逐字段校验，缺什么点名拒载。最小可用示例：
 
 ```js
-export const name = "hello-topbar";
+export const name = "hello-activity";
 export const inject = ["slots"];
 export function apply(ctx) {
-  return ctx.slots.register("topbar.left", (el) => {
+  return ctx.slots.register("activity.left", (el) => {
     const s = document.createElement("span");
     s.textContent = "你好";
     el.append(s);
@@ -22,7 +22,7 @@ export function apply(ctx) {
 
 ## inject 即权限声明
 
-apply 拿到的 ctx 是 guard 门面：只能读 inject 声明过的宿主服务（`files`/`windows`/`workspace`/`slots`/`plugins`/`llm`；`llm` 外置可调用 `listEndpoints`/`probe`/`chat`/`chatStream`，`slots` 槽名为 `topbar.left`/`sidebar.tree`/`main.viewer`/`sidebar.right`），读普通未声明属性当场抛错并点名补声明；未声明的 JS 协议属性 `then` / `toJSON` / `toString` / `valueOf` 按缺席处理。ctx 与宿主服务对象的顶层形状只读：赋值、删除与 `defineProperty` 都抛错；服务方法直接返回的 cordis Context（含 promise 解出的返回值）会被拒绝。声明了但宿主没提供的服务：插件停在等待态，激活审计 2 秒后判失败，面板点名"声明的服务未提供"。
+apply 拿到的 ctx 是 guard 门面：只能读 inject 声明过的宿主服务（`files`/`windows`/`workspace`/`slots`/`plugins`/`llm`；`llm` 外置可调用 `listEndpoints`/`probe`/`chat`/`chatStream`，`slots` 槽名为 `activity.left`/`sidebar.tree`/`main.viewer`/`sidebar.right`），读普通未声明属性当场抛错并点名补声明；未声明的 JS 协议属性 `then` / `toJSON` / `toString` / `valueOf` 按缺席处理。ctx 与宿主服务对象的顶层形状只读：赋值、删除与 `defineProperty` 都抛错；服务方法直接返回的 cordis Context（含 promise 解出的返回值）会被拒绝。声明了但宿主没提供的服务：插件停在等待态，激活审计 2 秒后判失败，面板点名"声明的服务未提供"。
 
 ## 边界（诚实声明）
 

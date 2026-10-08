@@ -17,7 +17,7 @@
   "src/host/emitter.ts": "极简类型化事件发射器（on 返回反订阅）",
   "src/host/files.ts": "文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）",
   "src/host/plugins.ts": "宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）",
-  "src/host/slots.ts": "类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）",
+  "src/host/slots.ts": "类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除 + API v1 topbar.left → activity.left 归一化（mount 归 shell 插件）",
   "src/host/windows.ts": "窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）",
   "src/host/workspace.ts": "窗口 scope 工作区状态机：root/activeFile + 事件流 + 切换守卫与插件 facade",
   "src/loader/activate.ts": "外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）",
@@ -30,8 +30,8 @@
   "src/host/llm.ts": "LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）",
   "src/main.ts": "入口：调用每窗口 bootstrap（三行）",
   "src/preview.ts": "浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归；含 app-agent 假流式桩",
-  "src/plugins/app-shell/index.ts": "app-shell 插件：titlebar（双栏开关+活动文件名）/Activity Rail+双折叠栏+reader 四列栅格 + 四槽容器挂载 + 开关状态绘制与保存 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态",
-  "src/plugins/app-windows/index.ts": "app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口",
+  "src/plugins/app-shell/index.ts": "app-shell 插件：四列 shell（titlebar 栏开关+活动文件名、Activity Rail、双折叠栏、reader）+ 拖拽把手 + 四槽容器挂载 + 开关状态绘制与保存 + 活动栏与标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态",
+  "src/plugins/app-windows/index.ts": "app-windows 插件：Activity Rail 新建窗口（携带当前 root）与打开文件夹入口",
   "src/plugins/app-agent/attachments.ts": "app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝",
   "src/plugins/app-agent/render.ts": "app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔",
   "src/plugins/doc-markdown/editor.ts": "doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂",
@@ -39,9 +39,9 @@
   "src/plugins/doc-markdown/mode.ts": "doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）",
   "src/plugins/doc-markdown/preview.ts": "doc-markdown 兼容 re-export：消费方保留原导入路径并使用宿主共享 markdown 渲染器",
   "src/plugins/doc-video/index.ts": "doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）",
-  "src/plugins/llm-settings/index.ts": "llm-settings 插件：厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）",
+  "src/plugins/llm-settings/index.ts": "llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）",
   "src/plugins/llm-settings/model.ts": "llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）",
-  "src/plugins/plugin-manager/index.ts": "plugin-manager 插件：顶栏入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）",
+  "src/plugins/plugin-manager/index.ts": "plugin-manager 插件：Activity Rail 入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）",
   "src/plugins/plugin-manager/model.ts": "plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换",
   "src/plugins/view-filetree/index.ts": "view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）",
   "src/plugins/view-filetree/tree.ts": "view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）",
@@ -66,5 +66,5 @@
   "src/plugins/agent-core/service.ts": "agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction 与生命周期",
   "src/plugins/agent-core/index.ts": "agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话",
   "src/plugins/app-agent/index.ts": "app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理",
-  "src/plugins/app-shell/layout.ts": "app-shell 纯函数：布局几何 clamp、默认状态与 localStorage 布局读写归一（无 DOM）"
+  "src/plugins/app-shell/layout.ts": "app-shell 纯函数：栏几何 clamp、状态归一化与 localStorage 布局读写（无 DOM）"
 }

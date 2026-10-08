@@ -20,7 +20,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   host/llm-stream.ts                LLM 流式契约：chunk 词表、partial 快照组装器、FIFO 异步 chunk 队列与流句柄形状（→ llm.ts）
   host/llm.ts                       LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）（→ llm-stream.ts）
   host/plugins.ts                   宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
-  host/slots.ts                     类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除（mount 归 shell 插件）
+  host/slots.ts                     类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除 + API v1 topbar.left → activity.left 归一化（mount 归 shell 插件）
   host/windows.ts                   窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
   host/workspace.ts                 窗口 scope 工作区状态机：root/activeFile + 事件流 + 切换守卫与插件 facade（→ emitter.ts、types.ts）
   loader/activate.ts                外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
@@ -42,9 +42,9 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/app-agent/attachments.ts  app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
   plugins/app-agent/index.ts        app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts）
   plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
-  plugins/app-shell/index.ts        app-shell 插件：titlebar（双栏开关+活动文件名）/Activity Rail+双折叠栏+reader 四列栅格 + 四槽容器挂载 + 开关状态绘制与保存 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ layout.ts、dom.ts、icons.ts、viewer.ts）
-  plugins/app-shell/layout.ts       app-shell 纯函数：布局几何 clamp、默认状态与 localStorage 布局读写归一（无 DOM）
-  plugins/app-windows/index.ts      app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
+  plugins/app-shell/index.ts        app-shell 插件：四列 shell（titlebar 栏开关+活动文件名、Activity Rail、双折叠栏、reader）+ 拖拽把手 + 四槽容器挂载 + 开关状态绘制与保存 + 活动栏与标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ layout.ts、dom.ts、icons.ts、viewer.ts）
+  plugins/app-shell/layout.ts       app-shell 纯函数：栏几何 clamp、状态归一化与 localStorage 布局读写（无 DOM）
+  plugins/app-windows/index.ts      app-windows 插件：Activity Rail 新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts      doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
   plugins/doc-excel/index.ts        doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存重试/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）
   plugins/doc-excel/model.ts        doc-excel 纯函数：worksheet → CSS-ready 单元格/样式/合并模型 + 虚拟行窗口
@@ -53,9 +53,9 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/doc-markdown/mode.ts      doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts   doc-markdown 兼容 re-export：消费方保留原导入路径并使用宿主共享 markdown 渲染器（→ markdown.ts）
   plugins/doc-video/index.ts        doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）（→ viewer.ts）
-  plugins/llm-settings/index.ts     llm-settings 插件：厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、dom.ts）
+  plugins/llm-settings/index.ts     llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、dom.ts）
   plugins/llm-settings/model.ts     llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）
-  plugins/plugin-manager/index.ts   plugin-manager 插件：顶栏入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
+  plugins/plugin-manager/index.ts   plugin-manager 插件：Activity Rail 入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
   plugins/plugin-manager/model.ts   plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts    view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
   plugins/view-filetree/tree.ts     view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
