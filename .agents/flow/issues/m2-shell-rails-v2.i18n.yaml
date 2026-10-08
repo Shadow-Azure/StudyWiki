@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m2-shell-rails-v2.md
+m2-shell-rails-v2.md: fff2051e2a0114924572cfae44ce154871e19d60
+m2-shell-rails-v2.en.md: 7b1adabf4a2a0bf8a46cf8c7f74720f145a9e775
