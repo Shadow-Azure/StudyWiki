@@ -18,6 +18,9 @@ scope:
   - tests/ui-preview*.ts
   - src-tauri/tauri.conf.json
   - src-tauri/src/windows.rs
+  - scripts/code-map.manifest.json
+  - src/ui/icons.ts
+  - plans/2026-10-08-shell-rails-v2-plan.md
   - .agents/notes/proposed/architecture/2026-10-08-shell-rails-v2.*
   - .agents/notes/implemented/architecture/2026-10-08-shell-rails-v2.*
   - docs/architecture.*
