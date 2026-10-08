@@ -36,8 +36,8 @@ function keyPreview(key: string): string {
  * @param ctx Host context（llm/slots injected）。
  * @returns Teardown removing the topbar button. */
 export function apply(ctx: Context): () => void {
-  return ctx.slots.register("topbar.left", (el) => {
-    const btn = labelButton("sparkle", "", { className: "btn btn-ghost icon-btn", ariaLabel: "模型" });
+  return ctx.slots.register("activity.left", (el) => {
+    const btn = labelButton("sparkle", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "模型" });
     btn.title = "模型";
     btn.addEventListener("click", () => void openPanel(ctx));
     el.append(btn);
