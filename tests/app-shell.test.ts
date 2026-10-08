@@ -103,9 +103,11 @@ test("shell: closed rails stay mounted and toggles remain independent", () => {
   expect(root.contains(agentRail)).toBe(true);
   expect(root.contains(agentHost)).toBe(true);
   const agentVisibilityRule = [...stylesheet.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
-    "selectorText" in rule && rule.selectorText.includes('.workbench[data-agent-open="false"] .chat-rail > *'),
+    "selectorText" in rule && rule.selectorText.includes('.workbench[data-agent-open="false"] .rail.agent > *'),
   );
   expect(agentVisibilityRule?.style.visibility).toBe("hidden");
+  expect(getComputedStyle(agentHost).visibility).toBe("hidden");
+  expect(shellStyles).not.toContain(".chat-rail");
   expect(workbench.dataset.filesOpen).toBe("false");
   expect(workbench.style.getPropertyValue("--files-width")).toBe("0px");
   expect(filesToggle.getAttribute("aria-pressed")).toBe("false");
@@ -126,7 +128,7 @@ test("shell: closed rails stay mounted and toggles remain independent", () => {
   root.remove();
 });
 
-test("shell: placeholder separators stay out of keyboard order", () => {
+test("shell: rail separators are keyboard focusable and expose limits", () => {
   const root = document.createElement("div");
   root.id = "app";
   document.body.append(root);
@@ -135,7 +137,9 @@ test("shell: placeholder separators stay out of keyboard order", () => {
   const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
   try {
     expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="files"]')?.tabIndex).toBe(0);
+    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="files"]')?.getAttribute("aria-valuemin")).toBe("220");
     expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="agent"]')?.tabIndex).toBe(0);
+    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="agent"]')?.getAttribute("aria-valuemin")).toBe("300");
   } finally {
     teardown();
     root.remove();
@@ -314,7 +318,7 @@ function connectPointer(handle: HTMLElement): void {
   handle.releasePointerCapture = () => {};
 }
 
-test("shell: both rails drag with concession and hide independently", () => {
+test("shell: rail drags use directional movement with viewport concession", () => {
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
   localStorage.removeItem(SHELL_LAYOUT_KEY);
@@ -378,6 +382,9 @@ test("shell: drags ignore non-primary pointers and preserve the active pointer",
     files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }));
     await new Promise(requestAnimationFrame);
     expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    files.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 2 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    expect(body.dataset.dragging).toBe("true");
     files.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 400 }));
     expect(body.style.getPropertyValue("--files-width")).toBe("346px");
     expect(body.dataset.dragging).toBeUndefined();
@@ -479,7 +486,7 @@ test("shell: persisted state survives reload, storage updates, and corrupt state
   }
 });
 
-test("shell: keyboard shortcuts toggle the correct rails", () => {
+test("shell: exact rail shortcuts accept Cmd/Ctrl and Option/Alt only", () => {
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
   localStorage.removeItem(SHELL_LAYOUT_KEY);
@@ -491,18 +498,192 @@ test("shell: keyboard shortcuts toggle the correct rails", () => {
   const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
   const body = root.querySelector<HTMLElement>(".workbench")!;
   try {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true }));
     expect(body.dataset.filesOpen).toBe("false");
     expect(body.dataset.agentOpen).toBe("true");
 
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "∫", code: "KeyB", metaKey: true, altKey: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, shiftKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("true");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, altKey: true }));
     expect(body.dataset.filesOpen).toBe("false");
     expect(body.dataset.agentOpen).toBe("false");
 
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, altKey: true, shiftKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("false");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "∫", code: "KeyB", metaKey: true, altKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("true");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, shiftKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("true");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, ctrlKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("true");
+
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true }));
     expect(body.dataset.filesOpen).toBe("true");
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, altKey: true }));
-    expect(body.dataset.agentOpen).toBe("true");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "∫", code: "KeyB", metaKey: true, altKey: true }));
+    expect(body.dataset.agentOpen).toBe("false");
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: drag frames do not persist and pointercancel restores the captured width", async () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  connectPointer(files);
+  const persistedWidth = () => JSON.parse(localStorage.getItem(SHELL_LAYOUT_KEY)!).files.width;
+  try {
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }));
+    await new Promise(requestAnimationFrame);
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    expect(persistedWidth()).toBe(252);
+
+    files.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(persistedWidth()).toBe(252);
+    expect(body.dataset.dragging).toBeUndefined();
+
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 2, clientX: 400 }));
+    files.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 2 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(persistedWidth()).toBe(252);
+    expect(body.dataset.dragging).toBeUndefined();
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: pointer-up flushes a pending frame and persists exactly once", async () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  connectPointer(files);
+  let saves = 0;
+  const nativeSetItem = Storage.prototype.setItem;
+  Storage.prototype.setItem = function setItem(key: string, value: string): void {
+    saves += 1;
+    nativeSetItem.call(this, key, value);
+  };
+  try {
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }));
+    await new Promise(requestAnimationFrame);
+    expect(JSON.parse(localStorage.getItem(SHELL_LAYOUT_KEY)!).files.width).toBe(252);
+
+    files.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 400 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    expect(JSON.parse(localStorage.getItem(SHELL_LAYOUT_KEY)!).files.width).toBe(346);
+    expect(saves).toBe(1);
+    expect(body.dataset.dragging).toBeUndefined();
+  } finally {
+    Storage.prototype.setItem = nativeSetItem;
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: incoming storage is ignored until an active drag settles", async () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  connectPointer(files);
+  try {
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }));
+    await new Promise(requestAnimationFrame);
+    localStorage.setItem(SHELL_LAYOUT_KEY, JSON.stringify({
+      version: 1, files: { width: 280, open: false }, agent: { width: 320, open: true },
+    }));
+    window.dispatchEvent(new StorageEvent("storage", { key: SHELL_LAYOUT_KEY }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    expect(body.dataset.filesOpen).toBe("true");
+
+    files.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(body.dataset.filesOpen).toBe("true");
+    expect(JSON.parse(localStorage.getItem(SHELL_LAYOUT_KEY)!).files).toEqual({ width: 280, open: false });
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: teardown releases active capture and restores unsaved drag geometry", async () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  let released = 0;
+  files.setPointerCapture = () => {};
+  files.hasPointerCapture = () => true;
+  files.releasePointerCapture = () => { released += 1; };
+  const persistedWidth = () => JSON.parse(localStorage.getItem(SHELL_LAYOUT_KEY)!).files.width;
+  try {
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }));
+    await new Promise(requestAnimationFrame);
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+
+    teardown();
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(persistedWidth()).toBe(252);
+    expect(body.dataset.dragging).toBeUndefined();
+    expect(released).toBe(1);
+
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 440 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
   } finally {
     teardown();
     localStorage.removeItem(SHELL_LAYOUT_KEY);

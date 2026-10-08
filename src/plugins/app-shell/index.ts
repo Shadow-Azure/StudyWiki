@@ -4,9 +4,11 @@ import { icon } from "../../ui/icons";
 import { paintTitle } from "../../ui/viewer";
 import {
   ACTIVITY_WIDTH,
-  clampRailWidth,
   AGENT_DEFAULT,
+  AGENT_MIN,
+  clampRailWidth,
   FILES_DEFAULT,
+  FILES_MIN,
   loadShellLayout,
   maxRailWidth,
   saveShellLayout,
@@ -128,6 +130,8 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     agentToggle.setAttribute("aria-pressed", String(state.agent.open));
     filesResizer.setAttribute("aria-valuenow", String(state.files.width));
     agentResizer.setAttribute("aria-valuenow", String(state.agent.width));
+    filesResizer.setAttribute("aria-valuemin", String(FILES_MIN));
+    agentResizer.setAttribute("aria-valuemin", String(AGENT_MIN));
     filesResizer.setAttribute("aria-valuemax", String(maxRailWidth(
       "files", window.innerWidth, state.agent.open ? state.agent.width : 0,
     )));
@@ -145,6 +149,8 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     paint();
     if (options.persist !== false) saveShellLayout(state);
   };
+  let activeDragCount = 0;
+  const isDragging = (): boolean => activeDragCount > 0;
   const disconnectors: Array<() => void> = [];
   const connectHandle = (handle: HTMLElement, side: RailSide): void => {
     let startX = 0;
@@ -158,13 +164,24 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
       const delta = side === "files" ? latestX - startX : startX - latestX;
       setWidth(side, startWidth + delta, { persist: false });
     };
-    const cancel = (): void => {
+    const cancelGesture = (event?: PointerEvent, restoreWidth = true): void => {
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
       if (!active) return;
+      const capturedId = pointerId;
       active = false;
       pointerId = null;
-      delete body.dataset.dragging;
+      activeDragCount -= 1;
+      if (
+        (event === undefined || event.pointerId === capturedId) &&
+        capturedId !== null && handle.hasPointerCapture(capturedId)
+      ) {
+        handle.releasePointerCapture(capturedId);
+      }
+      if (activeDragCount === 0) delete body.dataset.dragging;
+      // Cancellation is not a settle: return to the geometry captured on down.
+      if (restoreWidth) state[side].width = startWidth;
+      paint();
     };
     const onPointerDown = (event: PointerEvent): void => {
       if (event.button !== 0 || active) return;
@@ -174,6 +191,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
       startX = latestX = event.clientX;
       startWidth = state[side].width;
       active = true;
+      activeDragCount += 1;
       body.dataset.dragging = "true";
     };
     const onPointerMove = (event: PointerEvent): void => {
@@ -182,14 +200,17 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
       frame ??= requestAnimationFrame(write);
     };
     const stop = (event: PointerEvent): void => {
-      if (!active || event.pointerId !== pointerId || !handle.hasPointerCapture(event.pointerId)) return;
-      handle.releasePointerCapture(event.pointerId);
+      if (!active || event.pointerId !== pointerId) return;
       const hasPendingFrame = frame !== null;
-      cancel();
+      cancelGesture(event, false);
       // A settle flushes the last coalesced position even if pointerup arrives
       // before the browser runs the scheduled animation frame.
       if (hasPendingFrame) write();
       setWidth(side, state[side].width);
+    };
+    const onCancel = (event: PointerEvent): void => {
+      if (!active || event.pointerId !== pointerId) return;
+      cancelGesture(event);
     };
     const onDoubleClick = (): void => {
       state[side].width = side === "files" ? FILES_DEFAULT : AGENT_DEFAULT;
@@ -210,15 +231,15 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     handle.addEventListener("pointerdown", onPointerDown);
     handle.addEventListener("pointermove", onPointerMove);
     handle.addEventListener("pointerup", stop);
-    handle.addEventListener("pointercancel", stop);
+    handle.addEventListener("pointercancel", onCancel);
     handle.addEventListener("dblclick", onDoubleClick);
     handle.addEventListener("keydown", onKeyDown);
     disconnectors.push(() => {
-      cancel();
+      cancelGesture();
       handle.removeEventListener("pointerdown", onPointerDown);
       handle.removeEventListener("pointermove", onPointerMove);
       handle.removeEventListener("pointerup", stop);
-      handle.removeEventListener("pointercancel", stop);
+      handle.removeEventListener("pointercancel", onCancel);
       handle.removeEventListener("dblclick", onDoubleClick);
       handle.removeEventListener("keydown", onKeyDown);
     });
@@ -295,13 +316,14 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   });
   const syncViewport = (): void => paint();
   const onStorage = (event: StorageEvent): void => {
-    if (event.key !== SHELL_LAYOUT_KEY) return;
+    if (event.key !== SHELL_LAYOUT_KEY || isDragging()) return;
     state = loadShellLayout();
     paint();
   };
   const onKeydown = (event: KeyboardEvent): void => {
     const isKeyB = event.code === "KeyB" || event.key.toLowerCase() === "b";
-    if (!isKeyB || !(event.metaKey || event.ctrlKey)) return;
+    const hasCommandModifier = event.metaKey !== event.ctrlKey;
+    if (!isKeyB || !hasCommandModifier || event.shiftKey) return;
     event.preventDefault();
     toggleRail(event.altKey ? "agent" : "files");
   };

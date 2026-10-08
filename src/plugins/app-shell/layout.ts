@@ -44,6 +44,12 @@ export const FILES_DEFAULT = RAIL_LIMITS.files.fallback;
 /** Default reopened Agent rail width, in CSS px. */
 export const AGENT_DEFAULT = RAIL_LIMITS.agent.fallback;
 
+/** Minimum keyboard-adjustable Files rail width, in CSS px. */
+export const FILES_MIN = RAIL_LIMITS.files.min;
+
+/** Minimum keyboard-adjustable Agent rail width, in CSS px. */
+export const AGENT_MIN = RAIL_LIMITS.agent.min;
+
 /**
  * Return the widest rail width that preserves Activity Rail and Reader minimums.
  * @param side — rail whose side-specific minimum and maximum apply.

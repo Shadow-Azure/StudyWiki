@@ -154,7 +154,7 @@ body {
 
 .workbench.is-resizing .sidebar,
 .workbench.is-resizing .main,
-.workbench.is-resizing .chat-rail { pointer-events: none; }
+.workbench.is-resizing .rail.agent { pointer-events: none; }
 
 /* ============ 标题栏 ============ */
 
@@ -231,7 +231,7 @@ body {
 }
 
 .sidebar,
-.chat-rail {
+.rail.agent {
   min-width: 0;
   overflow: hidden;
 }
@@ -243,7 +243,7 @@ body {
   border-right: 1px solid var(--hairline);
 }
 
-.chat-rail {
+.rail.agent {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -255,10 +255,10 @@ body {
 .workbench[data-agent-open="false"] { --agent-width: 0px; }
 
 .workbench[data-files-open="false"] .sidebar,
-.workbench[data-agent-open="false"] .chat-rail { border: 0; }
+.workbench[data-agent-open="false"] .rail.agent { border: 0; }
 
 .workbench[data-files-open="false"] .sidebar > *,
-.workbench[data-agent-open="false"] .chat-rail > * { visibility: hidden; }
+.workbench[data-agent-open="false"] .rail.agent > * { visibility: hidden; }
 
 .workspace-resizer {
   position: absolute;
