@@ -38,6 +38,12 @@ const RAIL_LIMITS = {
   agent: { min: 300, max: 520, fallback: 320 },
 } as const;
 
+/** Default reopened Files rail width, in CSS px. */
+export const FILES_DEFAULT = RAIL_LIMITS.files.fallback;
+
+/** Default reopened Agent rail width, in CSS px. */
+export const AGENT_DEFAULT = RAIL_LIMITS.agent.fallback;
+
 /**
  * Return the widest rail width that preserves Activity Rail and Reader minimums.
  * @param side — rail whose side-specific minimum and maximum apply.

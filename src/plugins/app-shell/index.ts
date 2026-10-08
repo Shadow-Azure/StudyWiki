@@ -5,9 +5,13 @@ import { paintTitle } from "../../ui/viewer";
 import {
   ACTIVITY_WIDTH,
   clampRailWidth,
+  AGENT_DEFAULT,
+  FILES_DEFAULT,
   loadShellLayout,
   maxRailWidth,
   saveShellLayout,
+  SHELL_LAYOUT_KEY,
+  RAIL_KEYBOARD_STEP,
   type RailSide,
 } from "./layout";
 
@@ -27,7 +31,7 @@ export interface ShellConfig {
  * welcome, no-active-file hint, and explicit unsupported hint for other files.
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
- * @returns Teardown removing the resize listener and workspace subscriptions. */
+ * @returns Teardown removing document/window listeners, drag state, and workspace subscriptions. */
 export function apply(ctx: Context, config: ShellConfig): () => void {
   let app = document.getElementById("app");
   if (!app) {
@@ -76,18 +80,18 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   const chatHost = document.createElement("div");
   chatHost.className = "slot-host sidebar-right";
   chatRail.append(chatHost);
-  const state = loadShellLayout();
+  let state = loadShellLayout();
   const filesResizer = document.createElement("div");
   filesResizer.className = "workspace-resizer rail-resizer";
   filesResizer.dataset.side = "files";
-  filesResizer.tabIndex = -1;
+  filesResizer.tabIndex = 0;
   filesResizer.setAttribute("role", "separator");
   filesResizer.setAttribute("aria-orientation", "vertical");
   filesResizer.setAttribute("aria-label", "调整文件栏宽度");
   const agentResizer = document.createElement("div");
   agentResizer.className = "workspace-resizer rail-resizer";
   agentResizer.dataset.side = "agent";
-  agentResizer.tabIndex = -1;
+  agentResizer.tabIndex = 0;
   agentResizer.setAttribute("role", "separator");
   agentResizer.setAttribute("aria-orientation", "vertical");
   agentResizer.setAttribute("aria-label", "调整 Agent 栏宽度");
@@ -106,6 +110,10 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
         state.files.open ? state.files.width : 0,
       );
     }
+  };
+  const otherOpenWidth = (side: RailSide): number => {
+    const other = side === "files" ? state.agent : state.files;
+    return other.open ? other.width : 0;
   };
   const paint = (): void => {
     constrainState();
@@ -132,11 +140,97 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     paint();
     saveShellLayout(state);
   };
+  const setWidth = (side: RailSide, next: number, options: { persist?: boolean } = {}): void => {
+    state[side].width = clampRailWidth(side, next, window.innerWidth, otherOpenWidth(side));
+    paint();
+    if (options.persist !== false) saveShellLayout(state);
+  };
+  const disconnectors: Array<() => void> = [];
+  const connectHandle = (handle: HTMLElement, side: RailSide): void => {
+    let startX = 0;
+    let startWidth = 0;
+    let latestX = 0;
+    let frame: number | null = null;
+    let active = false;
+    let pointerId: number | null = null;
+    const write = (): void => {
+      frame = null;
+      const delta = side === "files" ? latestX - startX : startX - latestX;
+      setWidth(side, startWidth + delta, { persist: false });
+    };
+    const cancel = (): void => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      if (!active) return;
+      active = false;
+      pointerId = null;
+      delete body.dataset.dragging;
+    };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0 || active) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      pointerId = event.pointerId;
+      startX = latestX = event.clientX;
+      startWidth = state[side].width;
+      active = true;
+      body.dataset.dragging = "true";
+    };
+    const onPointerMove = (event: PointerEvent): void => {
+      if (!active || event.pointerId !== pointerId || !handle.hasPointerCapture(event.pointerId)) return;
+      latestX = event.clientX;
+      frame ??= requestAnimationFrame(write);
+    };
+    const stop = (event: PointerEvent): void => {
+      if (!active || event.pointerId !== pointerId || !handle.hasPointerCapture(event.pointerId)) return;
+      handle.releasePointerCapture(event.pointerId);
+      const hasPendingFrame = frame !== null;
+      cancel();
+      // A settle flushes the last coalesced position even if pointerup arrives
+      // before the browser runs the scheduled animation frame.
+      if (hasPendingFrame) write();
+      setWidth(side, state[side].width);
+    };
+    const onDoubleClick = (): void => {
+      state[side].width = side === "files" ? FILES_DEFAULT : AGENT_DEFAULT;
+      state[side].open = true;
+      paint();
+      saveShellLayout(state);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        const direction = event.key === "ArrowLeft" ? -RAIL_KEYBOARD_STEP : RAIL_KEYBOARD_STEP;
+        setWidth(side, state[side].width + direction);
+      } else if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        setWidth(side, event.key === "Home" ? 0 : Number.MAX_SAFE_INTEGER);
+      }
+    };
+    handle.addEventListener("pointerdown", onPointerDown);
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+    handle.addEventListener("dblclick", onDoubleClick);
+    handle.addEventListener("keydown", onKeyDown);
+    disconnectors.push(() => {
+      cancel();
+      handle.removeEventListener("pointerdown", onPointerDown);
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+      handle.removeEventListener("dblclick", onDoubleClick);
+      handle.removeEventListener("keydown", onKeyDown);
+    });
+  };
+  connectHandle(filesResizer, "files");
+  connectHandle(agentResizer, "agent");
   filesToggle.addEventListener("click", () => toggleRail("files"));
   agentToggle.addEventListener("click", () => toggleRail("agent"));
   body.append(activity, sidebar, filesResizer, main, agentResizer, chatRail);
   app.append(titlebar, body);
   paint();
+  saveShellLayout(state);
 
   ctx.slots.mount("activity.left", activityHost);
   ctx.slots.mount("sidebar.tree", treeHost);
@@ -199,10 +293,27 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     paintTitle(file, false, config.title);
     syncMainState();
   });
-  window.addEventListener("resize", paint);
+  const syncViewport = (): void => paint();
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key !== SHELL_LAYOUT_KEY) return;
+    state = loadShellLayout();
+    paint();
+  };
+  const onKeydown = (event: KeyboardEvent): void => {
+    const isKeyB = event.code === "KeyB" || event.key.toLowerCase() === "b";
+    if (!isKeyB || !(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    toggleRail(event.altKey ? "agent" : "files");
+  };
+  window.addEventListener("resize", syncViewport);
+  window.addEventListener("storage", onStorage);
+  document.addEventListener("keydown", onKeydown);
   syncWelcome();
   return () => {
-    window.removeEventListener("resize", paint);
+    window.removeEventListener("resize", syncViewport);
+    window.removeEventListener("storage", onStorage);
+    document.removeEventListener("keydown", onKeydown);
+    for (const disconnect of disconnectors) disconnect();
     off();
     offFile();
   };

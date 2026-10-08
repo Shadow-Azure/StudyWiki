@@ -134,8 +134,8 @@ test("shell: placeholder separators stay out of keyboard order", () => {
   const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
   const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
   try {
-    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="files"]')?.tabIndex).toBe(-1);
-    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="agent"]')?.tabIndex).toBe(-1);
+    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="files"]')?.tabIndex).toBe(0);
+    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="agent"]')?.tabIndex).toBe(0);
   } finally {
     teardown();
     root.remove();
@@ -306,4 +306,207 @@ test("shell: mounts the sidebar.right slot container", () => {
 test("icons: rail toggles expose accessible inline SVGs", () => {
   expect(icon("panel-left").getAttribute("aria-hidden")).toBe("true");
   expect(icon("panel-right").getAttribute("aria-hidden")).toBe("true");
+});
+
+function connectPointer(handle: HTMLElement): void {
+  handle.setPointerCapture = () => {};
+  handle.hasPointerCapture = () => true;
+  handle.releasePointerCapture = () => {};
+}
+
+test("shell: both rails drag with concession and hide independently", () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  const agent = body.querySelector<HTMLElement>('[data-side="agent"]')!;
+  connectPointer(files);
+  connectPointer(agent);
+  try {
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 400 }));
+    files.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 400 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    expect(body.dataset.filesOpen).toBe("true");
+
+    agent.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 860, button: 0 }));
+    agent.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 780 }));
+    agent.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 780 }));
+    expect(body.style.getPropertyValue("--agent-width")).toBe("400px");
+    expect(body.dataset.agentOpen).toBe("true");
+
+    files.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(body.dataset.filesOpen).toBe("true");
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: drags ignore non-primary pointers and preserve the active pointer", async () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  connectPointer(files);
+  try {
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, clientX: 306, button: 2 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 2, clientX: 400 }));
+    files.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2, clientX: 400 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(body.dataset.dragging).toBeUndefined();
+
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 306, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, clientX: 600, button: 0 }));
+    files.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }));
+    await new Promise(requestAnimationFrame);
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    files.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 400 }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("346px");
+    expect(body.dataset.dragging).toBeUndefined();
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: keyboard separators resize and reset rails", () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  const files = body.querySelector<HTMLElement>('[data-side="files"]')!;
+  const agent = body.querySelector<HTMLElement>('[data-side="agent"]')!;
+  try {
+    expect(files.tabIndex).toBe(0);
+    expect(agent.tabIndex).toBe(0);
+    files.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("268px");
+    files.dispatchEvent(new KeyboardEvent("keydown", { key: "Home" }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("220px");
+    agent.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    expect(body.style.getPropertyValue("--agent-width")).toBe("304px");
+    agent.dispatchEvent(new KeyboardEvent("keydown", { key: "End" }));
+    expect(body.style.getPropertyValue("--agent-width")).toBe("520px");
+    files.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("220px");
+    files.dispatchEvent(new KeyboardEvent("keydown", { key: "End" }));
+    expect(body.style.getPropertyValue("--files-width")).toBe("266px");
+    agent.dispatchEvent(new KeyboardEvent("keydown", { key: "Home" }));
+    expect(body.style.getPropertyValue("--agent-width")).toBe("300px");
+    agent.dispatchEvent(new KeyboardEvent("dblclick", { bubbles: true }));
+    expect(body.style.getPropertyValue("--agent-width")).toBe("320px");
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
+});
+
+test("shell: persisted state survives reload, storage updates, and corrupt state falls back", () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.setItem(SHELL_LAYOUT_KEY, JSON.stringify({
+    version: 1, files: { width: 360, open: false }, agent: { width: 400, open: true },
+  }));
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  let body = root.querySelector<HTMLElement>(".workbench")!;
+  try {
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.style.getPropertyValue("--files-width")).toBe("0px");
+    expect(body.dataset.agentOpen).toBe("true");
+    expect(body.style.getPropertyValue("--agent-width")).toBe("400px");
+
+    localStorage.setItem(SHELL_LAYOUT_KEY, JSON.stringify({
+      version: 1, files: { width: 280, open: true }, agent: { width: 360, open: false },
+    }));
+    window.dispatchEvent(new StorageEvent("storage", { key: SHELL_LAYOUT_KEY }));
+    expect(body.dataset.filesOpen).toBe("true");
+    expect(body.style.getPropertyValue("--files-width")).toBe("280px");
+    expect(body.dataset.agentOpen).toBe("false");
+    expect(body.style.getPropertyValue("--agent-width")).toBe("0px");
+
+    teardown();
+    root.remove();
+    localStorage.setItem(SHELL_LAYOUT_KEY, "{bad");
+    const corruptRoot = document.createElement("div");
+    corruptRoot.id = "app";
+    document.body.append(corruptRoot);
+    const corruptTeardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+    body = corruptRoot.querySelector<HTMLElement>(".workbench")!;
+    expect(body.dataset.filesOpen).toBe("true");
+    expect(body.style.getPropertyValue("--files-width")).toBe("252px");
+    expect(body.dataset.agentOpen).toBe("true");
+    expect(body.style.getPropertyValue("--agent-width")).toBe("320px");
+    corruptTeardown();
+    corruptRoot.remove();
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    if (root.isConnected) root.remove();
+  }
+});
+
+test("shell: keyboard shortcuts toggle the correct rails", () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const body = root.querySelector<HTMLElement>(".workbench")!;
+  try {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("true");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "∫", code: "KeyB", metaKey: true, altKey: true }));
+    expect(body.dataset.filesOpen).toBe("false");
+    expect(body.dataset.agentOpen).toBe("false");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true }));
+    expect(body.dataset.filesOpen).toBe("true");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, altKey: true }));
+    expect(body.dataset.agentOpen).toBe("true");
+  } finally {
+    teardown();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    root.remove();
+  }
 });
