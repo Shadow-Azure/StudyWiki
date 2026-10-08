@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
+import { icon } from "../src/ui/icons";
 import { apply } from "../src/plugins/app-shell";
 
 test("shell: separator drags sidebar width within stable bounds", () => {
@@ -172,4 +173,9 @@ test("shell: mounts the sidebar.right slot container", () => {
   expect(root.querySelector(".slot-host.sidebar-right")).toBeTruthy();
   teardown();
   root.remove();
+});
+
+test("icons: rail toggles expose accessible inline SVGs", () => {
+  expect(icon("panel-left").getAttribute("aria-hidden")).toBe("true");
+  expect(icon("panel-right").getAttribute("aria-hidden")).toBe("true");
 });
