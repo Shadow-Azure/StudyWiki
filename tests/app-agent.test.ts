@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { apply, name, inject } from "../src/plugins/app-agent";
 import { createEmitter } from "../src/host/emitter";
@@ -125,6 +127,32 @@ describe("app-agent 面板", () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(composer.dataset.state).toBe("normal");
     expect(input.value).toBe("我的草稿");
+  });
+
+  it("浮层挂在 Agent 面板内，面板提供定位上下文", async () => {
+    const { ctx, el, approvalEvents } = fakeCtx([], {
+      models: [{ id: "m1", capabilities: ["tools"] }],
+    });
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const panel = el.querySelector<HTMLElement>(".agent-panel")!;
+    for (const selector of [
+      ".agent-history-pop",
+      ".agent-more-pop",
+      ".agent-model-pop",
+      ".agent-mode-pop",
+    ]) {
+      expect(panel.querySelector(selector)).not.toBeNull();
+    }
+    approvalEvents.emit("r", {
+      id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写", newText: "x",
+    } as never);
+    expect(panel.querySelector(".agent-approval-detail")).not.toBeNull();
+
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const start = css.indexOf(".agent-panel {");
+    const end = css.indexOf("}", start);
+    expect(css.slice(start, end)).toContain("position: relative;");
   });
 
   it("审批详情浮层 toggle 与 Esc 关闭", async () => {

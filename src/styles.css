@@ -1520,6 +1520,9 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 /* 会话面板沿用 chat 的气泡/流式/composer 视觉；新增会话与审批控制壳层。
    卡片与分隔条是 Agent 状态语义，全部走既有 token 并跟随明暗主题。 */
 .agent-panel {
+  /* Popovers are mounted here, so the panel must establish their
+     absolute-positioning context instead of inheriting the three-column .body. */
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
