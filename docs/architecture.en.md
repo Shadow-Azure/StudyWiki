@@ -43,6 +43,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/app-agent/index.ts        app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts）
   plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
   plugins/app-shell/index.ts        app-shell 插件：topbar（品牌+居中活动文件名+右侧操作）/sidebar+拖拽发丝线+main 栅格 + 四槽容器挂载 + 标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ dom.ts、icons.ts、viewer.ts）
+  plugins/app-shell/layout.ts       app-shell 纯函数：布局几何 clamp、默认状态与 localStorage 布局读写归一（无 DOM）
   plugins/app-windows/index.ts      app-windows 插件：顶栏新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts      doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
   plugins/doc-excel/index.ts        doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存重试/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）

@@ -65,5 +65,6 @@
   "src/plugins/agent-core/loop.ts": "agent-core 回合状态机：wire 组装、快照事件、串行工具回灌与半截不落账",
   "src/plugins/agent-core/service.ts": "agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction 与生命周期",
   "src/plugins/agent-core/index.ts": "agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话",
-  "src/plugins/app-agent/index.ts": "app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理"
+  "src/plugins/app-agent/index.ts": "app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理",
+  "src/plugins/app-shell/layout.ts": "app-shell 纯函数：布局几何 clamp、默认状态与 localStorage 布局读写归一（无 DOM）"
 }
