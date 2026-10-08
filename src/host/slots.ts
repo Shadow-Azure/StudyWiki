@@ -1,6 +1,6 @@
 /** All current slot names the shell mounts. */
 export type SlotName = "activity.left" | "sidebar.tree" | "main.viewer" | "sidebar.right";
-/** API v1 external plugins may still register the old topbar slot. */
+/** API v1 plugins may register "topbar.left"; it is normalized to "activity.left". Only current SlotName values may be mounted. */
 export type SlotRegistration = SlotName | "topbar.left";
 
 /** Renders into its own child element; decides its own visibility. */

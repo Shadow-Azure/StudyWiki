@@ -110,7 +110,8 @@ class PreviewSlots {
   readonly #hosts = new Map<string, HTMLElement>();
 
   /** Register a slot renderer in registration order. */
-  register(slot: string, render: (host: HTMLElement) => void): () => void {
+  register(rawSlot: string, render: (host: HTMLElement) => void): () => void {
+    const slot = rawSlot === "topbar.left" ? "activity.left" : rawSlot;
     const entries = this.#slots.get(slot) ?? [];
     const el = document.createElement("div");
     el.className = `slot slot-${slot.replace(".", "-")}`;

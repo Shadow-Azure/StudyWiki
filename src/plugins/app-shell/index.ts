@@ -47,11 +47,11 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   brandName.className = "brand-name";
   brandName.textContent = config.title;
   brand.append(seal, brandName);
-  const topbarLeft = document.createElement("div");
-  topbarLeft.className = "slot-host topbar-left";
+  const activityLikeHost = document.createElement("div");
+  activityLikeHost.className = "slot-host topbar-left";
   const fileTitle = document.createElement("div");
   fileTitle.className = "topbar-file";
-  topbar.append(brand, fileTitle, topbarLeft);
+  topbar.append(brand, fileTitle, activityLikeHost);
   const body = document.createElement("div");
   body.className = "body";
   const sidebar = document.createElement("aside");
@@ -118,7 +118,7 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   body.append(sidebar, resizer, main, chatRail);
   app.append(topbar, body);
 
-  ctx.slots.mount("topbar.left", topbarLeft);
+  ctx.slots.mount("activity.left", activityLikeHost);
   ctx.slots.mount("sidebar.tree", treeHost);
   ctx.slots.mount("main.viewer", viewerHost);
   ctx.slots.mount("sidebar.right", chatHost);

@@ -116,12 +116,16 @@ test("slots: topbar.left is an activity.left compatibility alias", () => {
   const slots = new SlotsService();
   const host = document.createElement("div");
   slots.register("activity.left", (el) => { el.textContent = "new"; });
-  slots.register("topbar.left", (el) => {
+  const offLegacy = slots.register("topbar.left", (el) => {
     const button = document.createElement("button");
     button.textContent = "legacy";
     el.append(button);
   });
   slots.mount("activity.left", host);
-  expect(host.textContent).toContain("new");
-  expect(host.querySelector("button")?.textContent).toBe("legacy");
+  const entries = [...host.children];
+  expect(entries.map((entry) => entry.textContent)).toEqual(["new", "legacy"]);
+  expect(entries.every((entry) => entry.className === "slot slot-activity-left")).toBe(true);
+  offLegacy();
+  expect(host.children.length).toBe(1);
+  expect(host.children[0]?.textContent).toBe("new");
 });
