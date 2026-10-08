@@ -77,33 +77,38 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   chatHost.className = "slot-host sidebar-right";
   chatRail.append(chatHost);
   const state = loadShellLayout();
-  if (state.files.open) {
-    state.files.width = clampRailWidth(
-      "files", state.files.width, window.innerWidth,
-      state.agent.open ? state.agent.width : 0,
-    );
-  }
-  if (state.agent.open) {
-    state.agent.width = clampRailWidth(
-      "agent", state.agent.width, window.innerWidth,
-      state.files.open ? state.files.width : 0,
-    );
-  }
   const filesResizer = document.createElement("div");
   filesResizer.className = "workspace-resizer rail-resizer";
   filesResizer.dataset.side = "files";
-  filesResizer.tabIndex = 0;
+  filesResizer.tabIndex = -1;
   filesResizer.setAttribute("role", "separator");
   filesResizer.setAttribute("aria-orientation", "vertical");
   filesResizer.setAttribute("aria-label", "调整文件栏宽度");
   const agentResizer = document.createElement("div");
   agentResizer.className = "workspace-resizer rail-resizer";
   agentResizer.dataset.side = "agent";
-  agentResizer.tabIndex = 0;
+  agentResizer.tabIndex = -1;
   agentResizer.setAttribute("role", "separator");
   agentResizer.setAttribute("aria-orientation", "vertical");
   agentResizer.setAttribute("aria-label", "调整 Agent 栏宽度");
+  // Resize and reopen share one clamp pass: closed widths stay saved, while every
+  // rendered rail tracks the latest viewport concession before ARIA/CSS repaint.
+  const constrainState = (): void => {
+    if (state.files.open) {
+      state.files.width = clampRailWidth(
+        "files", state.files.width, window.innerWidth,
+        state.agent.open ? state.agent.width : 0,
+      );
+    }
+    if (state.agent.open) {
+      state.agent.width = clampRailWidth(
+        "agent", state.agent.width, window.innerWidth,
+        state.files.open ? state.files.width : 0,
+      );
+    }
+  };
   const paint = (): void => {
+    constrainState();
     const filesWidth = state.files.open ? state.files.width : 0;
     const agentWidth = state.agent.open ? state.agent.width : 0;
     body.style.setProperty("--activity-width", `${ACTIVITY_WIDTH}px`);

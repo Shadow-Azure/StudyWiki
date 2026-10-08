@@ -1,12 +1,21 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
 import { icon } from "../src/ui/icons";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { apply } from "../src/plugins/app-shell";
+import {
+  SHELL_LAYOUT_KEY,
+  saveShellLayout,
+  type ShellLayoutState,
+} from "../src/plugins/app-shell/layout";
+
+const shellStyles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 test("shell: mounts activity rail and collapsible rails", () => {
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
-  localStorage.removeItem("studywiki.shell-layout.v1");
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
   const root = document.createElement("div");
   root.id = "app";
   document.body.append(root);
@@ -46,7 +55,169 @@ test("shell: mounts activity rail and collapsible rails", () => {
   expect(workbench.dataset.agentOpen).toBe("false");
   expect(agentToggle.getAttribute("aria-pressed")).toBe("false");
   teardown();
-  localStorage.removeItem("studywiki.shell-layout.v1");
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+  root.remove();
+});
+
+test("shell: closed rails stay mounted and toggles remain independent", () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const workbench = root.querySelector<HTMLElement>(".workbench")!;
+  const filesToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="files"]')!;
+  const agentToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="agent"]')!;
+  const filesRail = root.querySelector<HTMLElement>(".rail.files")!;
+  const treeHost = root.querySelector<HTMLElement>(".slot-host.sidebar-tree")!;
+  const agentRail = root.querySelector<HTMLElement>(".rail.agent")!;
+  const agentHost = root.querySelector<HTMLElement>(".slot-host.sidebar-right")!;
+  const stylesheet = document.createElement("style");
+  stylesheet.textContent = shellStyles;
+  document.head.append(stylesheet);
+
+  filesToggle.click();
+  expect(workbench.dataset.filesOpen).toBe("false");
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("0px");
+  expect(filesToggle.getAttribute("aria-pressed")).toBe("false");
+  expect(workbench.dataset.agentOpen).toBe("true");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("320px");
+  expect(agentToggle.getAttribute("aria-pressed")).toBe("true");
+  expect(root.contains(filesRail)).toBe(true);
+  expect(root.contains(treeHost)).toBe(true);
+  expect(workbench.matches('[data-files-open="false"]')).toBe(true);
+  const filesVisibilityRule = [...stylesheet.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
+    "selectorText" in rule && rule.selectorText.includes('.workbench[data-files-open="false"] .sidebar > *'),
+  );
+  expect(filesVisibilityRule?.style.visibility).toBe("hidden");
+
+  agentToggle.click();
+  expect(workbench.dataset.agentOpen).toBe("false");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("0px");
+  expect(agentToggle.getAttribute("aria-pressed")).toBe("false");
+  expect(root.contains(agentRail)).toBe(true);
+  expect(root.contains(agentHost)).toBe(true);
+  const agentVisibilityRule = [...stylesheet.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
+    "selectorText" in rule && rule.selectorText.includes('.workbench[data-agent-open="false"] .chat-rail > *'),
+  );
+  expect(agentVisibilityRule?.style.visibility).toBe("hidden");
+  expect(workbench.dataset.filesOpen).toBe("false");
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("0px");
+  expect(filesToggle.getAttribute("aria-pressed")).toBe("false");
+  expect(workbench.matches('[data-agent-open="false"]')).toBe(true);
+
+  filesToggle.click();
+  expect(workbench.dataset.filesOpen).toBe("true");
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("252px");
+  expect(filesToggle.getAttribute("aria-pressed")).toBe("true");
+  expect(workbench.dataset.agentOpen).toBe("false");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("0px");
+  expect(agentToggle.getAttribute("aria-pressed")).toBe("false");
+
+  teardown();
+  stylesheet.remove();
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+  root.remove();
+});
+
+test("shell: placeholder separators stay out of keyboard order", () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  try {
+    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="files"]')?.tabIndex).toBe(-1);
+    expect(root.querySelector<HTMLElement>('.rail-resizer[data-side="agent"]')?.tabIndex).toBe(-1);
+  } finally {
+    teardown();
+    root.remove();
+  }
+});
+
+test("shell: resize re-clamps open rails and preserves closed widths", () => {
+  const originalWidth = window.innerWidth;
+  let viewportWidth = 1200;
+  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => viewportWidth });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  saveShellLayout({
+    version: 1,
+    files: { width: 440, open: true },
+    agent: { width: 520, open: true },
+  });
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const workbench = root.querySelector<HTMLElement>(".workbench")!;
+  const filesHandle = root.querySelector<HTMLElement>('.rail-resizer[data-side="files"]')!;
+  const agentHandle = root.querySelector<HTMLElement>('.rail-resizer[data-side="agent"]')!;
+
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("286px");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("520px");
+  viewportWidth = 700;
+  window.dispatchEvent(new Event("resize"));
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("220px");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("300px");
+  expect(filesHandle.getAttribute("aria-valuenow")).toBe("220");
+  expect(filesHandle.getAttribute("aria-valuemax")).toBe("220");
+  expect(agentHandle.getAttribute("aria-valuenow")).toBe("300");
+  expect(agentHandle.getAttribute("aria-valuemax")).toBe("300");
+
+  root.querySelector<HTMLButtonElement>('[data-rail-toggle="files"]')!.click();
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("0px");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("300px");
+  viewportWidth = 1000;
+  window.dispatchEvent(new Event("resize"));
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("300px");
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("0px");
+  expect(agentHandle.getAttribute("aria-valuemax")).toBe("520");
+  expect(JSON.parse(localStorage.getItem(SHELL_LAYOUT_KEY)!)).toEqual({
+    version: 1,
+    files: { width: 220, open: false },
+    agent: { width: 300, open: true },
+  });
+
+  teardown();
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+  root.remove();
+});
+
+test("shell: reopening a rail re-clamps stale hidden geometry", () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 700 });
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
+  saveShellLayout({
+    version: 1,
+    files: { width: 440, open: true },
+    agent: { width: 520, open: false },
+  } satisfies ShellLayoutState);
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const workbench = root.querySelector<HTMLElement>(".workbench")!;
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("306px");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("0px");
+
+  root.querySelector<HTMLButtonElement>('[data-rail-toggle="agent"]')!.click();
+  expect(workbench.style.getPropertyValue("--files-width")).toBe("220px");
+  expect(workbench.style.getPropertyValue("--agent-width")).toBe("300px");
+
+  teardown();
+  localStorage.removeItem(SHELL_LAYOUT_KEY);
   Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
   root.remove();
 });
