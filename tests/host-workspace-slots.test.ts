@@ -111,3 +111,17 @@ test("sidebar.right 槽位可注册并按序渲染", () => {
   slots.mount("sidebar.right", host);
   expect(host.textContent).toContain("chat");
 });
+
+test("slots: topbar.left is an activity.left compatibility alias", () => {
+  const slots = new SlotsService();
+  const host = document.createElement("div");
+  slots.register("activity.left", (el) => { el.textContent = "new"; });
+  slots.register("topbar.left", (el) => {
+    const button = document.createElement("button");
+    button.textContent = "legacy";
+    el.append(button);
+  });
+  slots.mount("activity.left", host);
+  expect(host.textContent).toContain("new");
+  expect(host.querySelector("button")?.textContent).toBe("legacy");
+});
