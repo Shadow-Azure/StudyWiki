@@ -28,3 +28,7 @@ plugins-dev/
 .codex/
 
 .obsidian
+# Local QA reports and screenshots (not shipped docs)
+plans/review/
+plans/smoke-test/
+plans/preview-html/
