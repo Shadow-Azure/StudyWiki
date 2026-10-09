@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { mountUiPreview } from "../src/preview";
+
+const shellStyles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 test("ui preview: mounts the real shell, tree, and markdown viewer", async () => {
   const root = document.createElement("div");
@@ -57,20 +61,62 @@ test("ui preview: mounts the real video viewer and plugin panel", async () => {
   root.remove();
 });
 
+function findStyleRule(selector: string): CSSStyleRule | undefined {
+  const style = document.createElement("style");
+  style.textContent = shellStyles;
+  document.head.append(style);
+  try {
+    return [...style.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
+      "selectorText" in rule && rule.selectorText === selector,
+    );
+  } finally {
+    style.remove();
+  }
+}
+
 test("ui preview: mounts the app-agent panel in the right rail", async () => {
   const root = document.createElement("div");
   root.id = "app";
   document.body.append(root);
-  const teardown = await mountUiPreview(root);
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  let teardown: () => void = () => {};
 
-  expect(root.querySelector(".chat-model-pill")).not.toBeNull();
-  root.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
-  expect([...root.querySelectorAll<HTMLElement>("[data-model-option]")]
-    .map((option) => option.dataset.modelOption)).toContain("demo-model");
+  try {
+    teardown = await mountUiPreview(root);
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
-  teardown();
-  root.remove();
+    // Preserve the right rail's full flex-height chain. Without it,
+    // .agent-panel's flex:1 has no parent height and the composer floats upward.
+    const rail = root.querySelector<HTMLElement>(".rail.agent")!;
+    const slotHost = rail.querySelector<HTMLElement>(":scope > .slot-host.sidebar-right")!;
+    const slot = slotHost.querySelector<HTMLElement>(":scope > .slot.slot-sidebar-right")!;
+    const panel = slot.querySelector<HTMLElement>(":scope > .agent-panel")!;
+    const transcript = panel.querySelector<HTMLElement>(":scope > .agent-transcript")!;
+    const composer = panel.querySelector<HTMLElement>(":scope > .chat-composer")!;
+    expect([slotHost, slot, panel, transcript, composer].every(Boolean)).toBe(true);
+
+    const hostRule = findStyleRule(".rail.agent > .slot-host");
+    const slotRule = findStyleRule(".rail.agent > .slot-host > .slot");
+    const slotTypeRule = findStyleRule(".slot-sidebar-right");
+    const panelRule = findStyleRule(".agent-panel");
+    const transcriptRule = findStyleRule(".agent-transcript");
+    expect(hostRule?.style.display).toBe("contents");
+    expect(slotRule?.style.flex).toBe("1 1 0%");
+    expect(slotRule?.style.minHeight).toBe("0px");
+    expect(slotTypeRule?.style.display).toBe("flex");
+    expect(slotTypeRule?.style.flexDirection).toBe("column");
+    expect(panelRule?.style.flex).toBe("1 1 0%");
+    expect(panelRule?.style.minHeight).toBe("0px");
+    expect(transcriptRule?.style.flex).toBe("1 1 0%");
+    expect(transcriptRule?.style.minHeight).toBe("0px");
+
+    expect(root.querySelector(".chat-model-pill")).not.toBeNull();
+    root.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
+    expect([...root.querySelectorAll<HTMLElement>("[data-model-option]")]
+      .map((option) => option.dataset.modelOption)).toContain("demo-model");
+  } finally {
+    teardown();
+    root.remove();
+  }
 });
 
 test("ui preview: PreviewLlm streams a fake chat answer end-to-end", async () => {

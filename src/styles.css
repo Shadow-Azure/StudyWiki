@@ -2248,3 +2248,8 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   font-size: 10px;
 }
 .agent-statusline.run { color: var(--azurite-deep); }
+
+/* Agent rail slots participate directly in the rail flex chain; without
+   display:contents the wrapper collapses .agent-panel and unpins composer. */
+.rail.agent > .slot-host { display: contents; }
+.rail.agent > .slot-host > .slot { flex: 1; min-height: 0; }

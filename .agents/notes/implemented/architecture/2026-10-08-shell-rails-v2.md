@@ -14,6 +14,8 @@ Status: implemented
 
 Shell 移除应用内 `SW + StudyWiki` 品牌区；标题行只保留当前文件标题。macOS 使用 Tauri `TitleBarStyle::Overlay`、隐藏原生标题并把 traffic lights 定位在标题行内；DOM 面板开关与这些原生控件同层。非 macOS 保留系统原生标题栏，应用标题行作为第一行工具栏呈现，这是本期的平台差异。标题行设为 drag region，按钮和交互控件设为 no-drag。
 
+右栏 slot 包装层必须保持高度链：`.rail.agent > .slot-host` 使用 `display: contents`，直接 `.slot` 使用 `flex: 1; min-height: 0`，否则 `.agent-panel` 的高度链断裂，composer 会离开右栏底部。
+
 两根可折叠侧栏共用同一交互语言：12px 命中区、1px 分界线、hover/drag 时蓝色线和竖向 pill、Pointer Capture、rAF 合并、拖动期间关闭动画、双击重置、`role="separator"` 键盘调节。几何约束为 Activity Rail 54px、文件栏 220–440px、Agent 栏 300–520px、阅读区至少 340px。隐藏栏宽度为 0 但子树保持挂载；拖到最小值不触发隐藏。快捷键为 `Cmd/Ctrl+B` 切文件栏、`Cmd/Ctrl+Option/Alt+B` 切 Agent 栏；右栏隐藏时不显示红点。
 
 布局状态持久化到 `localStorage` key `studywiki.shell-layout.v1`，结构为 `{ version: 1, files: { width, open }, agent: { width, open } }`。读写都经过 clamp/默认值归一；损坏或超版本数据回退默认，不 fail-loud。变更即时保存，多窗口通过 `storage` 事件同步最后写入值。该状态是本机 UI 偏好，不进入 settings.json，也不随工作区数据写入用户文档。
