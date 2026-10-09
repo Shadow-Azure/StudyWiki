@@ -112,18 +112,18 @@ pub fn create_window<R: tauri::Runtime>(
             return Err(format!("授权 asset 访问 {root} 失败：{e}"));
         }
     }
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
+    let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
         .title("StudyWiki")
         .inner_size(1180.0, 760.0)
         .min_inner_size(920.0, 480.0);
 
+    // Shadowing keeps the macOS-only builder methods out of other platforms,
+    // so cross-platform clippy does not see an unused mutable builder.
     #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(12.0, 12.0));
-    }
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(12.0, 12.0));
 
     if let Err(e) = builder.build() {
         // build 失败的窗口不会触发 Destroyed 事件，登记项必须手动回滚。
