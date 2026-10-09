@@ -77,6 +77,8 @@ test("shell: closed rails stay mounted and toggles remain independent", () => {
   const treeHost = root.querySelector<HTMLElement>(".slot-host.sidebar-tree")!;
   const agentRail = root.querySelector<HTMLElement>(".rail.agent")!;
   const agentHost = root.querySelector<HTMLElement>(".slot-host.sidebar-right")!;
+  expect(filesRail.classList.contains("rail")).toBe(true);
+  expect(filesRail.classList.contains("files")).toBe(true);
   const stylesheet = document.createElement("style");
   stylesheet.textContent = shellStyles;
   document.head.append(stylesheet);
@@ -91,10 +93,13 @@ test("shell: closed rails stay mounted and toggles remain independent", () => {
   expect(root.contains(filesRail)).toBe(true);
   expect(root.contains(treeHost)).toBe(true);
   expect(workbench.matches('[data-files-open="false"]')).toBe(true);
+  expect(shellStyles).toContain('.workbench[data-files-open="false"] .rail.files > *');
+  expect(shellStyles).not.toContain('.workbench[data-files-open="false"] .sidebar > *');
   const filesVisibilityRule = [...stylesheet.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
-    "selectorText" in rule && rule.selectorText.includes('.workbench[data-files-open="false"] .sidebar > *'),
+    "selectorText" in rule && rule.selectorText.includes('.workbench[data-files-open="false"] .rail.files > *'),
   );
   expect(filesVisibilityRule?.style.visibility).toBe("hidden");
+  expect(getComputedStyle(treeHost).visibility).toBe("hidden");
 
   agentToggle.click();
   expect(workbench.dataset.agentOpen).toBe("false");

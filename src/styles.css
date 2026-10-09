@@ -152,7 +152,7 @@ body {
   user-select: none;
 }
 
-.workbench.is-resizing .sidebar,
+.workbench.is-resizing .rail.files,
 .workbench.is-resizing .main,
 .workbench.is-resizing .rail.agent { pointer-events: none; }
 
@@ -230,13 +230,13 @@ body {
   border-radius: 9px;
 }
 
-.sidebar,
+.rail.files,
 .rail.agent {
   min-width: 0;
   overflow: hidden;
 }
 
-.sidebar {
+.rail.files {
   overflow: auto;
   padding: 6px 8px 14px;
   background: var(--chrome);
@@ -254,10 +254,10 @@ body {
 .workbench[data-files-open="false"] { --files-width: 0px; }
 .workbench[data-agent-open="false"] { --agent-width: 0px; }
 
-.workbench[data-files-open="false"] .sidebar,
+.workbench[data-files-open="false"] .rail.files,
 .workbench[data-agent-open="false"] .rail.agent { border: 0; }
 
-.workbench[data-files-open="false"] .sidebar > *,
+.workbench[data-files-open="false"] .rail.files > *,
 .workbench[data-agent-open="false"] .rail.agent > * { visibility: hidden; }
 
 .workspace-resizer {
