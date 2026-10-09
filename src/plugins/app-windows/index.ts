@@ -6,9 +6,9 @@ export const name = "app-windows";
 /** Service keys awaited before apply runs. */
 export const inject = ["files", "windows", "workspace", "slots"];
 
-/** Activity Rail entries: new window (carrying the current root) and open-folder.
- * "新建窗口" forwards the workspace root (null → welcome state in the new
- * window); "打开文件夹…" re-picks and switches only this window's root.
+/** Activity Rail entries: open-folder, then new window.
+ * "打开文件夹…" re-picks and switches only this window's root; "新建窗口"
+ * forwards that root (null → welcome state in the new window).
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @returns Teardown removing both Activity Rail buttons. */
 export function apply(ctx: Context): () => void {

@@ -6,7 +6,7 @@ export type SlotRegistration = SlotName | "topbar.left";
 /** Renders into its own child element; decides its own visibility. */
 export type SlotRenderer = (el: HTMLElement) => void;
 
-const SLOT_ALIASES: Record<string, SlotName> = { "topbar.left": "activity.left" };
+const SLOT_ALIASES = new Map<string, SlotName>([["topbar.left", "activity.left"]]);
 
 /** Normalize an API v1 registration to its current slot; unknown preview slot
  * names pass through unchanged.
@@ -15,7 +15,7 @@ const SLOT_ALIASES: Record<string, SlotName> = { "topbar.left": "activity.left" 
 export function normalizeSlotRegistration<T extends string>(
   slot: T,
 ): T extends SlotRegistration ? SlotName : T {
-  return (SLOT_ALIASES[slot] ?? slot) as T extends SlotRegistration ? SlotName : T;
+  return (SLOT_ALIASES.get(slot) ?? slot) as T extends SlotRegistration ? SlotName : T;
 }
 
 /** Typed vanilla-DOM slot registry: renderers run in registration order, each

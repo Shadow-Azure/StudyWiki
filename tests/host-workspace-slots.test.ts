@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
 import { WorkspaceService } from "../src/host/workspace";
-import { SlotsService } from "../src/host/slots";
+import { normalizeSlotRegistration, SlotsService } from "../src/host/slots";
 import type { FileNode } from "../src/types";
 
 const md = (name: string): FileNode => ({ name, path: `/x/${name}`, kind: "markdown" });
@@ -128,4 +128,10 @@ test("slots: topbar.left is an activity.left compatibility alias", () => {
   offLegacy();
   expect(host.children.length).toBe(1);
   expect(host.children[0]?.textContent).toBe("new");
+});
+
+test("slots: normalization maps the alias and passes inherited names through", () => {
+  expect(normalizeSlotRegistration("topbar.left")).toBe("activity.left");
+  expect(normalizeSlotRegistration("toString")).toBe("toString");
+  expect(normalizeSlotRegistration("valueOf")).toBe("valueOf");
 });
