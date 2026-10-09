@@ -30,11 +30,11 @@ function keyPreview(key: string): string {
   return `${chars.slice(0, 4).join("")}…${chars.slice(-2).join("")}`;
 }
 
-/** 模型配置面板（第七内置插件）：顶栏入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
+/** 模型配置面板（第七内置插件）：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
  * 预设表来自 Rust llm_list_presets（baseUrl 不进前端源码）；key 明文仅内存持有，
  * 保存经 ctx.llm（写面仅内置插件可用）；探测/错误归一码原样内联展示。
  * @param ctx Host context（llm/slots injected）。
- * @returns Teardown removing the topbar button. */
+ * @returns Teardown removing the Activity Rail button. */
 export function apply(ctx: Context): () => void {
   return ctx.slots.register("activity.left", (el) => {
     const btn = labelButton("sparkle", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "模型" });

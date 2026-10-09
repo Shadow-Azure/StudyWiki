@@ -47,7 +47,7 @@ export const name = "${name}";
 export const inject = ["slots"];
 
 export function apply(ctx: Context): () => void {
-  return ctx.slots.register("topbar.left", (el) => {
+  return ctx.slots.register("activity.left", (el) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = "hello";

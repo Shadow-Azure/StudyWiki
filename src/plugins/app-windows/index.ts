@@ -6,11 +6,11 @@ export const name = "app-windows";
 /** Service keys awaited before apply runs. */
 export const inject = ["files", "windows", "workspace", "slots"];
 
-/** Topbar entries: new window (carrying the current root) and open-folder.
+/** Activity Rail entries: new window (carrying the current root) and open-folder.
  * "新建窗口" forwards the workspace root (null → welcome state in the new
  * window); "打开文件夹…" re-picks and switches only this window's root.
  * @param ctx Host context (files/windows/workspace/slots injected).
- * @returns Teardown removing both topbar buttons. */
+ * @returns Teardown removing both Activity Rail buttons. */
 export function apply(ctx: Context): () => void {
   return ctx.slots.register("activity.left", (el) => {
     const openBtn = labelButton("folder-open", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "打开文件夹…" });

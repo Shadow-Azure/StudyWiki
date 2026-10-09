@@ -8,7 +8,15 @@ export type SlotRenderer = (el: HTMLElement) => void;
 
 const SLOT_ALIASES: Record<string, SlotName> = { "topbar.left": "activity.left" };
 
-const normalizeSlot = (slot: SlotRegistration): SlotName => SLOT_ALIASES[slot] ?? slot;
+/** Normalize an API v1 registration to its current slot; unknown preview slot
+ * names pass through unchanged.
+ * @param slot Declared registration slot, including the API v1 alias.
+ * @returns Current slot name for known registrations; otherwise the input. */
+export function normalizeSlotRegistration<T extends string>(
+  slot: T,
+): T extends SlotRegistration ? SlotName : T {
+  return (SLOT_ALIASES[slot] ?? slot) as T extends SlotRegistration ? SlotName : T;
+}
 
 /** Typed vanilla-DOM slot registry: renderers run in registration order, each
  * in its own element — no single-slot competition. */
@@ -18,7 +26,7 @@ export class SlotsService {
 
   /** Register a renderer into a slot; returns its disposer. */
   register(slot: SlotRegistration, render: SlotRenderer): () => void {
-    const key = normalizeSlot(slot);
+    const key = normalizeSlotRegistration(slot);
     const list = this.#entries.get(key) ?? [];
     const el = document.createElement("div");
     el.className = `slot slot-${key.replace(".", "-")}`;

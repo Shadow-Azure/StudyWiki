@@ -10,6 +10,7 @@ import { apply as applyLlmSettings } from "./plugins/llm-settings";
 import { apply as applyAgentCore } from "./plugins/agent-core";
 import { apply as applyAgent } from "./plugins/app-agent";
 import { StreamAssembler, type StreamChunk } from "./host/llm-stream";
+import { normalizeSlotRegistration } from "./host/slots";
 import { WorkspaceService } from "./host/workspace";
 import type { FileNode } from "./types";
 
@@ -111,7 +112,7 @@ class PreviewSlots {
 
   /** Register a slot renderer in registration order. */
   register(rawSlot: string, render: (host: HTMLElement) => void): () => void {
-    const slot = rawSlot === "topbar.left" ? "activity.left" : rawSlot;
+    const slot = normalizeSlotRegistration(rawSlot);
     const entries = this.#slots.get(slot) ?? [];
     const el = document.createElement("div");
     el.className = `slot slot-${slot.replace(".", "-")}`;

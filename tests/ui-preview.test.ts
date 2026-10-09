@@ -12,6 +12,18 @@ test("ui preview: mounts the real shell, tree, and markdown viewer", async () =>
   expect(root.querySelector(".tree-title")?.textContent).toBe("StudyWiki Preview");
   expect(root.querySelector(".markdown-body h1")?.textContent).toBe("Tauri 架构");
   expect(root.querySelector(".topbar-file")?.textContent).toBe("Tauri 架构.md");
+  const railButtons = [...root.querySelectorAll<HTMLButtonElement>(".activity-left button")];
+  expect(railButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+    "打开文件夹…",
+    "新建窗口",
+    "插件",
+    "模型",
+  ]);
+  expect(railButtons.every((button) => {
+    const style = getComputedStyle(button);
+    return !button.hidden && style.display !== "none" && style.visibility === "visible"
+      && button.getAttribute("aria-label");
+  })).toBe(true);
 
   teardown();
   expect(root.children.length).toBe(0);

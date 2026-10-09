@@ -25,6 +25,12 @@ scope:
   - .agents/notes/implemented/architecture/2026-10-08-shell-rails-v2.*
   - docs/architecture.*
   - docs/plugins/contract.*
+  - scripts/gen-plugin-template.mjs
+  - scripts/gen-plugin-template.spec.mjs
+  - plugins-dev/hello/**
+  - docs/plugins/authoring.*
+  - docs/plugins/dynamic.*
+  - src/preview.ts
 adr:
   - ../../notes/proposed/architecture/2026-10-08-shell-rails-v2.md
 github:
