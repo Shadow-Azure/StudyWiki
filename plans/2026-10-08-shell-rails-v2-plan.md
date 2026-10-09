@@ -1,6 +1,6 @@
 # Shell Rails v2 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 按已确认原型实现固定 Activity Rail、可拖拽/可折叠的文件栏与 Agent 栏、macOS overlay titlebar 和本机布局持久化。
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript + 无框架 DOM、Vite/Vitest(jsdom)、Tauri 2 Rust shell、现有 CSS token 体系。
 
-**Spec:** `.agents/notes/proposed/architecture/2026-10-08-shell-rails-v2.md`
+**Spec:** `.agents/notes/implemented/architecture/2026-10-08-shell-rails-v2.md`
 
 ## Global Constraints
 
@@ -892,7 +892,7 @@ Do not hand-edit generated architecture blocks.
 
 After implementation is verified:
 
-- Set issue status to `done` in both flow files and link the implemented ADR path.
+- Link the implemented ADR path and change both note statuses to implemented; set the issue status only if the m2 priority gate allows it (keep `ready` while P0 items block P1 completion).
 - Move the note triad from `.agents/notes/proposed/architecture/` to `.agents/notes/implemented/architecture/`.
 - Change both note `Status:` values from `proposed` to `implemented`.
 - Update ADR paths in both flow fences to the implemented note path; keep both YAML fences byte-for-byte identical except for generated locale-projected paths if the tooling requires.

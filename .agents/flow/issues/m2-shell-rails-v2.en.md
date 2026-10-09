@@ -9,6 +9,7 @@ priority: P1
 status: ready
 scope:
   - src/plugins/app-shell/**
+  - .agents/flow/issues/m2-shell-rails-v2.*
   - src/plugins/app-windows/**
   - src/plugins/plugin-manager/**
   - src/plugins/llm-settings/**
