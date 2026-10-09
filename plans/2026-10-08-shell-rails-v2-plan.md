@@ -1,6 +1,6 @@
 # Shell Rails v2 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 按已确认原型实现固定 Activity Rail、可拖拽/可折叠的文件栏与 Agent 栏、macOS overlay titlebar 和本机布局持久化。
 
@@ -52,7 +52,7 @@
   - `loadShellLayout(viewport?: number, storage?: Pick<Storage, "getItem"> | null): ShellLayoutState`
   - `saveShellLayout(state: ShellLayoutState, storage?: Pick<Storage, "setItem"> | null): void`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create `tests/app-shell-layout.test.ts`:
 
@@ -103,12 +103,12 @@ describe("shell layout persistence", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `pnpm exec vitest run tests/app-shell-layout.test.ts`
 Expected: FAIL — `app-shell/layout` 不存在。
 
-- [ ] **Step 3: Implement layout.ts**
+- [x] **Step 3: Implement layout.ts**
 
 Create `src/plugins/app-shell/layout.ts`:
 
@@ -218,12 +218,12 @@ export function saveShellLayout(
 
 If the normalization `otherOpenWidth` heuristic feels imprecise, make normalization clamp each rail independently against its absolute max (`440/520`) and let `index.ts` re-clamp both against the live viewport before paint. Do not lose the live-viewport concession.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `pnpm exec vitest run tests/app-shell-layout.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plugins/app-shell/layout.ts tests/app-shell-layout.test.ts
@@ -245,7 +245,7 @@ git commit -m "shell：新增布局几何与持久化模型 (#53)"
   - `SlotsService.register(slot: SlotRegistration, render: SlotRenderer): () => void`
   - `topbar.left` internally resolves to `activity.left`.
 
-- [ ] **Step 1: Add failing integration test**
+- [x] **Step 1: Add failing integration test**
 
 Append to `tests/host-workspace-slots.test.ts`:
 
@@ -265,12 +265,12 @@ test("slots: topbar.left is an activity.left compatibility alias", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `pnpm exec vitest run tests/host-workspace-slots.test.ts`
 Expected: TypeScript FAIL — `topbar.left` 不在 `SlotName`。
 
-- [ ] **Step 3: Implement alias normalization**
+- [x] **Step 3: Implement alias normalization**
 
 Modify `src/host/slots.ts`:
 
@@ -293,12 +293,12 @@ const key = normalizeSlot(slot);
 
 Keep `mount(slot: SlotName, container: HTMLElement)` unchanged. The slot CSS class becomes `slot-activity-left` for both new and legacy registrations.
 
-- [ ] **Step 4: Run slot tests**
+- [x] **Step 4: Run slot tests**
 
 Run: `pnpm exec vitest run tests/host-workspace-slots.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/host/slots.ts tests/host-workspace-slots.test.ts
@@ -316,7 +316,7 @@ git commit -m "shell：兼容 topbar 槽位到 Activity Rail (#53)"
 **Interfaces:**
 - Produces new `IconName` values: `"panel-left"`, `"panel-right"`.
 
-- [ ] **Step 1: Add failing icon test**
+- [x] **Step 1: Add failing icon test**
 
 Append to `tests/app-shell.test.ts` temporarily in Task 4 or add this focused test now:
 
@@ -332,7 +332,7 @@ test("icons: rail toggles expose accessible inline SVGs", () => {
 Run: `pnpm exec vitest run tests/app-shell.test.ts`
 Expected: TypeScript FAIL — icon names absent.
 
-- [ ] **Step 2: Implement icons**
+- [x] **Step 2: Implement icons**
 
 Add to `ICONS` in `src/ui/icons.ts`:
 
@@ -349,12 +349,12 @@ Add to `ICONS` in `src/ui/icons.ts`:
 ],
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `pnpm exec vitest run tests/app-shell.test.ts`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ui/icons.ts tests/app-shell.test.ts
@@ -382,7 +382,7 @@ git commit -m "shell：新增侧栏开关图标 (#53)"
   - `.rail-resizer[data-side="files|agent"]`
   - `body.workbench[data-files-open="true|false"]`, `[data-agent-open="true|false"]`
 
-- [ ] **Step 1: Write failing structure tests**
+- [x] **Step 1: Write failing structure tests**
 
 Replace old topbar brand expectations in `tests/app-shell.test.ts` and add:
 
@@ -414,12 +414,12 @@ test("shell: mounts activity rail and collapsible rails", () => {
 
 Update `tests/ui-preview.test.ts` so plugin manager is located from `.activity-left button`, not `.topbar-left button`; remove brand/topbar children assertions.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `pnpm exec vitest run tests/app-shell.test.ts tests/ui-preview.test.ts`
 Expected: FAIL — activity rail/toggles absent.
 
-- [ ] **Step 3: Build DOM structure**
+- [x] **Step 3: Build DOM structure**
 
 In `app-shell/index.ts`:
 
@@ -503,7 +503,7 @@ agentToggle.addEventListener("click", () => toggleRail("agent"));
 - Mount `activity.left`; do **not** mount `topbar.left`.
 - Keep welcome screen and main empty-state behavior unchanged.
 
-- [ ] **Step 4: Replace shell CSS**
+- [x] **Step 4: Replace shell CSS**
 
 In `src/styles.css`, replace `.topbar`, `.brand*`, `.workspace-resizer`, `.sidebar`, and `.chat-rail` blocks with the white four-column system:
 
@@ -544,12 +544,12 @@ In `src/styles.css`, replace `.topbar`, `.brand*`, `.workspace-resizer`, `.sideb
 
 Define `.workspace-resizer` with `width: 12px`, left/right positioning by side, transparent background, hover/drag blue line and a `34px` vertical pill. Use `left: var(--activity-width)` plus `calc(var(--files-width))` for files, and `right: var(--agent-width)` for agent; hide a handle when its rail is closed.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `pnpm exec vitest run tests/app-shell.test.ts tests/ui-preview.test.ts tests/view-filetree.test.ts tests/app-agent.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/plugins/app-shell/index.ts src/styles.css tests/app-shell.test.ts tests/ui-preview.test.ts
@@ -572,7 +572,7 @@ git commit -m "shell：实现 Activity Rail 与双栏折叠结构 (#53)"
   - Handles support pointer drag, double-click reset, `ArrowLeft/ArrowRight`, `Home/End`.
   - Document shortcuts `Cmd/Ctrl+B` and `Cmd/Ctrl+Option/Alt+B`.
 
-- [ ] **Step 1: Add failing interaction tests**
+- [x] **Step 1: Add failing interaction tests**
 
 Add to `tests/app-shell.test.ts`:
 
@@ -622,12 +622,12 @@ test("shell: keyboard shortcuts toggle the correct rails", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `pnpm exec vitest run tests/app-shell.test.ts`
 Expected: FAIL — drag/shortcuts do not act.
 
-- [ ] **Step 3: Implement gesture controller**
+- [x] **Step 3: Implement gesture controller**
 
 Add inside `apply`:
 
@@ -699,7 +699,7 @@ const connectHandle = (handle: HTMLElement, side: RailSide): void => {
 
 For `Home`, clamp resolves to that rail’s minimum; for `End`, clamp resolves to its live maximum. Export or derive defaults in `layout.ts` if needed: `FILES_DEFAULT = 252`, `AGENT_DEFAULT = 320`.
 
-- [ ] **Step 4: Add persistence and shortcut lifecycle**
+- [x] **Step 4: Add persistence and shortcut lifecycle**
 
 During mount:
 
@@ -713,12 +713,12 @@ saveShellLayout(state);
 
 On window resize, re-clamp both and `paint({ persist: false })` without changing open flags. On `storage`, if `event.key === SHELL_LAYOUT_KEY`, reload state and repaint without saving. Add document keydown shortcuts and remove them in teardown. Ensure `stopDrag`/cancel logic handles every active handle and removes `resize`, `storage`, and document `keydown` listeners in teardown.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `pnpm exec vitest run tests/app-shell.test.ts tests/app-shell-layout.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/plugins/app-shell/index.ts tests/app-shell.test.ts
@@ -736,7 +736,7 @@ git commit -m "shell：实现双栏拖拽与布局记忆 (#53)"
 **Interfaces:**
 - Produces: main and `win-*` windows use macOS overlay titlebar, hidden native title, traffic light position `(12, 12)`, and minimum inner size `920x480`.
 
-- [ ] **Step 1: Apply static window config**
+- [x] **Step 1: Apply static window config**
 
 In `src-tauri/tauri.conf.json`, change the first window object:
 
@@ -753,7 +753,7 @@ In `src-tauri/tauri.conf.json`, change the first window object:
 }
 ```
 
-- [ ] **Step 2: Apply dynamic window settings**
+- [x] **Step 2: Apply dynamic window settings**
 
 Modify `create_window` in `src-tauri/src/windows.rs`:
 
@@ -778,12 +778,12 @@ if let Err(e) = builder.build() {
 
 Keep the existing registry rollback exactly where it is; do not remove the window from the registry before `build()` fails.
 
-- [ ] **Step 3: Verify compile**
+- [x] **Step 3: Verify compile**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src-tauri/tauri.conf.json src-tauri/src/windows.rs
@@ -807,7 +807,7 @@ git commit -m "shell：接入 macOS overlay 标题栏 (#53)"
 - Produces Activity Rail order: `打开文件夹 → 新建窗口 → 插件 → 模型`.
 - Produces command button class: `btn btn-ghost icon-btn activity-item`.
 
-- [ ] **Step 1: Update failing registration tests**
+- [x] **Step 1: Update failing registration tests**
 
 For each global-command test, change the asserted slot string from `topbar.left` to `activity.left`. For `app-windows`, assert DOM order and classes:
 
@@ -820,12 +820,12 @@ expect([openBtn, newBtn].every((button) => button.classList.contains("activity-i
 
 For plugin manager and LLM settings, assert `slots.register` received `"activity.left"` and button class contains `activity-item`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `pnpm exec vitest run tests/app-windows.test.ts tests/plugin-manager.test.ts tests/llm-settings.test.ts`
 Expected: FAIL — plugins still register `topbar.left` and use old classes.
 
-- [ ] **Step 3: Migrate registrations**
+- [x] **Step 3: Migrate registrations**
 
 - `app-windows`: change `register("topbar.left"` to `register("activity.left"`; append `openBtn` first, then `newBtn`; use class `btn btn-ghost icon-btn activity-item`.
 - `plugin-manager`: register `activity.left`; button class `btn btn-ghost icon-btn activity-item`.
@@ -833,12 +833,12 @@ Expected: FAIL — plugins still register `topbar.left` and use old classes.
 
 Do not change command behavior, root forwarding, plugin panel focus handling, or LLM settings IPC.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `pnpm exec vitest run tests/app-windows.test.ts tests/plugin-manager.test.ts tests/llm-settings.test.ts tests/host-workspace-slots.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plugins/app-windows/index.ts src/plugins/plugin-manager/index.ts src/plugins/llm-settings/index.ts tests/app-windows.test.ts tests/plugin-manager.test.ts tests/llm-settings.test.ts
@@ -862,7 +862,7 @@ git commit -m "shell：迁移全局命令到 Activity Rail (#53)"
 **Interfaces:**
 - Documentation-only task; no runtime interface change.
 
-- [ ] **Step 1: Update plugin contract**
+- [x] **Step 1: Update plugin contract**
 
 In both contract pages, state:
 
@@ -871,7 +871,7 @@ In both contract pages, state:
 - New external plugins should register `activity.left`.
 - Keep both code fences exactly mirrored; update the example to `activity.left` on both sides.
 
-- [ ] **Step 2: Update architecture descriptions**
+- [x] **Step 2: Update architecture descriptions**
 
 Update `scripts/code-map.manifest.json` text for:
 
@@ -888,7 +888,7 @@ pnpm gen:code-map
 
 Do not hand-edit generated architecture blocks.
 
-- [ ] **Step 3: Update issue and note state**
+- [x] **Step 3: Update issue and note state**
 
 After implementation is verified:
 
@@ -908,7 +908,7 @@ pnpm lint:docs
 
 Expected: all doc gates PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/plugins/contract.md docs/plugins/contract.en.md docs/architecture.md docs/architecture.en.md scripts/code-map.manifest.json docs/architecture.md docs/architecture.en.md .agents/flow/issues/m2-shell-rails-v2.md .agents/flow/issues/m2-shell-rails-v2.en.md .agents/flow/issues/m2-shell-rails-v2.i18n.yaml .agents/notes/implemented/architecture/2026-10-08-shell-rails-v2.md .agents/notes/implemented/architecture/2026-10-08-shell-rails-v2.en.md .agents/notes/implemented/architecture/2026-10-08-shell-rails-v2.i18n.yaml
@@ -925,7 +925,7 @@ git commit -m "docs：登记 Activity Rail 壳布局实现 (#53)"
 **Interfaces:**
 - Consumes every prior task contract.
 
-- [ ] **Step 1: Run full local gates**
+- [x] **Step 1: Run full local gates**
 
 ```bash
 pnpm test
@@ -938,7 +938,7 @@ pnpm verify:flow
 
 Expected: all PASS.
 
-- [ ] **Step 2: Run release app bundle**
+- [x] **Step 2: Run release app bundle**
 
 ```bash
 pnpm tauri build --bundles app
@@ -946,7 +946,7 @@ pnpm tauri build --bundles app
 
 Expected: `.app` bundle succeeds. If DMG bundling is needed for release, run it separately and record any local tooling failure without treating it as this feature’s UI gate.
 
-- [ ] **Step 3: Manual macOS smoke**
+- [x] **Step 3: Manual macOS smoke**
 
 Install the built `.app`, then verify each behavior with Computer Use or manual interaction:
 
@@ -960,11 +960,11 @@ Install the built `.app`, then verify each behavior with Computer Use or manual 
 8. Register the external `hello` sample and confirm its legacy `topbar.left` button appears in Activity Rail.
 9. Open Agent and run one approval turn to confirm popover positioning and composer behavior still work after the shell change.
 
-- [ ] **Step 4: Record smoke evidence**
+- [x] **Step 4: Record smoke evidence**
 
 Save screenshots under `plans/smoke-test/` (already ignored). If defects are found, classify them into the owning task, fix with tests, and rerun this task. Do not add product fixes without their failing test.
 
-- [ ] **Step 5: Final commit if smoke produced fixes**
+- [x] **Step 5: Final commit if smoke produced fixes**
 
 ```bash
 git status --short

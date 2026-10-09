@@ -32,7 +32,7 @@ scope:
   - docs/plugins/dynamic.*
   - src/preview.ts
 adr:
-  - ../../notes/proposed/architecture/2026-10-08-shell-rails-v2.md
+  - ../../notes/implemented/architecture/2026-10-08-shell-rails-v2.md
 github:
   number: 53
   url: https://github.com/Shadow-Azure/StudyWiki/issues/53
