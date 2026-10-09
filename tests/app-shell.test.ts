@@ -231,6 +231,51 @@ test("shell: reopening a rail re-clamps stale hidden geometry", () => {
   root.remove();
 });
 
+test("shell: real pointer dragging suppresses rail pointer events", () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+  const stylesheet = document.createElement("style");
+  stylesheet.textContent = shellStyles;
+  document.head.append(stylesheet);
+  try {
+    const selectors = [
+      ".workbench[data-dragging] .rail.files",
+      ".workbench[data-dragging] .main",
+      ".workbench[data-dragging] .rail.agent",
+    ];
+    const obsoleteSelectors = [
+      ".workbench.is-resizing .rail.files",
+      ".workbench.is-resizing .main",
+      ".workbench.is-resizing .rail.agent",
+    ];
+
+    for (const selector of selectors) {
+      expect(shellStyles).toContain(selector);
+    }
+    for (const selector of obsoleteSelectors) {
+      expect(shellStyles).not.toContain(selector);
+    }
+
+    const workbench = root.querySelector<HTMLElement>(".workbench")!;
+    workbench.dataset.dragging = "true";
+    const suppressionRule = [...stylesheet.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
+      "selectorText" in rule && rule.selectorText.includes(".workbench[data-dragging] .rail.files"),
+    );
+    expect(suppressionRule?.style.pointerEvents).toBe("none");
+    for (const selector of selectors) {
+      expect(getComputedStyle(root.querySelector<HTMLElement>(selector)!).pointerEvents).toBe("none");
+    }
+  } finally {
+    stylesheet.remove();
+    teardown();
+    root.remove();
+  }
+});
+
 test("shell: file-opened 统一维护窗口标题基线", () => {
   const root = document.createElement("div");
   root.id = "app";

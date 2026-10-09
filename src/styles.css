@@ -152,9 +152,9 @@ body {
   user-select: none;
 }
 
-.workbench.is-resizing .rail.files,
-.workbench.is-resizing .main,
-.workbench.is-resizing .rail.agent { pointer-events: none; }
+.workbench[data-dragging] .rail.files,
+.workbench[data-dragging] .main,
+.workbench[data-dragging] .rail.agent { pointer-events: none; }
 
 /* ============ 标题栏 ============ */
 
