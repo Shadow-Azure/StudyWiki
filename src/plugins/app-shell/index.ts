@@ -2,6 +2,20 @@ import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
 import { icon } from "../../ui/icons";
 import { paintTitle } from "../../ui/viewer";
+import {
+  ACTIVITY_WIDTH,
+  AGENT_DEFAULT,
+  AGENT_MIN,
+  clampRailWidth,
+  FILES_DEFAULT,
+  FILES_MIN,
+  loadShellLayout,
+  maxRailWidth,
+  saveShellLayout,
+  SHELL_LAYOUT_KEY,
+  RAIL_KEYBOARD_STEP,
+  type RailSide,
+} from "./layout";
 
 /** Plugin id in the manifest and the static module table. */
 export const name = "app-shell";
@@ -10,22 +24,16 @@ export const inject = ["files", "windows", "workspace", "slots"];
 
 /** Config accepted by the app-shell plugin (manifest `config` merged over defaults). */
 export interface ShellConfig {
-  /** Application title shown in the topbar and the welcome state. */
+  /** Application title shown in the welcome state and window-title baseline. */
   title: string;
 }
 
-const SIDEBAR_MIN = 210;
-const SIDEBAR_MAX_RATIO = 0.45;
-const MAIN_MIN = 340;
-const SIDEBAR_DEFAULT = 252;
-const SIDEBAR_KEYBOARD_STEP = 16;
-
-/** Shell layout: topbar (seal brand + actions + active filename) + sidebar + main
- * grid and the four slot containers; main states cover the no-root welcome,
- * no-active-file hint, and explicit unsupported hint for other files.
+/** Shell layout: titlebar (rail toggles + active filename), Activity Rail,
+ * collapsible files/agent rails, and the reader; main states cover the no-root
+ * welcome, no-active-file hint, and explicit unsupported hint for other files.
  * @param ctx Host context (files/windows/workspace/slots injected).
  * @param config Shell config (window title).
- * @returns Teardown removing the root-changed / file-opened subscriptions. */
+ * @returns Teardown removing document/window listeners, drag state, and workspace subscriptions. */
 export function apply(ctx: Context, config: ShellConfig): () => void {
   let app = document.getElementById("app");
   if (!app) {
@@ -36,26 +44,31 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   }
   app.className = "shell";
   app.replaceChildren();
-  const topbar = document.createElement("header");
-  topbar.className = "topbar";
-  const brand = document.createElement("div");
-  brand.className = "brand";
-  const seal = document.createElement("span");
-  seal.className = "brand-seal";
-  seal.append(icon("iceberg", 14));
-  const brandName = document.createElement("span");
-  brandName.className = "brand-name";
-  brandName.textContent = config.title;
-  brand.append(seal, brandName);
-  const topbarLeft = document.createElement("div");
-  topbarLeft.className = "slot-host topbar-left";
+  const titlebar = document.createElement("header");
+  titlebar.className = "topbar titlebar";
+  const filesToggle = labelButton("panel-left", "", {
+    className: "btn btn-ghost icon-btn titlebar-toggle",
+    ariaLabel: "显示或隐藏文件栏",
+  });
+  filesToggle.dataset.railToggle = "files";
   const fileTitle = document.createElement("div");
-  fileTitle.className = "topbar-file";
-  topbar.append(brand, fileTitle, topbarLeft);
+  fileTitle.className = "topbar-file titlebar-title";
+  const agentToggle = labelButton("panel-right", "", {
+    className: "btn btn-ghost icon-btn titlebar-toggle",
+    ariaLabel: "显示或隐藏 Agent 栏",
+  });
+  agentToggle.dataset.railToggle = "agent";
+  titlebar.append(filesToggle, fileTitle, agentToggle);
+  if (/Macintosh/.test(navigator.userAgent)) app.classList.add("is-macos");
   const body = document.createElement("div");
-  body.className = "body";
+  body.className = "workbench";
+  const activity = document.createElement("aside");
+  activity.className = "activity";
+  const activityHost = document.createElement("div");
+  activityHost.className = "slot-host activity-left";
+  activity.append(activityHost);
   const sidebar = document.createElement("aside");
-  sidebar.className = "sidebar";
+  sidebar.className = "rail files";
   const treeHost = document.createElement("div");
   treeHost.className = "slot-host sidebar-tree";
   sidebar.append(treeHost);
@@ -65,60 +78,182 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
   viewerHost.className = "slot-host main-viewer";
   main.append(viewerHost);
   const chatRail = document.createElement("aside");
-  chatRail.className = "chat-rail";
+  chatRail.className = "rail agent";
   const chatHost = document.createElement("div");
   chatHost.className = "slot-host sidebar-right";
   chatRail.append(chatHost);
-  let sidebarSize = SIDEBAR_DEFAULT;
-  const resizer = document.createElement("div");
-  resizer.className = "workspace-resizer line-resizer";
-  resizer.tabIndex = 0;
-  resizer.setAttribute("role", "separator");
-  resizer.setAttribute("aria-orientation", "vertical");
-  resizer.setAttribute("aria-label", "调整文件树宽度");
-  resizer.setAttribute("aria-valuemin", String(SIDEBAR_MIN));
-  const sidebarMax = (): number =>
-    Math.max(
-      SIDEBAR_MIN,
-      Math.floor(Math.min(window.innerWidth * SIDEBAR_MAX_RATIO, window.innerWidth - MAIN_MIN)),
-    );
-  resizer.setAttribute("aria-valuemax", String(sidebarMax()));
-  resizer.setAttribute("aria-valuenow", String(sidebarSize));
-  const resize = (next: number): void => {
-    const max = sidebarMax();
-    sidebarSize = Math.min(max, Math.max(SIDEBAR_MIN, Math.round(next)));
-    body.style.setProperty("--sidebar-size", `${sidebarSize}px`);
-    resizer.setAttribute("aria-valuemax", String(max));
-    resizer.setAttribute("aria-valuenow", String(sidebarSize));
-  };
-  const onWindowResize = (): void => resize(sidebarSize);
-  const stopDrag = (): void => {
-    body.classList.remove("is-resizing");
-    document.removeEventListener("pointermove", onPointerMove);
-    document.removeEventListener("pointerup", stopDrag);
-    document.removeEventListener("pointercancel", stopDrag);
-  };
-  const onPointerMove = (event: PointerEvent): void => resize(event.clientX);
-  resizer.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    body.classList.add("is-resizing");
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", stopDrag);
-    document.addEventListener("pointercancel", stopDrag);
-  });
-  resizer.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      resize(sidebarSize + (event.key === "ArrowRight" ? SIDEBAR_KEYBOARD_STEP : -SIDEBAR_KEYBOARD_STEP));
-    } else if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      resize(event.key === "Home" ? SIDEBAR_MIN : sidebarMax());
+  let state = loadShellLayout();
+  const filesResizer = document.createElement("div");
+  filesResizer.className = "workspace-resizer rail-resizer";
+  filesResizer.dataset.side = "files";
+  filesResizer.tabIndex = 0;
+  filesResizer.setAttribute("role", "separator");
+  filesResizer.setAttribute("aria-orientation", "vertical");
+  filesResizer.setAttribute("aria-label", "调整文件栏宽度");
+  const agentResizer = document.createElement("div");
+  agentResizer.className = "workspace-resizer rail-resizer";
+  agentResizer.dataset.side = "agent";
+  agentResizer.tabIndex = 0;
+  agentResizer.setAttribute("role", "separator");
+  agentResizer.setAttribute("aria-orientation", "vertical");
+  agentResizer.setAttribute("aria-label", "调整 Agent 栏宽度");
+  // Resize and reopen share one clamp pass: closed widths stay saved, while every
+  // rendered rail tracks the latest viewport concession before ARIA/CSS repaint.
+  const constrainState = (): void => {
+    if (state.files.open) {
+      state.files.width = clampRailWidth(
+        "files", state.files.width, window.innerWidth,
+        state.agent.open ? state.agent.width : 0,
+      );
     }
-  });
-  body.append(sidebar, resizer, main, chatRail);
-  app.append(topbar, body);
+    if (state.agent.open) {
+      state.agent.width = clampRailWidth(
+        "agent", state.agent.width, window.innerWidth,
+        state.files.open ? state.files.width : 0,
+      );
+    }
+  };
+  const otherOpenWidth = (side: RailSide): number => {
+    const other = side === "files" ? state.agent : state.files;
+    return other.open ? other.width : 0;
+  };
+  const paint = (): void => {
+    constrainState();
+    const filesWidth = state.files.open ? state.files.width : 0;
+    const agentWidth = state.agent.open ? state.agent.width : 0;
+    body.style.setProperty("--activity-width", `${ACTIVITY_WIDTH}px`);
+    body.style.setProperty("--files-width", `${filesWidth}px`);
+    body.style.setProperty("--agent-width", `${agentWidth}px`);
+    body.dataset.filesOpen = String(state.files.open);
+    body.dataset.agentOpen = String(state.agent.open);
+    filesToggle.setAttribute("aria-pressed", String(state.files.open));
+    agentToggle.setAttribute("aria-pressed", String(state.agent.open));
+    filesResizer.setAttribute("aria-valuenow", String(state.files.width));
+    agentResizer.setAttribute("aria-valuenow", String(state.agent.width));
+    filesResizer.setAttribute("aria-valuemin", String(FILES_MIN));
+    agentResizer.setAttribute("aria-valuemin", String(AGENT_MIN));
+    filesResizer.setAttribute("aria-valuemax", String(maxRailWidth(
+      "files", window.innerWidth, state.agent.open ? state.agent.width : 0,
+    )));
+    agentResizer.setAttribute("aria-valuemax", String(maxRailWidth(
+      "agent", window.innerWidth, state.files.open ? state.files.width : 0,
+    )));
+  };
+  const toggleRail = (side: RailSide): void => {
+    state[side].open = !state[side].open;
+    paint();
+    saveShellLayout(state);
+  };
+  const setWidth = (side: RailSide, next: number, options: { persist?: boolean } = {}): void => {
+    state[side].width = clampRailWidth(side, next, window.innerWidth, otherOpenWidth(side));
+    paint();
+    if (options.persist !== false) saveShellLayout(state);
+  };
+  let activeDragCount = 0;
+  const isDragging = (): boolean => activeDragCount > 0;
+  const disconnectors: Array<() => void> = [];
+  const connectHandle = (handle: HTMLElement, side: RailSide): void => {
+    let startX = 0;
+    let startWidth = 0;
+    let latestX = 0;
+    let frame: number | null = null;
+    let active = false;
+    let pointerId: number | null = null;
+    const write = (): void => {
+      frame = null;
+      const delta = side === "files" ? latestX - startX : startX - latestX;
+      setWidth(side, startWidth + delta, { persist: false });
+    };
+    const cancelGesture = (event?: PointerEvent, restoreWidth = true): void => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      if (!active) return;
+      const capturedId = pointerId;
+      active = false;
+      pointerId = null;
+      activeDragCount -= 1;
+      if (
+        (event === undefined || event.pointerId === capturedId) &&
+        capturedId !== null && handle.hasPointerCapture(capturedId)
+      ) {
+        handle.releasePointerCapture(capturedId);
+      }
+      if (activeDragCount === 0) delete body.dataset.dragging;
+      // Cancellation is not a settle: return to the geometry captured on down.
+      if (restoreWidth) state[side].width = startWidth;
+      paint();
+    };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0 || active) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      pointerId = event.pointerId;
+      startX = latestX = event.clientX;
+      startWidth = state[side].width;
+      active = true;
+      activeDragCount += 1;
+      body.dataset.dragging = "true";
+    };
+    const onPointerMove = (event: PointerEvent): void => {
+      if (!active || event.pointerId !== pointerId || !handle.hasPointerCapture(event.pointerId)) return;
+      latestX = event.clientX;
+      frame ??= requestAnimationFrame(write);
+    };
+    const stop = (event: PointerEvent): void => {
+      if (!active || event.pointerId !== pointerId) return;
+      const hasPendingFrame = frame !== null;
+      cancelGesture(event, false);
+      // A settle flushes the last coalesced position even if pointerup arrives
+      // before the browser runs the scheduled animation frame.
+      if (hasPendingFrame) write();
+      setWidth(side, state[side].width);
+    };
+    const onCancel = (event: PointerEvent): void => {
+      if (!active || event.pointerId !== pointerId) return;
+      cancelGesture(event);
+    };
+    const onDoubleClick = (): void => {
+      state[side].width = side === "files" ? FILES_DEFAULT : AGENT_DEFAULT;
+      state[side].open = true;
+      paint();
+      saveShellLayout(state);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        const direction = event.key === "ArrowLeft" ? -RAIL_KEYBOARD_STEP : RAIL_KEYBOARD_STEP;
+        setWidth(side, state[side].width + direction);
+      } else if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        setWidth(side, event.key === "Home" ? 0 : Number.MAX_SAFE_INTEGER);
+      }
+    };
+    handle.addEventListener("pointerdown", onPointerDown);
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", onCancel);
+    handle.addEventListener("dblclick", onDoubleClick);
+    handle.addEventListener("keydown", onKeyDown);
+    disconnectors.push(() => {
+      cancelGesture();
+      handle.removeEventListener("pointerdown", onPointerDown);
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", onCancel);
+      handle.removeEventListener("dblclick", onDoubleClick);
+      handle.removeEventListener("keydown", onKeyDown);
+    });
+  };
+  connectHandle(filesResizer, "files");
+  connectHandle(agentResizer, "agent");
+  filesToggle.addEventListener("click", () => toggleRail("files"));
+  agentToggle.addEventListener("click", () => toggleRail("agent"));
+  body.append(activity, sidebar, filesResizer, main, agentResizer, chatRail);
+  app.append(titlebar, body);
+  paint();
+  saveShellLayout(state);
 
-  ctx.slots.mount("topbar.left", topbarLeft);
+  ctx.slots.mount("activity.left", activityHost);
   ctx.slots.mount("sidebar.tree", treeHost);
   ctx.slots.mount("main.viewer", viewerHost);
   ctx.slots.mount("sidebar.right", chatHost);
@@ -179,11 +314,28 @@ export function apply(ctx: Context, config: ShellConfig): () => void {
     paintTitle(file, false, config.title);
     syncMainState();
   });
-  window.addEventListener("resize", onWindowResize);
+  const syncViewport = (): void => paint();
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key !== SHELL_LAYOUT_KEY || isDragging()) return;
+    state = loadShellLayout();
+    paint();
+  };
+  const onKeydown = (event: KeyboardEvent): void => {
+    const isKeyB = event.code === "KeyB" || event.key.toLowerCase() === "b";
+    const hasCommandModifier = event.metaKey !== event.ctrlKey;
+    if (!isKeyB || !hasCommandModifier || event.shiftKey) return;
+    event.preventDefault();
+    toggleRail(event.altKey ? "agent" : "files");
+  };
+  window.addEventListener("resize", syncViewport);
+  window.addEventListener("storage", onStorage);
+  document.addEventListener("keydown", onKeydown);
   syncWelcome();
   return () => {
-    stopDrag();
-    window.removeEventListener("resize", onWindowResize);
+    window.removeEventListener("resize", syncViewport);
+    window.removeEventListener("storage", onStorage);
+    document.removeEventListener("keydown", onKeydown);
+    for (const disconnect of disconnectors) disconnect();
     off();
     offFile();
   };

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
 import { WorkspaceService } from "../src/host/workspace";
-import { SlotsService } from "../src/host/slots";
+import { normalizeSlotRegistration, SlotsService } from "../src/host/slots";
 import type { FileNode } from "../src/types";
 
 const md = (name: string): FileNode => ({ name, path: `/x/${name}`, kind: "markdown" });
@@ -110,4 +110,28 @@ test("sidebar.right 槽位可注册并按序渲染", () => {
   slots.register("sidebar.right", (el) => { el.textContent = "chat"; });
   slots.mount("sidebar.right", host);
   expect(host.textContent).toContain("chat");
+});
+
+test("slots: topbar.left is an activity.left compatibility alias", () => {
+  const slots = new SlotsService();
+  const host = document.createElement("div");
+  slots.register("activity.left", (el) => { el.textContent = "new"; });
+  const offLegacy = slots.register("topbar.left", (el) => {
+    const button = document.createElement("button");
+    button.textContent = "legacy";
+    el.append(button);
+  });
+  slots.mount("activity.left", host);
+  const entries = [...host.children];
+  expect(entries.map((entry) => entry.textContent)).toEqual(["new", "legacy"]);
+  expect(entries.every((entry) => entry.className === "slot slot-activity-left")).toBe(true);
+  offLegacy();
+  expect(host.children.length).toBe(1);
+  expect(host.children[0]?.textContent).toBe("new");
+});
+
+test("slots: normalization maps the alias and passes inherited names through", () => {
+  expect(normalizeSlotRegistration("topbar.left")).toBe("activity.left");
+  expect(normalizeSlotRegistration("toString")).toBe("toString");
+  expect(normalizeSlotRegistration("valueOf")).toBe("valueOf");
 });

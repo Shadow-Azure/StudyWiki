@@ -30,6 +30,8 @@ test("renderTemplate：渲染字节钉死（契约漂移即红）", () => {
   expect(pkg.files).toEqual(["index.js"]);
   expect(pkg.scripts.prepublishOnly).toContain("build");
   expect(files["src/index.ts"]).toContain('export const name = "demo-hello";');
+  expect(files["src/index.ts"]).toContain('ctx.slots.register("activity.left"');
+  expect(files["src/index.ts"]).not.toContain("topbar.left");
   // check.mjs 钉契约镜像断言的存在（防静默弱化）
   expect(files["scripts/check.mjs"]).toContain("studywiki-plugin");
   expect(files["scripts/check.mjs"]).toContain("npm pack");

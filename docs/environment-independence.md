@@ -12,11 +12,11 @@
 2. **核心与内置插件离线**：全部构建期打包进产物，安装与运行全程不访问网络；禁止 CDN、外链脚本/样式、运行时下载。
 3. **行为一致**：不受环境变量、全局配置文件影响；同一版本 + 同一插件集在任意满足 OS 最低版本的机器上行为一致。
 4. **自包含安装**：安装器自带其全部前置（见下"系统 webview 边界"）。
-5. **外置插件**：用户主动安装的本地资源；安装可联网、仅限 registry tarball 直拉，运行全程离线；一律预打包零依赖单文件，宿主拒载其他形态。
+5. **外置插件**：用户主动安装的本地资源；安装可联网、仅限 registry tarball 直拉；运行全程离线，宿主拒载非预打包零依赖单文件。
 
 ## 系统 webview 边界（唯一的平台依赖）
 
-Tauri 不内嵌浏览器引擎，依赖 OS webview：macOS WKWebView（系统集成）、Linux webkit2gtk（AppImage 携带）、Windows WebView2（Win10/11 预装；老系统由安装器内嵌 offlineInstaller 补齐）。取舍与备选（内嵌 Chromium，100MB+）见 Agent Note。此边界**不视为违反约束**，仅此一项。
+Tauri 依赖 OS webview：macOS WKWebView（系统）、Linux webkit2gtk（AppImage 携带）、Windows WebView2（Win10/11 预装；更老系统由安装器内嵌 offlineInstaller 补齐）。取舍与备选见 Agent Note。此边界**不视为违反约束**。
 
 ## 机械门禁
 
@@ -28,7 +28,7 @@ Tauri 不内嵌浏览器引擎，依赖 OS webview：macOS WKWebView（系统集
 
 ## 豁免登记
 
-新豁免先在本表登记并附 Note 链接，未登记即红门禁：
+新豁免须在本表登记并附 Note 链接，否则红门禁：
 
 | 豁免 | 理由 | 依据 |
 |---|---|---|
@@ -36,6 +36,7 @@ Tauri 不内嵌浏览器引擎，依赖 OS webview：macOS WKWebView（系统集
 | 外置插件安装联网（已生效） | 安装 = registry tarball 直拉，运行仍全程离线 | [.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.md](../.agents/notes/implemented/architecture/2026-09-11-phase2-external-plugins.md) |
 | `http://www.w3.org/2000/svg`（icons.ts） | createElementNS 标识符，永不联网；WKWebView 不绘制 innerHTML 解析的 SVG，须显式构造 | [.agents/notes/implemented/feature/2026-09-13-ui-refresh.md](../.agents/notes/implemented/feature/2026-09-13-ui-refresh.md) |
 | AI 推理经用户配置的远程 endpoint（LLM/VLM/ASR） | 唯一联网点；用户自建可闭环，产品不内置密钥 | [.agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.md](../.agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.md) |
+| ripgrep sidecar（`@vscode/ripgrep` 构建期打包，agent grep 工具） | 搜索须原生执行；构建期入包、运行零下载零外置依赖 | [.agents/notes/implemented/architecture/2026-10-04-basic-agent.md](../.agents/notes/implemented/architecture/2026-10-04-basic-agent.md) |
 
 `node:` 内建引用豁免登记在 [scripts/dep-allowlist.json](../scripts/dep-allowlist.json) 的 `nodeRefExempt` 表（不进 bundle 的包内文件），属依赖白名单门禁，不在此重复。
 

@@ -6,6 +6,7 @@ import type { WorkspaceFacade } from "./workspace";
 import type { SlotsService } from "./slots";
 import type { PluginsService } from "./plugins";
 import type { LlmService } from "./llm";
+import type { AgentService } from "../plugins/agent-core/service";
 
 declare module "cordis" {
   interface Context {
@@ -23,5 +24,7 @@ declare module "cordis" {
     plugins: PluginsService;
     /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
     llm: LlmService;
+    /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
+    agent: AgentService;
   }
 }

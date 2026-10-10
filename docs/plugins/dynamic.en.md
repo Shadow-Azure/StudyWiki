@@ -6,7 +6,7 @@ English | [中文](dynamic.md)
 
 ## Behaviour contract
 
-Plugin-panel actions (topbar "插件") take effect in this window immediately: install/import (registry or local tgz → on disk → manifest → activate), toggle, reload, remove and rollback. Manifest updates use a serial read-modify-write chain in this window, with failures releasing the chain; there is no cross-window lock, concurrent writes are last-writer-wins, and the next start aligns with the final manifest. Other windows do not follow immediately; the manifest is the cross-window source of truth.
+Plugin-panel actions (the Activity Rail "插件" button) take effect in this window immediately: install/import (registry or local tgz → on disk → manifest → activate), toggle, reload, remove and rollback. Manifest updates use a serial read-modify-write chain in this window, with failures releasing the chain; there is no cross-window lock, concurrent writes are last-writer-wins, and the next start aligns with the final manifest. Other windows do not follow immediately; the manifest is the cross-window source of truth.
 
 ## Reload
 

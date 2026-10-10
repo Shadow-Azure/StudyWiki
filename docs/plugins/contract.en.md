@@ -6,13 +6,13 @@ English | [中文](contract.md)
 
 ## Module shape
 
-An external plugin is a zero-dependency single-file ESM module that exports three things: `name` (non-empty string), `apply(ctx, config)` (function, may return a cleanup function) and `inject` (optional array of strings). The host validates field by field at load time and names the missing field when it refuses. Minimal working example:
+An external plugin is a zero-dependency single-file ESM module that exports three things: `name` (non-empty string), `apply(ctx, config)` (function, may return a cleanup function) and `inject` (optional array of strings). The host validates field by field at load time and names the missing field when it refuses. The current slot set is `activity.left`/`sidebar.tree`/`main.viewer`/`sidebar.right`; API v1 still accepts `topbar.left` and normalizes it to `activity.left`, and new external plugins should register `activity.left`. Minimal working example:
 
 ```js
-export const name = "hello-topbar";
+export const name = "hello-activity";
 export const inject = ["slots"];
 export function apply(ctx) {
-  return ctx.slots.register("topbar.left", (el) => {
+  return ctx.slots.register("activity.left", (el) => {
     const s = document.createElement("span");
     s.textContent = "你好";
     el.append(s);
@@ -22,7 +22,7 @@ export function apply(ctx) {
 
 ## inject is a permission declaration
 
-The ctx handed to apply is the guard facade: you can read only the host services your inject declares (`files`/`windows`/`workspace`/`slots`/`plugins`/`llm`; external `llm` exposes `listEndpoints`/`probe`/`chat`/`chatStream`, and `slots` names are `topbar.left`/`sidebar.tree`/`main.viewer`/`sidebar.right`); reading any other undeclared property throws on the spot and names the declaration to add, while undeclared JavaScript protocol properties `then` / `toJSON` / `toString` / `valueOf` are absent. The top-level shapes of ctx and every host service object are read-only — assignment, deletion and `defineProperty` all throw — and a cordis Context returned directly from a service method (including as a resolved promise value) is rejected. A service you declared but the host never provides leaves the plugin parked: the activation audit fails after 2 seconds and the panel row says "the declared service is not provided".
+The ctx handed to apply is the guard facade: you can read only the host services your inject declares (`files`/`windows`/`workspace`/`slots`/`plugins`/`llm`; external `llm` exposes `listEndpoints`/`probe`/`chat`/`chatStream`, and `slots` currently mounts `activity.left`/`sidebar.tree`/`main.viewer`/`sidebar.right`, and also accepts legacy `topbar.left`, normalized to `activity.left`); reading any other undeclared property throws on the spot and names the declaration to add, while undeclared JavaScript protocol properties `then` / `toJSON` / `toString` / `valueOf` are absent. The top-level shapes of ctx and every host service object are read-only — assignment, deletion and `defineProperty` all throw — and a cordis Context returned directly from a service method (including as a resolved promise value) is rejected. A service you declared but the host never provides leaves the plugin parked: the activation audit fails after 2 seconds and the panel row says "the declared service is not provided".
 
 ## Boundaries (honest statement)
 

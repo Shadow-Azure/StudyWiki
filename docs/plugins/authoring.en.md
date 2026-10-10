@@ -35,7 +35,7 @@ npm run build      # esbuild 把 src/index.ts 打包成单文件 index.js
 npm run check      # 发布面校验：npm pack 断言恰好两文件 + 契约字段齐备
 ```
 
-The generated `src/index.ts` is a runnable topbar hello example (the `name`/`inject`/`apply` shape); `src/host.d.ts` is a local minimal type copy.
+The generated `src/index.ts` is an Activity Rail hello example (`name`/`inject`/`apply`; registers `activity.left`; API v1 accepts `topbar.left`); `src/host.d.ts` is a local minimal type copy.
 
 ## Trial install in the host
 

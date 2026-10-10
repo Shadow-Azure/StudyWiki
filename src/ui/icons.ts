@@ -80,6 +80,16 @@ const ICONS = {
   ],
   close: [["path", { d: "M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" }]],
   sparkle: [["path", { d: "M8 2.6l1.3 3.4 3.4 1.3-3.4 1.3L8 12l-1.3-3.4-3.4-1.3 3.4-1.3z" }]],
+  "panel-left": [
+    ["rect", { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2 }],
+    ["path", { d: "M6 2.5v11" }],
+    ["path", { d: "M2.8 2.5H6v11H2.8z", fill: "currentColor", stroke: "none" }],
+  ],
+  "panel-right": [
+    ["rect", { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2 }],
+    ["path", { d: "M10 2.5v11" }],
+    ["path", { d: "M10 2.5h3.2a1.3 1.3 0 0 1 1.3 1.3v8.4a1.3 1.3 0 0 1-1.3 1.3H10z", fill: "currentColor", stroke: "none" }],
+  ],
   trash: [
     ["path", { d: "M3 4.5h10" }],
     ["path", { d: "M6.2 4.5V3.2h3.6v1.3" }],

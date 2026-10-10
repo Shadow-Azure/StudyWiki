@@ -14,12 +14,14 @@ test("DOM: 新建窗口传当前 root；打开文件夹走 pickFolder → window
   };
   const files = { pickFolder: vi.fn(async () => "/picked") };
   const workspace = { root: "/x", setRoot: vi.fn() };
-  const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
+  const registered: string[] = [];
+  const slots = { register: (slot: string, render: (el: HTMLElement) => void) => { registered.push(slot); render(document.body); return () => {}; } };
   apply({ windows, files, workspace, slots } as never, {});
-  const [newBtn, openBtn] = [...document.querySelectorAll<HTMLButtonElement>("button")];
-  expect([newBtn, openBtn].map((b) => [b.textContent, b.getAttribute("aria-label"), b.title]))
-    .toEqual([["", "新建窗口", "新建窗口"], ["", "打开文件夹…", "打开文件夹…"]]);
-  expect([newBtn, openBtn].every((b) => b.classList.contains("icon-btn"))).toBe(true);
+  expect(registered).toEqual(["activity.left"]);
+  const [openBtn, newBtn] = [...document.querySelectorAll<HTMLButtonElement>("button")];
+  expect(openBtn.getAttribute("aria-label")).toBe("打开文件夹…");
+  expect(newBtn.getAttribute("aria-label")).toBe("新建窗口");
+  expect([openBtn, newBtn].every((button) => button.classList.contains("activity-item"))).toBe(true);
   newBtn.click();
   await new Promise((r) => setTimeout(r, 0));
   expect(created).toEqual(["/x"]);
@@ -44,7 +46,7 @@ test("DOM: 打开文件夹过真实 changeRoot 链，守卫拒绝保持原 root 
   const files = { pickFolder: vi.fn(async () => "/new") };
   const slots = { register: (_s: string, render: (el: HTMLElement) => void) => { render(document.body); return () => {}; } };
   const teardown = apply({ windows, files, slots } as never, {});
-  const openBtn = [...document.querySelectorAll<HTMLButtonElement>("button")][1]!;
+  const openBtn = [...document.querySelectorAll<HTMLButtonElement>("button")][0]!;
 
   openBtn.click();
   await new Promise((r) => setTimeout(r, 0));

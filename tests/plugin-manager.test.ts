@@ -135,10 +135,12 @@ function fakePlugins(rows: Array<[string, boolean]> = [["app-shell", true], ["ex
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-/** 挂载 plugin-manager 并点开面板（顶栏按钮由 apply 注册进 body）。 */
+/** 挂载 plugin-manager 并点开面板（Activity Rail 按钮由 apply 注册进 body）。 */
 async function openPanel(f: FakePlugins): Promise<void> {
+  const registered: string[] = [];
   const slots = {
-    register: (_s: string, render: (el: HTMLElement) => void) => {
+    register: (slot: string, render: (el: HTMLElement) => void) => {
+      registered.push(slot);
       render(document.body);
       return () => {};
     },
@@ -147,6 +149,8 @@ async function openPanel(f: FakePlugins): Promise<void> {
   const open = document.querySelector<HTMLButtonElement>("button")!;
   expect(open.getAttribute("aria-label")).toBe("插件");
   expect(open.title).toBe("插件");
+  expect(registered).toEqual(["activity.left"]);
+  expect(open.classList.contains("activity-item")).toBe(true);
   open.click();
   await tick();
 }

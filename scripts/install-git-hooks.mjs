@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 安装本地 git 钩子（每个 clone 跑一次），刻意窄：pre-commit 只查暂存文本的尾随空白，
 // commit-msg 只提醒提交标题挂 (#N) 流程引用，
-// pre-push 只跑 doc-quick。穷尽覆盖归 CI——钩子是提醒，不是门禁。幂等，重复安装安全。
+// pre-push 跑 doc-quick + src-tauri 有改动时的 rustfmt 提醒。穷尽覆盖归
+// CI——钩子是提醒，不是门禁。幂等，重复安装安全。
 // 同时注册 .i18n.yaml 的 fail-closed merge driver（.gitattributes 已引用），
 // 免得安装入口散成两条命令。
 
@@ -39,6 +40,17 @@ node scripts/run-gates.mjs --mode doc-quick || {
   echo "pre-push: doc-quick 未过（pnpm lint:docs）。git push --no-verify 可跳过，风险自担。" >&2
   exit 1
 }
+# src-tauri 有改动且本机有 cargo 时提醒 rustfmt（穷尽覆盖归 CI 的 fmt lane；
+# origin/main 缺席时静默跳过——钩子是提醒，不是门禁）。
+if command -v cargo >/dev/null 2>&1; then
+  base=$(git merge-base origin/main HEAD 2>/dev/null || echo origin/main)
+  if git diff --name-only "$base" HEAD -- src-tauri | grep -q .; then
+    (cd src-tauri && cargo fmt --check >/dev/null) || {
+      echo "pre-push: src-tauri 有改动但 cargo fmt --check 未过（cd src-tauri && cargo fmt）。git push --no-verify 可跳过，风险自担。" >&2
+      exit 1
+    }
+  fi
+fi
 `,
 };
 

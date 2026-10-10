@@ -15,7 +15,7 @@ export const name = "plugin-manager";
 /** Service keys awaited before apply runs. */
 export const inject = ["plugins", "slots", "windows"];
 
-/** 插件管理面板（第六内置插件）：顶栏"插件"按钮开合；列已装（内置+外置）、
+/** 插件管理面板（第六内置插件）：Activity Rail"插件"按钮开合；列已装（内置+外置）、
  * 按名安装、本地导入、启用开关、重新加载、版本回退、外置移除。全部动作即时生效
  * 于本窗口（清单是跨窗口一致性的唯一准源，其他窗口重启后跟随）。
  * 动作可见性：安装/导入/启停/移除恒在；重新加载只在已启用且健康的外置行出现
@@ -24,10 +24,10 @@ export const inject = ["plugins", "slots", "windows"];
  * 安装/导入同时把清单行置为 enabled（显式意图：同名行原本停用时也启用，不留"在跑但清单说停用"）。
  * 操作失败内联显示错误，不静默。
  * @param ctx Host context（plugins/slots/windows injected）。
- * @returns Teardown removing the topbar button. */
+ * @returns Teardown removing the Activity Rail button. */
 export function apply(ctx: Context): () => void {
-  return ctx.slots.register("topbar.left", (el) => {
-    const btn = labelButton("module", "", { className: "btn btn-ghost icon-btn", ariaLabel: "插件" });
+  return ctx.slots.register("activity.left", (el) => {
+    const btn = labelButton("module", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "插件" });
     btn.title = "插件";
     btn.addEventListener("click", () => void openPanel(ctx, btn));
     el.append(btn);
