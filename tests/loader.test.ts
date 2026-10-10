@@ -137,6 +137,31 @@ test("loadManifest: 存量清单合并静态表新增内置行（enabled true）
   expect(JSON.parse(written[0]).plugins[2].enabled).toBe(true);
 });
 
+test("loadManifest: 退役内置行自动迁移删除；未知 ext: 行保留", async () => {
+  const table: ModuleTable = {
+    "agent-core": entry({ name: "agent-core", apply() {} }),
+    "app-agent": entry({ name: "app-agent", apply() {} }),
+  };
+  const raw = JSON.stringify({
+    plugins: [
+      { id: "app-shell", enabled: true, config: {} },
+      { id: "app-chat", enabled: true, config: {} },
+      { id: "agent-core", enabled: true, config: {} },
+      { id: "app-agent", enabled: true, config: {} },
+      { id: "ext:demo", enabled: true, config: {} },
+    ],
+  });
+  const written: string[] = [];
+  const m = await loadManifest(async () => raw, async (j) => { written.push(j); }, table);
+  expect(m.plugins.map((row) => row.id)).toEqual(["agent-core", "app-agent", "ext:demo"]);
+  expect(written).toHaveLength(1);
+  expect(JSON.parse(written[0]).plugins.map((row: { id: string }) => row.id)).toEqual([
+    "agent-core",
+    "app-agent",
+    "ext:demo",
+  ]);
+});
+
 test("loadManifest: 清单已含全部内置行则不写回（无谓写盘）", async () => {
   const table: ModuleTable = { "p-x": entry({ name: "p-x", apply() {} }) };
   const raw = JSON.stringify({ plugins: [{ id: "p-x", enabled: false, config: {} }] });

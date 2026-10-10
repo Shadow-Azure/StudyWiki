@@ -135,7 +135,7 @@ pub fn raw_ipc_write_rejects_json_body_and_unauthorized_paths() {
     )
     .expect_err("outside root must be rejected");
     assert!(
-        unauthorized.to_string().contains("先打开文件夹"),
+        unauthorized.to_string().contains("UNAUTHORIZED_PATH|"),
         "unexpected error: {unauthorized}"
     );
 
@@ -218,7 +218,7 @@ pub fn raw_ipc_window_state_authorizes_text_reads() {
     )
     .expect_err("outside root must be rejected");
     assert!(
-        unauthorized.to_string().contains("先打开文件夹"),
+        unauthorized.to_string().contains("UNAUTHORIZED_PATH|"),
         "unexpected error: {unauthorized}"
     );
 
@@ -254,7 +254,7 @@ pub fn raw_ipc_window_state_authorizes_text_reads() {
     )
     .expect_err("cleared root must revoke text reads");
     assert!(
-        revoked.to_string().contains("先打开文件夹"),
+        revoked.to_string().contains("UNAUTHORIZED_PATH|"),
         "unexpected error: {revoked}"
     );
 

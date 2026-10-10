@@ -7,6 +7,7 @@ dist/
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/
+src-tauri/binaries/
 
 # Editors & OS
 .DS_Store
@@ -27,3 +28,7 @@ plugins-dev/
 .codex/
 
 .obsidian
+# Local QA reports and screenshots (not shipped docs)
+plans/review/
+plans/smoke-test/
+plans/preview-html/

@@ -1509,3 +1509,284 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 }
 .chat-send:hover { background: var(--azurite-deep); }
 .chat-send.chat-stopping { background: var(--raise); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2); }
+
+/* ============ Agent 侧栏 ============ */
+/* 会话面板沿用 chat 的气泡/流式/composer 视觉；新增会话与审批控制壳层。
+   卡片与分隔条是 Agent 状态语义，全部走既有 token 并跟随明暗主题。 */
+.agent-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--paper);
+}
+.agent-head {
+  flex: none;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.agent-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.agent-title {
+  flex: none;
+  max-width: 34%;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-new {
+  flex: none;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--wash);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.agent-new:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.agent-session-select,
+.agent-model-select {
+  min-width: 0;
+  height: 24px;
+  padding: 0 22px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background:
+    var(--wash)
+    url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%235d6673' fill='none' stroke-width='1.4'/%3E%3C/svg%3E")
+    no-repeat right 9px center;
+  appearance: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.agent-session-select { flex: 1; }
+.agent-model-select { max-width: 45%; }
+.agent-session-select:hover,
+.agent-model-select:hover { background-color: color-mix(in srgb, var(--ink) 9%, transparent); }
+
+.agent-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+}
+.agent-mode-group {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--wash);
+}
+.agent-mode {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.agent-mode:hover { color: var(--ink); }
+.agent-mode.active {
+  background: var(--raise);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.agent-root-mismatch {
+  flex: none;
+  margin: 8px 14px 0;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--cinnabar) 26%, transparent);
+  border-radius: var(--r-m);
+  background: var(--cinnabar-wash);
+  color: var(--cinnabar-deep);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.agent-context {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: none;
+  padding: 8px 14px 0;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-ctx-dot { flex: none; color: var(--azurite); font-size: 7px; line-height: 1; }
+
+.agent-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+}
+.agent-panel .chat-chips { margin-top: 8px; }
+
+.agent-tool-card {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-m);
+  background: var(--raise);
+  font-size: 12px;
+}
+.agent-tool-card.error { border-color: color-mix(in srgb, var(--cinnabar) 35%, transparent); }
+.agent-tool-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.agent-tool-card-title strong { flex: none; font-weight: 600; }
+.agent-tool-card-args {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tool-card summary {
+  margin-top: 6px;
+  color: var(--ink-3);
+  cursor: pointer;
+  user-select: none;
+}
+.agent-tool-card-result {
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: var(--r-s);
+  background: var(--code-bg);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--azurite) 28%, transparent);
+  border-radius: var(--r-m);
+  background: color-mix(in srgb, var(--azurite) 4%, transparent);
+  font-size: 12px;
+}
+.agent-approval-card-title {
+  display: grid;
+  gap: 3px;
+  font-weight: 600;
+}
+.agent-approval-card-title span {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+}
+.agent-approval-card-kind { margin-top: 5px; color: var(--ink-3); font-size: 11px; }
+.agent-approval-card-text {
+  margin-top: 8px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-s);
+  overflow: hidden;
+  background: var(--paper);
+}
+.agent-approval-card-text span {
+  display: block;
+  padding: 4px 7px;
+  border-bottom: 1px solid var(--hairline-soft);
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+.agent-approval-card-text pre {
+  max-height: 130px;
+  margin: 0;
+  padding: 7px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-approval-card-actions { display: flex; gap: 6px; margin-top: 9px; }
+.agent-approval-card-actions button {
+  flex: 1;
+  height: 25px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--azurite);
+  color: #fff;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.agent-approval-card-actions button:hover { background: var(--azurite-deep); }
+.agent-approval-card-actions button[data-deny],
+.agent-approval-card-actions button[data-grant-file],
+.agent-approval-card-actions button[data-grant-dir] {
+  background: var(--raise);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.agent-approval-card-actions button[data-deny]:hover,
+.agent-approval-card-actions button[data-grant-file]:hover,
+.agent-approval-card-actions button[data-grant-dir]:hover {
+  background: var(--wash);
+  box-shadow: inset 0 0 0 1px var(--ink-3);
+}
+.agent-approval-card-record {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+.agent-approval-card-reason { margin-top: 5px; color: var(--ink-2); overflow-wrap: anywhere; }
+
+.agent-compaction { min-width: 0; border-left: 2px solid var(--hairline); padding-left: 8px; }
+.agent-compaction summary {
+  color: var(--ink-3);
+  cursor: pointer;
+  font-size: 11.5px;
+  user-select: none;
+}
+.agent-compaction-summary {
+  margin-top: 6px;
+  padding: 7px 9px;
+  border-radius: var(--r-s);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

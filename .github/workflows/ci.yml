@@ -73,6 +73,14 @@ jobs:
           - os: windows-latest
     steps:
       - uses: actions/checkout@v6
+      # build.rs 依赖 node_modules 里的 @vscode/ripgrep（sidecar 落位），
+      # rust lane 与前端 lane 同源安装依赖。
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
