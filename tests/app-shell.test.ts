@@ -12,6 +12,27 @@ import {
 
 const shellStyles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
+function findStyleRule(selector: string): CSSStyleRule | undefined {
+  const style = document.createElement("style");
+  style.textContent = shellStyles;
+  document.head.append(style);
+  try {
+    return [...style.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
+      "selectorText" in rule && rule.selectorText === selector,
+    );
+  } finally {
+    style.remove();
+  }
+}
+
+function expectStyleRule(selector: string, declarations: Record<string, string>): void {
+  const rule = findStyleRule(selector);
+  expect(rule, `missing style rule: ${selector}`).toBeTruthy();
+  for (const [property, value] of Object.entries(declarations)) {
+    expect(rule?.style.getPropertyValue(property)).toBe(value);
+  }
+}
+
 test("shell: mounts activity rail and collapsible rails", () => {
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
@@ -272,6 +293,113 @@ test("shell: real pointer dragging suppresses rail pointer events", () => {
   } finally {
     stylesheet.remove();
     teardown();
+    root.remove();
+  }
+});
+
+test("shell: four-column geometry preserves the reader and exposes 12px resize targets", () => {
+  const style = document.createElement("style");
+  style.textContent = shellStyles;
+  document.head.append(style);
+  try {
+    const workbenchRule = findStyleRule(".workbench")!;
+    expect(workbenchRule.style.display).toBe("grid");
+    expect(workbenchRule.style.gridTemplateColumns).toContain("var(--activity-width, 54px)");
+    expect(workbenchRule.style.gridTemplateColumns).toContain("var(--files-width, 252px)");
+    expect(workbenchRule.style.gridTemplateColumns).toContain("minmax(340px, 1fr)");
+    expect(workbenchRule.style.gridTemplateColumns).toContain("var(--agent-width, 320px)");
+
+    const railsRule = [...style.sheet?.cssRules ?? []].find((rule): rule is CSSStyleRule =>
+      "selectorText" in rule && /^\.rail\.files,\s*\.rail\.agent$/.test(rule.selectorText),
+    )!;
+    expect(railsRule.style.minWidth).toBe("0px");
+    expect(railsRule.style.overflow).toBe("hidden");
+
+    const resizerRule = findStyleRule(".workspace-resizer")!;
+    expect(resizerRule.style.cursor).toBe("col-resize");
+    expect(resizerRule.style.touchAction).toBe("none");
+    const railResizerRule = findStyleRule(".rail-resizer")!;
+    expect(Number.parseFloat(railResizerRule.style.width)).toBeGreaterThanOrEqual(12);
+
+    expect(shellStyles).toContain("left: calc(var(--activity-width, 54px) + var(--files-width, 252px))");
+    expect(shellStyles).toContain("right: var(--agent-width, 320px)");
+  } finally {
+    style.remove();
+  }
+});
+
+test("shell: macOS titlebar reserves traffic-light space and keeps controls interactive", () => {
+  const originalUserAgent = navigator.userAgent;
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 StudyWiki",
+  });
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const style = document.createElement("style");
+  style.textContent = shellStyles;
+  document.head.append(style);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+
+  try {
+    expect(root.classList.contains("is-macos")).toBe(true);
+    expect(shellStyles).toContain(".is-macos .topbar { padding-left: 78px; }");
+    expect(shellStyles).toContain("-webkit-app-region: drag;");
+    expect(shellStyles).toContain("-webkit-app-region: no-drag;");
+
+    const topbar = root.querySelector<HTMLElement>(".topbar")!;
+    const leftToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="files"]')!;
+    const rightToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="agent"]')!;
+    expect(getComputedStyle(topbar).paddingLeft).toBe("78px");
+    expect(leftToggle.getAttribute("aria-label")).toBe("显示或隐藏文件栏");
+    expect(rightToggle.getAttribute("aria-label")).toBe("显示或隐藏 Agent 栏");
+    expect(topbar.contains(leftToggle)).toBe(true);
+    expect(topbar.contains(rightToggle)).toBe(true);
+  } finally {
+    teardown();
+    style.remove();
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: originalUserAgent,
+    });
+    root.remove();
+  }
+});
+
+test("shell: agent hidden state has no attention badge and activity rail is a fixed paper command rail", () => {
+  const root = document.createElement("div");
+  root.id = "app";
+  document.body.append(root);
+  const style = document.createElement("style");
+  style.textContent = shellStyles;
+  document.head.append(style);
+  const slots = { mount: (_slot: string, host: HTMLElement) => host.replaceChildren() };
+  const workspace = { root: null, activeFile: null, events: { on: () => () => {} } };
+  const teardown = apply({ slots, workspace } as never, { title: "StudyWiki" });
+
+  try {
+    const workbench = root.querySelector<HTMLElement>(".workbench")!;
+    const agentToggle = root.querySelector<HTMLButtonElement>('[data-rail-toggle="agent"]')!;
+    const activity = root.querySelector<HTMLElement>(".activity")!;
+    agentToggle.click();
+
+    expect(workbench.dataset.agentOpen).toBe("false");
+    expect(agentToggle.querySelector(".toggle-dot, .badge, [data-badge]")).toBeNull();
+    expect(root.querySelectorAll("[data-agent-attention], .agent-attention").length).toBe(0);
+
+    const activityRule = findStyleRule(".activity")!;
+    expect(activityRule.style.background).toBe("var(--paper)");
+    expect(activityRule.style.borderRight).toContain("1px solid");
+    expect(workbench.style.getPropertyValue("--activity-width")).toBe("54px");
+    expect(activity.className).toContain("activity");
+    expect(activity.className).not.toContain("dark");
+  } finally {
+    teardown();
+    style.remove();
+    localStorage.removeItem(SHELL_LAYOUT_KEY);
     root.remove();
   }
 });
