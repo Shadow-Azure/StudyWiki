@@ -40,7 +40,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/agent-core/tools.ts       agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
   plugins/agent-core/types.ts       agent-core 消息、批准与会话日志类型契约（→ llm.ts）
   plugins/app-agent/attachments.ts  app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
-  plugins/app-agent/index.ts        app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts）
+  plugins/app-agent/index.ts        app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts、active-layer.ts）
   plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
   plugins/app-shell/index.ts        app-shell 插件：四列 shell（titlebar 栏开关+活动文件名、Activity Rail、双折叠栏、reader）+ 拖拽把手 + 四槽容器挂载 + 开关状态绘制与保存 + 活动栏与标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ layout.ts、dom.ts、icons.ts、viewer.ts）
   plugins/app-shell/layout.ts       app-shell 纯函数：栏几何 clamp、状态归一化与 localStorage 布局读写（无 DOM）
@@ -53,15 +53,16 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/doc-markdown/mode.ts      doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts   doc-markdown 兼容 re-export：消费方保留原导入路径并使用宿主共享 markdown 渲染器（→ markdown.ts）
   plugins/doc-video/index.ts        doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）（→ viewer.ts）
-  plugins/llm-settings/index.ts     llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、dom.ts）
+  plugins/llm-settings/index.ts     llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、active-layer.ts、dom.ts）
   plugins/llm-settings/model.ts     llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）
-  plugins/plugin-manager/index.ts   plugin-manager 插件：Activity Rail 入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、dom.ts）
+  plugins/plugin-manager/index.ts   plugin-manager 插件：Activity Rail 入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、active-layer.ts、dom.ts）
   plugins/plugin-manager/model.ts   plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts    view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
   plugins/view-filetree/tree.ts     view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）（→ types.ts）
   preview.ts                        浏览器视觉预览装配器：真实内置插件 + 内存宿主，供本地 UI 检视与视觉回归；含 app-agent 假流式桩（→ llm-stream.ts、slots.ts、workspace.ts、styles.css、types.ts）
   styles.css                        工作台视觉系统：中性双主题令牌 + 壳/树/拖拽发丝线/按钮/阅读与编辑面/分段模式/暗室/面板全样式（无逻辑）
   types.ts                          FileNode —— 前后端共享的唯一形状
+  ui/active-layer.ts                窗口级浮层层序栈：登记/释放浮层、判定栈顶所有权、派发 Escape 并通知排队接管恢复
   ui/dom.ts                         DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）（→ icons.ts）
   ui/icons.ts                       内联 SVG 图标库：16px 网格 currentColor 描线，无外链无字体依赖，不产生 textContent（树行/按钮共用）
   ui/markdown.ts                    宿主共享 markdown-it 渲染器：html/linkify/typographer 全关，doc-markdown 与 chat 共用同一安全策略

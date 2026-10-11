@@ -13,8 +13,12 @@ scope:
   - docs/architecture.*
   - scripts/code-map.manifest.json
   - src/plugins/app-agent/**
+  - src/plugins/plugin-manager/index.ts
+  - src/plugins/llm-settings/index.ts
+  - src/ui/active-layer.ts
   - src/styles.css
   - tests/app-agent*.ts
+  - tests/active-layer.test.ts
   - plans/2026-10-07-agent-ui-*.md
   - plans/2026-10-11-pr54-review.md
   - plans/agent-ui-preview-v2.html

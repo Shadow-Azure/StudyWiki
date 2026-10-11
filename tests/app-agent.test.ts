@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { apply, name, inject } from "../src/plugins/app-agent";
 import { createEmitter } from "../src/host/emitter";
+import { activeLayers } from "../src/ui/active-layer";
 
 function fakeCtx(
   sessions: { id: string; title: string }[],
@@ -247,6 +248,49 @@ describe("app-agent 面板", () => {
     expect(composer.dataset.state).toBe("normal");
     expect(composer.dataset.approvalId).toBeUndefined();
     expect(el.querySelector(".agent-approval-detail")).toBeNull();
+  });
+
+  it("浮层持有 Escape 时审批不响应，浮层关闭后继续排队", async () => {
+    const { ctx, el, calls, approvalEvents } = fakeCtx([]);
+    const dispose = apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (const id of ["a1", "a2"]) {
+      approvalEvents.emit("r", {
+        id, kind: "write", tool: "write", path: `/${id}.md`, summary: "写",
+        preview: { text: id, omitted: false, totalCharacters: 1, totalLines: 1 },
+      } as never);
+    }
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.approvalId).toBe("a1");
+
+    const modal = document.createElement("div");
+    modal.className = "plugin-panel";
+    document.body.append(modal);
+    let releaseModal = () => {};
+    const closeModal = (): void => {
+      modal.remove();
+      releaseModal();
+      document.removeEventListener("keydown", onModalKeydown);
+    };
+    const onModalKeydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") closeModal();
+    };
+    releaseModal = activeLayers.push(modal, { close: closeModal });
+    document.addEventListener("keydown", onModalKeydown);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    expect(document.querySelector(".plugin-panel")).toBeNull();
+    expect(composer.dataset.state).toBe("approval");
+    expect(composer.dataset.approvalId).toBe("a1");
+    expect(el.querySelector(".agent-approval-detail")).not.toBeNull();
+    expect(calls).not.toContainEqual(["respond", "a1", expect.anything()]);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(calls).toContainEqual(["respond", "a1", { decision: "deny" }]);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(composer.dataset.approvalId).toBe("a2");
+    dispose();
   });
 
   it("批准模式用图标浮窗切换", async () => {

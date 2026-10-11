@@ -1,5 +1,6 @@
 import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
+import { activeLayers } from "../../ui/active-layer";
 import type { EndpointInput, LlmPreset, RedactedEndpoint } from "../../host/llm";
 import { blankDraft, CUSTOM_VENDOR, instantiatePreset, validateDraft, type EndpointDraft } from "./model";
 
@@ -64,13 +65,19 @@ async function openPanel(ctx: Context): Promise<void> {
   box.className = "plugin-panel-box llm-box";
   overlay.append(box);
   document.body.append(overlay);
+  let closed = false;
+  let releaseLayer: (() => void) | null = null;
   const close = (): void => {
+    if (closed) return;
+    closed = true;
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    releaseLayer?.();
   };
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") close();
   };
+  releaseLayer = activeLayers.push(overlay, { close });
   document.addEventListener("keydown", onKey);
 
   let vendorFilter: string | null = null;

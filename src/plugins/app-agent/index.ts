@@ -14,6 +14,7 @@ import {
   renderDecisionLine,
   renderToolCard,
 } from "./render";
+import { activeLayers } from "../../ui/active-layer";
 
 /** Plugin id in the manifest and static module table. */
 export const name = "app-agent";
@@ -590,7 +591,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   /** Present the next queued approval: save the draft, swap the composer into
    * approval state, and mount the detail popover on the panel. */
   const presentNextApproval = (): void => {
-    if (disposed || !composerEl || !panel || composerEl.dataset.state !== "normal") return;
+    if (
+      disposed || !composerEl || !panel ||
+      composerEl.dataset.state !== "normal" || activeLayers.size > 0
+    ) return;
     const next = approvalQueue.shift();
     if (!next || !input || !composerRow) return;
     activeApproval = next;
@@ -656,6 +660,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
    * clicks close an open popover without deciding. */
   const onDocKeydown = (event: KeyboardEvent): void => {
     if (disposed) return;
+    if (activeLayers.size > 0) return;
     if (event.key === "Escape" && [historyPop, modelPop, morePop].some((pop) => pop?.classList.contains("open"))) {
       closePops();
       return;
@@ -691,6 +696,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   };
   document.addEventListener("keydown", onDocKeydown);
   document.addEventListener("click", onDocClick);
+  const releaseLayerSubscription = activeLayers.subscribe(() => {
+    if (!disposed && composerEl?.dataset.state === "normal") presentNextApproval();
+  });
 
 
   const openSession = async (
@@ -1100,6 +1108,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   return () => {
     disposed = true;
+    releaseLayerSubscription();
     document.removeEventListener("keydown", onDocKeydown);
     document.removeEventListener("click", onDocClick);
     if (decideTimer) clearTimeout(decideTimer);

@@ -1,6 +1,7 @@
 import type { Context } from "cordis";
 import type { Manifest } from "../../loader/manifest";
 import { labelButton } from "../../ui/dom";
+import { activeLayers } from "../../ui/active-layer";
 import {
   activationFailures,
   deactivateExternal,
@@ -56,6 +57,8 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
   box.className = "plugin-panel-box";
   overlay.append(box);
   document.body.append(overlay);
+  let closed = false;
+  let releaseLayer: (() => void) | null = null;
   // Esc/Tab 挂 document 而非 overlay：整体重渲染会销毁焦点元素、焦点回落 body，
   // 事件不再路过 overlay 子树；模态焦点边界和键盘出口都不能断。
   const onKey = (e: KeyboardEvent): void => {
@@ -79,10 +82,14 @@ async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void>
     }
   };
   const close = (): void => {
+    if (closed) return;
+    closed = true;
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    releaseLayer?.();
     opener.focus({ preventScroll: true });
   };
+  releaseLayer = activeLayers.push(overlay, { close });
   document.addEventListener("keydown", onKey);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
