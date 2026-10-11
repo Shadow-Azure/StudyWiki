@@ -24,6 +24,7 @@ function fakeCtx(
     id: "s1", title: "新会话", mode: "ask" as const, model: null as string | null, running: false,
     messages: () => [],
     lines: () => [...opts.lines ?? []],
+    pendingApprovals: () => [],
     on: (l: (e: never) => void) => sessionEvents.on("e", l),
     onApproval: (l: (r: never) => void) => approvalEvents.on("r", l),
     send: async (text: string, content?: unknown) => {
@@ -200,6 +201,54 @@ describe("app-agent 面板", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const item = el.querySelector<HTMLElement>("[data-session-id='s9']");
     expect(item?.textContent).toContain("旧会话");
+  });
+
+  it("切走 ask 审批会话再切回时恢复可操作审批卡", async () => {
+    const request = { id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写" };
+    const { ctx, el, calls, session } = fakeCtx([
+      { id: "s1", title: "第一会话" },
+      { id: "s2", title: "第二会话" },
+    ]);
+    const secondEvents = createEmitter<Record<string, unknown>>();
+    const secondApprovals = createEmitter<Record<string, unknown>>();
+    session.pendingApprovals = () => [request];
+    const second = {
+      id: "s2", title: "第二会话", mode: "ask" as const, model: null as string | null, running: false,
+      messages: () => [],
+      lines: () => [],
+      on: (listener: (event: never) => void) => secondEvents.on("e", listener),
+      onApproval: (listener: (request: never) => void) => secondApprovals.on("r", listener),
+      pendingApprovals: () => [],
+      send: async () => {},
+      abort: async () => {},
+      setMode: () => {},
+      setModel: () => {},
+      respond: (id: string, outcome: unknown) => { calls.push(["respond", id, outcome]); },
+    };
+    const openSession = ctx.agent.openSession.bind(ctx.agent);
+    (ctx.agent as { openSession: typeof openSession }).openSession = async (id, mode) =>
+      id === "s2" ? second : await openSession(id, mode);
+
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.id).toBe("s1");
+
+    const select = el.querySelector<HTMLSelectElement>(".agent-session-select")!;
+    select.value = "s2";
+    select.dispatchEvent(new Event("change"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("第二会话");
+
+    select.value = "s1";
+    select.dispatchEvent(new Event("change"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const card = el.querySelector<HTMLElement>("[data-approval-id='a1']");
+    expect(card?.dataset.state).toBe("pending");
+    expect(card?.textContent).toContain("/lib/n.md");
+
+    card!.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    expect(calls).toContainEqual(["respond", "a1", { decision: "allow", reason: undefined }]);
+    expect(el.querySelector<HTMLElement>("[data-approval-id='a1']")?.dataset.state).toBe("decided");
   });
 
   it("root 从未开库变为有值时重置并重建 agent 会话", async () => {

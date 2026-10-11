@@ -413,7 +413,19 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (transcript) transcript.replaceChildren();
     renderHistory();
     offSession = next.on(handleEvent);
-    offApprovals = next.onApproval((request) => showApproval(next, request));
+    const replayedApprovals = new Set(
+      session.lines().filter((line) => line.type === "approval").map((line) => line.id),
+    );
+    offApprovals = next.onApproval((request) => {
+      if (replayedApprovals.has(request.id)) return;
+      replayedApprovals.add(request.id);
+      showApproval(next, request);
+    });
+    for (const request of next.pendingApprovals()) {
+      if (replayedApprovals.has(request.id)) continue;
+      replayedApprovals.add(request.id);
+      showApproval(next, request);
+    }
     if (pendingSend) {
       pendingSend = false;
       sendDraft();
