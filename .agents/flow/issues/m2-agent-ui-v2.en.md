@@ -16,6 +16,7 @@ scope:
   - src/styles.css
   - tests/app-agent*.ts
   - plans/2026-10-07-agent-ui-*.md
+  - plans/2026-10-11-pr54-review.md
   - plans/agent-ui-preview-v2.html
 adr:
   - ../../notes/implemented/feature/2026-10-07-agent-ui-v2.md
