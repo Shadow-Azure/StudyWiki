@@ -53,6 +53,15 @@ describe("app-agent render", () => {
     expect(h.detail.classList.contains("open")).toBe(false);
   });
 
+  it("审批详情指向 Agent 默认设置而非模型设置", () => {
+    const h = renderApprovalPrompt(
+      { id: "a6", kind: "write", tool: "write", path: "/lib/n.md", summary: "写" },
+      () => {},
+    );
+    expect(h.detail.textContent).toContain("Agent 面板 ⋯ → 默认设置");
+    expect(h.detail.textContent).not.toContain("模型设置");
+  });
+
   it("审批详情只渲染有界 preview，不泄漏完整载荷", () => {
     const fullTail = "机密尾部".repeat(100);
     const h = renderApprovalPrompt(

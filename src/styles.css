@@ -1650,6 +1650,31 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   min-width: 0;
   margin-top: 8px;
 }
+.agent-mode-group {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--wash);
+}
+.agent-mode-group[hidden] { display: none; }
+.agent-mode {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.agent-mode:hover { color: var(--ink); }
+.agent-mode.active {
+  background: var(--raise);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
 .chat-mode-toggle {
   display: inline-flex;
   flex: none;
@@ -1667,6 +1692,7 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   line-height: 1;
   cursor: pointer;
 }
+.chat-mode-toggle[hidden] { display: none; }
 .chat-mode-toggle:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
 .agent-mode-pop { bottom: 96px; right: 58px; min-width: 220px; }
 .agent-mode-option {

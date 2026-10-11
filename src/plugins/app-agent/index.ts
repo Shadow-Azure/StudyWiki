@@ -129,6 +129,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let modelPill: HTMLElement | null = null;
   let modelToggle: HTMLButtonElement | null = null;
   let modePop: HTMLElement | null = null;
+  let modeGroup: HTMLElement | null = null;
+  let modeGroupAsk: HTMLButtonElement | null = null;
+  let modeGroupAuto: HTMLButtonElement | null = null;
   let modeToggle: HTMLButtonElement | null = null;
   let morePop: HTMLElement | null = null;
   let endpointGroups: Array<{ name: string; models: ModelEntry[] }> = [];
@@ -142,6 +145,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let stopButton: HTMLButtonElement | null = null;
   let modeAsk: HTMLButtonElement | null = null;
   let modeAuto: HTMLButtonElement | null = null;
+  let modeLayoutObserver: ResizeObserver | null = null;
 
   const offWorkspace = workspace.events.on("file-opened", (file) => {
     if (contextRow) paintContext(contextRow, file === null || file === undefined ? null : file.name);
@@ -178,6 +182,10 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   const paintModes = (mode: "ask" | "auto" = session?.mode ?? "ask"): void => {
     modeAsk?.classList.toggle("current", mode === "ask");
     modeAuto?.classList.toggle("current", mode === "auto");
+    modeGroupAsk?.classList.toggle("active", mode === "ask");
+    modeGroupAsk?.setAttribute("aria-pressed", String(mode === "ask"));
+    modeGroupAuto?.classList.toggle("active", mode === "auto");
+    modeGroupAuto?.setAttribute("aria-pressed", String(mode === "auto"));
     if (modeToggle) {
       modeToggle.textContent = mode === "ask" ? "🛡" : "⚡";
       modeToggle.setAttribute(
@@ -189,6 +197,15 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         String(modePop?.classList.contains("open") === true),
       );
     }
+  };
+
+  const paintModeLayout = (width: number): void => {
+    if (!panel) return;
+    const compact = width < 280;
+    panel.dataset.modeLayout = compact ? "compact" : "wide";
+    if (modeGroup) modeGroup.hidden = compact;
+    if (modeToggle) modeToggle.hidden = !compact;
+    if (!compact && modePop?.classList.contains("open")) closePops();
   };
 
   const paintTitle = (): void => {
@@ -922,7 +939,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     modelPop = document.createElement("div");
     modelPop.className = "agent-pop agent-model-pop";
 
-    // 审批模式 popover：普通态只占一个图标座位。
+    // 审批模式 popover：composer 窄态只占一个图标座位。
     modePop = document.createElement("div");
     modePop.className = "agent-pop agent-mode-pop";
     const modeTitle = document.createElement("div");
@@ -950,6 +967,29 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     modeAsk = makeModeOption("ask", "请求批准", "写入前确认");
     modeAuto = makeModeOption("auto", "帮我批准", "本次会话自动处理");
     modePop.append(modeTitle, modeAsk, modeAuto);
+
+    modeGroup = document.createElement("div");
+    modeGroup.className = "agent-mode-group";
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "写操作批准模式");
+    modeGroupAsk = document.createElement("button");
+    modeGroupAsk.type = "button";
+    modeGroupAsk.className = "agent-mode";
+    modeGroupAsk.textContent = "请求批准";
+    modeGroupAsk.addEventListener("click", () => {
+      session?.setMode("ask");
+      paintModes("ask");
+    });
+    modeGroupAuto = document.createElement("button");
+    modeGroupAuto.type = "button";
+    modeGroupAuto.className = "agent-mode";
+    modeGroupAuto.dataset.modeInlineAuto = "";
+    modeGroupAuto.textContent = "帮我批准";
+    modeGroupAuto.addEventListener("click", () => {
+      session?.setMode("auto");
+      paintModes("auto");
+    });
+    modeGroup.append(modeGroupAsk, modeGroupAuto);
 
     rootNotice = document.createElement("div");
     rootNotice.className = "agent-root-mismatch";
@@ -996,7 +1036,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     input.addEventListener("keydown", onKeyDown);
     input.addEventListener("paste", onPaste);
 
-    // composer 座位：附件 · 模型 pill · 模式图标 · 发送/停止。
+    // composer 座位：附件 · 模型 pill · 宽态分段/窄态图标 · 发送/停止。
     modelToggle = document.createElement("button");
     modelToggle.type = "button";
     modelToggle.className = "chat-model-pill";
@@ -1024,7 +1064,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     composerRow = row;
     const spacer = document.createElement("span");
     spacer.className = "chat-row-spacer";
-    row.append(attach, modelToggle, spacer, modeToggle, sendButton, stopButton);
+    row.append(attach, modelToggle, spacer, modeGroup, modeToggle, sendButton, stopButton);
     composer.append(input, row);
     statusline = document.createElement("div");
     statusline.className = "agent-statusline";
@@ -1045,6 +1085,13 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     panel.addEventListener("dragover", onDragOver);
     panel.addEventListener("drop", onDrop);
     el.append(panel);
+    paintModeLayout(composerRow?.getBoundingClientRect().width ?? 0);
+    if (composerRow && typeof ResizeObserver === "function") {
+      modeLayoutObserver = new ResizeObserver((entries) => {
+        paintModeLayout(entries.at(-1)?.contentRect.width ?? 0);
+      });
+      modeLayoutObserver.observe(composerRow);
+    }
     paintModes();
     paintButtons();
     paintSessionOptions();
@@ -1108,6 +1155,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   return () => {
     disposed = true;
+    modeLayoutObserver?.disconnect();
+    modeLayoutObserver = null;
     releaseLayerSubscription();
     document.removeEventListener("keydown", onDocKeydown);
     document.removeEventListener("click", onDocClick);

@@ -423,8 +423,8 @@ export function renderApprovalDetail(req: ApprovalRequest): HTMLElement {
   const note = document.createElement("div");
   note.className = "agent-approval-note";
   note.textContent = req.kind === "read-outside"
-    ? "本次批准仅作用于该次读取；“所在目录”授予会级目录读取。默认模式可在模型设置修改。"
-    : "本次批准仅作用于这一次写入；拒绝后 Agent 收到拒绝原因并可继续对话。默认模式可在模型设置修改。";
+    ? "本次批准仅作用于该次读取；“所在目录”授予会级目录读取。默认模式：Agent 面板 ⋯ → 默认设置。"
+    : "本次批准仅作用于这一次写入；拒绝后 Agent 收到拒绝原因并可继续对话。默认模式：Agent 面板 ⋯ → 默认设置。";
   rows.append(note);
   detail.append(rows);
   return detail;

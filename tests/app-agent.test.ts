@@ -293,19 +293,63 @@ describe("app-agent 面板", () => {
     dispose();
   });
 
-  it("批准模式用图标浮窗切换", async () => {
-    const { ctx, el, calls } = fakeCtx([]);
-    apply(ctx as never);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const toggle = el.querySelector<HTMLButtonElement>("[data-mode-toggle]")!;
-    expect(toggle.textContent).toBe("🛡");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    toggle.click();
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    el.querySelector<HTMLButtonElement>("[data-mode-auto]")!.click();
-    expect(calls).toContainEqual(["setMode", "auto"]);
-    expect(toggle.textContent).toBe("⚡");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  it("批准模式随 composer 宽度自适应切换分段与图标浮窗", async () => {
+    class ResizeObserverStub {
+      static instances: ResizeObserverStub[] = [];
+      target: Element | null = null;
+
+      constructor(private readonly callback: ResizeObserverCallback) {
+        ResizeObserverStub.instances.push(this);
+      }
+
+      observe(target: Element): void {
+        this.target = target;
+      }
+
+      disconnect(): void {
+        this.target = null;
+      }
+
+      emit(width: number): void {
+        this.callback(
+          [{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver,
+        );
+      }
+    }
+    const originalObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+    try {
+      const { ctx, el, calls } = fakeCtx([]);
+      apply(ctx as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const observer = ResizeObserverStub.instances.at(-1)!;
+      const panel = el.querySelector<HTMLElement>(".agent-panel")!;
+      const group = el.querySelector<HTMLElement>(".agent-mode-group")!;
+      const toggle = el.querySelector<HTMLButtonElement>("[data-mode-toggle]")!;
+
+      observer.emit(420);
+      expect(panel.dataset.modeLayout).toBe("wide");
+      expect(group.hidden).toBe(false);
+      expect(toggle.hidden).toBe(true);
+      const inlineAuto = el.querySelector<HTMLButtonElement>("[data-mode-inline-auto]")!;
+      inlineAuto.click();
+      expect(calls).toContainEqual(["setMode", "auto"]);
+      expect(inlineAuto.getAttribute("aria-pressed")).toBe("true");
+
+      observer.emit(240);
+      expect(panel.dataset.modeLayout).toBe("compact");
+      expect(group.hidden).toBe(true);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(toggle.hidden).toBe(false);
+      toggle.click();
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      el.querySelector<HTMLButtonElement>("[data-mode-auto]")!.click();
+      expect(calls).toContainEqual(["setMode", "auto"]);
+      expect(toggle.textContent).toBe("⚡");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      globalThis.ResizeObserver = originalObserver;
+    }
   });
 
   it("新会话使用 durable 审批模式；模式胶囊仍只改当前会话", async () => {
