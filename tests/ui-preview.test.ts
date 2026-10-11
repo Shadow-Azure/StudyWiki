@@ -51,15 +51,16 @@ test("ui preview: mounts the real video viewer and plugin panel", async () => {
   root.remove();
 });
 
-test("ui preview: mounts the app-chat panel in the right rail", async () => {
+test("ui preview: mounts the app-agent panel in the right rail", async () => {
   const root = document.createElement("div");
   root.id = "app";
   document.body.append(root);
   const teardown = await mountUiPreview(root);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 50));
 
-  expect(root.querySelector(".chat-model-select")).not.toBeNull();
-  expect([...root.querySelectorAll<HTMLSelectElement>(".chat-model-select option")]
+  console.log("UI HTML", root.querySelector(".agent-panel")?.outerHTML.slice(0,1000));
+  expect(root.querySelector(".agent-model-select")).not.toBeNull();
+  expect([...root.querySelectorAll<HTMLSelectElement>(".agent-model-select option")]
     .map((option) => option.value)).toContain("demo-model");
 
   teardown();
@@ -71,7 +72,7 @@ test("ui preview: PreviewLlm streams a fake chat answer end-to-end", async () =>
   root.id = "app";
   document.body.append(root);
   const teardown = await mountUiPreview(root);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 50));
 
   const input = root.querySelector("textarea")!;
   input.value = "预览提问";

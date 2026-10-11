@@ -44,14 +44,18 @@ export async function loadManifest(
       }
     });
     // 存量迁移：静态表新增而清单缺失的内置行合并进去（enabled 默认 true，与首启
-    // 一致——版本升级带新内置属行为一致条款的设计内变化）；外置行（ext:）不迁移
-    // 不猜，以插件目录为准源。合并发生即写回落盘。
+    // 一致——版本升级带新内置属设计内变化）；静态表已退役的内置行随升级清理，
+    // 避免旧 `app-chat` 一类条目阻断启动。外置行（ext:）不迁移不猜，以插件目录
+    // 为准源。任一方向发生变化即写回落盘。
     const known = new Set(plugins.map((row) => row.id));
+    const current = plugins.filter(
+      (row) => row.id.startsWith("ext:") || row.id in table,
+    );
     const missing = Object.keys(table)
       .filter((id) => !known.has(id))
       .map((id) => ({ id, enabled: true, config: { ...table[id].defaults } }));
-    if (missing.length) {
-      const merged: Manifest = { plugins: [...plugins, ...missing] };
+    if (current.length !== plugins.length || missing.length > 0) {
+      const merged: Manifest = { plugins: [...current, ...missing] };
       await write(JSON.stringify(merged, null, 2));
       return merged;
     }

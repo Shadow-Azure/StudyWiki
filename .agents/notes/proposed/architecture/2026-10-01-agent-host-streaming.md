@@ -12,7 +12,7 @@ m2-01 落地的推理服务只有非流式 chat：整段回答到齐才返回。
 
 ### 流式链路
 
-- Rust 手写 SSE 行解析（ureq 阻塞读，`data:` 行 + 空行分派 + 多 data 行拼接 + `[DONE]` 哨兵），不引新依赖。EOF 之前无 `[DONE]` = `STREAM_CLOSED` 截断错误（截断不能当正常结束）。
+- Rust 手写 SSE 行解析（ureq 阻塞读，`data:` 行 + 空行分派 + 多 data 行拼接），不引新依赖。`[DONE]` 是传输哨兵，Chat Completions `finish_reason` 是语义终点；两者其一先到即可继续消费尾部事件，EOF 时两者都无 = `STREAM_CLOSED` 截断错误（截断不能当正常结束）。
 - chunk 经 `tauri::ipc::Channel` 推到前端：每次 invoke 一条独立通道，多窗口天然隔离；前端 drop Channel → Rust send 失败即中断读取。用户主动中止由 `llm_chat_abort(streamId)` 置位，读循环在下一 chunk 前停止。
 - `llm_chat_stream(req, channel)` 命令起 worker 线程读流；invoke 的 Promise 在流终结时 resolve——channel 给增量，await 给结算。
 

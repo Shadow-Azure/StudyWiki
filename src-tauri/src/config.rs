@@ -83,6 +83,13 @@ pub struct Settings {
         skip_serializing_if = "Option::is_none"
     )]
     pub stream_event_limit_bytes: Option<u64>,
+    /// 新建 agent 会话的默认审批模式；缺省 ask。会话日志仍可覆盖。
+    #[serde(
+        rename = "agentApprovalMode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_approval_mode: Option<String>,
 }
 
 /// 本客户端支持的 settings 版本；高于此值拒绝加载。
@@ -104,6 +111,7 @@ impl Default for Settings {
             endpoints: Vec::new(),
             default_model: None,
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         }
     }
 }
@@ -141,6 +149,11 @@ pub fn load_settings(dir: &Path) -> Result<Settings, String> {
     }
     if s.stream_event_limit_bytes == Some(0) {
         return Err("settings.json 的 streamEventLimitBytes 不能为 0".into());
+    }
+    if let Some(mode) = &s.agent_approval_mode {
+        if mode != "ask" && mode != "auto" {
+            return Err("settings.json 的 agentApprovalMode 只能是 ask 或 auto".into());
+        }
     }
     Ok(s)
 }
@@ -369,6 +382,28 @@ mod tests {
     }
 
     #[test]
+    fn agent_approval_mode_roundtrips_and_rejects_unknown_values() {
+        let dir = std::env::temp_dir().join(format!("sw-agent-mode-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Settings {
+            agent_approval_mode: Some("auto".into()),
+            ..Settings::default()
+        };
+        save_settings(&dir, &s).unwrap();
+        assert_eq!(
+            load_settings(&dir).unwrap().agent_approval_mode.as_deref(),
+            Some("auto")
+        );
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"version":1,"endpoints":[],"agentApprovalMode":"sometimes"}"#,
+        )
+        .unwrap();
+        assert!(load_settings(&dir).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn atomic_write_roundtrip_with_0600_and_no_tmp_residue() {
         let dir = std::env::temp_dir().join(format!("sw-set3-{}", std::process::id()));
         let mut s = Settings {
@@ -376,6 +411,7 @@ mod tests {
             endpoints: vec![sample_endpoint()],
             default_model: Some("deepseek-v4-flash".into()),
             stream_event_limit_bytes: None,
+            agent_approval_mode: None,
         };
         save_settings(&dir, &s).unwrap();
         s.endpoints.push(sample_endpoint());

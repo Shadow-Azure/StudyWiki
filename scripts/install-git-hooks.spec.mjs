@@ -3,7 +3,7 @@
 // 则退回文本合并、hash 行照常冲突——fail-closed 兜底，但便利机制应当装上）。
 // 安装器是顶层即动作的脚本：在临时 git 仓库里 chdir 后动态 import 即触发。
 
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -38,6 +38,13 @@ describe("install-git-hooks", () => {
       const mode = statSync(path.join(dir, ".git/hooks", hook)).mode;
       expect(mode & 0o111).not.toBe(0);
     }
+  });
+
+  it("pre-push 带 src-tauri rustfmt 提醒（有 cargo 才检查）", async () => {
+    const dir = await installOnce();
+    const hook = readFileSync(path.join(dir, ".git/hooks/pre-push"), "utf8");
+    expect(hook).toContain("cargo fmt --check");
+    expect(hook).toContain("command -v cargo");
   });
 
   it("顺带注册 studywiki-i18n merge driver（.git/config）", async () => {

@@ -73,12 +73,20 @@ jobs:
           - os: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: 供给 pinned ripgrep sidecar
+        run: pnpm ripgrep:provision
       - name: Linux 系统依赖
         if: runner.os == 'Linux'
         run: |

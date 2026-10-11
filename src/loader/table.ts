@@ -4,10 +4,11 @@ import * as viewFiletree from "../plugins/view-filetree";
 import * as docMarkdown from "../plugins/doc-markdown";
 import * as docVideo from "../plugins/doc-video";
 import * as docExcel from "../plugins/doc-excel";
-import * as appChat from "../plugins/app-chat";
+import * as appAgent from "../plugins/app-agent";
 import * as appWindows from "../plugins/app-windows";
 import * as pluginManager from "../plugins/plugin-manager";
 import * as llmSettings from "../plugins/llm-settings";
+import * as agentCore from "../plugins/agent-core";
 
 /** One static module table row. */
 export interface TableEntry {
@@ -28,8 +29,9 @@ Object.assign(MODULE_TABLE, {
   "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
   "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
   "doc-excel": { plugin: docExcel as PluginModule, defaults: {} },
-  "app-chat": { plugin: appChat as PluginModule, defaults: {} },
+  "app-agent": { plugin: appAgent as PluginModule, defaults: {} },
   "app-windows": { plugin: appWindows as PluginModule, defaults: {} },
   "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
   "llm-settings": { plugin: llmSettings as PluginModule, defaults: {} },
+  "agent-core": { plugin: agentCore as PluginModule, defaults: {} },
 });

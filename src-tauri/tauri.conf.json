@@ -41,6 +41,7 @@
       "webviewInstallMode": {
         "type": "offlineInstaller"
       }
-    }
+    },
+    "externalBin": ["binaries/rg"]
   }
 }

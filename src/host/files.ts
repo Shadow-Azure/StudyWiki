@@ -4,6 +4,32 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { createEmitter } from "./emitter";
 import type { FileNode } from "../types";
 
+/** Parameters for the agent grep tool; `path` must already be read-authorized. */
+export interface GrepRequest {
+  pattern: string;
+  path: string;
+  glob?: string;
+  ignoreCase?: boolean;
+  literal?: boolean;
+  context?: number;
+  limit?: number;
+}
+
+/** One grep hit, with nearby context lines and no line-number prefixes. */
+export interface GrepMatch {
+  path: string;
+  line: number;
+  text: string;
+  before: string[];
+  after: string[];
+}
+
+/** Agent grep output; `truncated` means the result limit stopped the search. */
+export interface GrepResult {
+  matches: GrepMatch[];
+  truncated: boolean;
+}
+
 /** Arguments accepted by Tauri 2 raw/JSON invoke; limited to what the files commands use. */
 export type FilesInvokeArgs = Record<string, unknown> | Uint8Array;
 
@@ -88,6 +114,46 @@ export class FilesService {
     return this.#deps.invoke("write_binary_file", bytes, {
       headers: { "x-studywiki-path": encodeURIComponent(path) },
     }) as Promise<void>;
+  }
+
+  /** Run the agent grep tool over a read-authorized path; coded errors pass through unwrapped. */
+  grepFiles(req: GrepRequest): Promise<GrepResult> {
+    return this.#deps.invoke("grep_files", { req }) as Promise<GrepResult>;
+  }
+
+  /** Add an existing path to this window's dynamic read-only grants; write access stays root-only. */
+  authorizeReadPath(path: string): Promise<void> {
+    return this.#deps.invoke("authorize_read_path", { path }) as Promise<void>;
+  }
+
+  /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
+  agentSessionPaths(root: string): Promise<string[]> {
+    return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;
+  }
+
+  /** Allocate the user-level per-root path for one new session. */
+  agentSessionPath(root: string, id: string): Promise<string> {
+    return this.#deps.invoke("agent_session_path", { root, id }) as Promise<string>;
+  }
+
+  /** Read one agent session file from the user-level per-root session domain. */
+  readAgentSessionFile(path: string): Promise<string> {
+    return this.#deps.invoke("read_agent_session_file", { path }) as Promise<string>;
+  }
+
+  /** Atomically rewrite one agent session file in the user-level per-root session domain. */
+  writeAgentSessionFile(path: string, contents: string): Promise<void> {
+    return this.#deps.invoke("write_agent_session_file", { path, contents }) as Promise<void>;
+  }
+
+  /** Append one newline-free JSONL session event inside the original authorized root. */
+  appendSessionEvent(path: string, line: string): Promise<void> {
+    return this.#deps.invoke("append_session_event", { path, line }) as Promise<void>;
+  }
+
+  /** Delete an agent session file confined to the user-level per-root session domain; success does not broadcast. */
+  deleteSessionFile(path: string): Promise<void> {
+    return this.#deps.invoke("delete_session_file", { path }) as Promise<void>;
   }
 
   /** System folder picker; null when cancelled. */

@@ -12,7 +12,7 @@ The inference service landed in m2-01 only offers non-streaming chat: the full a
 
 ### Streaming pipeline
 
-- Rust hand-rolls SSE line parsing (blocking reads via ureq, `data:` lines + blank-line dispatch + multi-data-line joining + the `[DONE]` marker) with no new dependencies. EOF before `[DONE]` is the `STREAM_CLOSED` truncation error (truncation must never pass for a normal ending).
+- Rust hand-rolls SSE line parsing (blocking reads via ureq, `data:` lines + blank-line dispatch + multi-data-line joining) with no new dependencies. `[DONE]` is the transport gate and the Chat Completions `finish_reason` is the semantic terminator; trailing events remain consumable after either arrives, and EOF with neither is the `STREAM_CLOSED` truncation error (truncation must never pass for a normal ending).
 - Chunks reach the frontend over `tauri::ipc::Channel`: each invoke gets its own channel, so windows are isolated by construction; the frontend dropping the Channel fails the Rust send and stops the read. User-initiated abort sets a flag through `llm_chat_abort(streamId)`, and the read loop stops before the next chunk.
 - The `llm_chat_stream(req, channel)` command spawns a worker thread to read the stream; the invoke Promise resolves when the stream settles — the channel delivers deltas, await delivers settlement.
 

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { LlmError, LlmService, type LlmDeps } from "../src/host/llm";
+import { describe, expect, it, vi } from "vitest";
+import { LlmError, LlmService, type LlmChannel, type LlmDeps } from "../src/host/llm";
 
 const redacted = {
   endpoints: [
@@ -91,6 +91,40 @@ describe("LlmService", () => {
     const err = await llm.chat({ model: "glm-5.3", messages: [] }).catch((e) => e);
     expect(err).toBeInstanceOf(LlmError);
     expect(err.code).toBe("UNAUTHORIZED");
+  });
+
+  it("aborts the underlying stream when a cancellable chat is stopped", async () => {
+    let channel!: LlmChannel;
+    const calls: { cmd: string; args?: unknown }[] = [];
+    let resolveStream!: () => void;
+    const llm = new LlmService({
+      invoke: (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === "llm_list_endpoints") return Promise.resolve(redacted);
+        if (cmd === "llm_chat_stream") {
+          return new Promise<void>((resolve) => { resolveStream = resolve; });
+        }
+        if (cmd === "llm_chat_abort") {
+          setTimeout(() => {
+            channel?.onmessage?.({ type: "finish", reason: "stop" });
+            resolveStream();
+          }, 0);
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(null);
+      },
+      createChannel: () => (channel = { onmessage: null }),
+    });
+    const controller = new AbortController();
+    const pending = llm.chat({ messages: [{ role: "user", content: "hi" }], signal: controller.signal });
+    await vi.waitFor(() => {
+      expect(calls.some((call) => call.cmd === "llm_chat_stream")).toBe(true);
+      expect(channel.onmessage).not.toBeNull();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ content: "", finishReason: "stop" });
+    expect(calls.at(-1)).toMatchObject({ cmd: "llm_chat_abort" });
   });
 
   it("routes only chat endpoints — asr-only models stay unreachable from chat", async () => {

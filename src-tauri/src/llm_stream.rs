@@ -64,9 +64,73 @@ struct WireError {
     message: serde_json::Value,
 }
 
+/// MiniMax 类兼容端点的 `<think>` 方言：流式把标签内 content 归入 reasoning，
+/// 标签外恢复 text。缓冲只保留可能是跨 chunk 标签前缀的最短尾部。
+#[derive(Default)]
+struct ThinkSplitter {
+    inside: bool,
+    buffer: String,
+}
+
+impl ThinkSplitter {
+    fn push(&mut self, text: &str) -> Vec<(bool, String)> {
+        self.buffer.push_str(text);
+        let mut out = Vec::new();
+        loop {
+            if self.inside {
+                match self.buffer.find("</think>") {
+                    Some(index) => {
+                        if index > 0 {
+                            out.push((true, self.buffer[..index].to_owned()));
+                        }
+                        self.buffer.drain(..index + "</think>".len());
+                        self.inside = false;
+                    }
+                    None => {
+                        if ends_with_partial_tag(&self.buffer, "</think>") {
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            out.push((true, std::mem::take(&mut self.buffer)));
+                        }
+                        break;
+                    }
+                }
+            } else {
+                match self.buffer.find("<think>") {
+                    Some(index) => {
+                        if index > 0 {
+                            out.push((false, self.buffer[..index].to_owned()));
+                        }
+                        self.buffer.drain(..index + "<think>".len());
+                        self.inside = true;
+                    }
+                    None => {
+                        if ends_with_partial_tag(&self.buffer, "<think>") {
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            out.push((false, std::mem::take(&mut self.buffer)));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+fn ends_with_partial_tag(text: &str, tag: &str) -> bool {
+    (1..tag.len()).any(|size| {
+        let suffix = text.chars().rev().take(size).collect::<Vec<_>>();
+        tag.chars().take(size).eq(suffix.into_iter().rev())
+    })
+}
+
 /// 解析 SSE 字节流：按 \n 字节聚合行（半个 UTF-8 序列不可能含 \n，完整行再
 /// 严格解码，跨 read 拆包天然安全）；事件空行分派；多 data 行 \n 拼接；
-/// `:` 注释跳过；EOF 前未见 [DONE] = STREAM_CLOSED。
+/// `:` 注释跳过；EOF 前既无 [DONE] 也无 finish_reason = STREAM_CLOSED。
 /// max_event_bytes 限制单事件（多 data 行拼接后）的载荷字节数，超限断流报
 /// BAD_RESPONSE——这是流内唯一无界缓冲，不设上限会被畸形/恶意端点撑爆内存。
 /// on_chunk 返回 false 立即停止（中止/对端消失）。
@@ -78,6 +142,8 @@ pub fn parse_sse_lines(
     let mut data_lines: Vec<String> = Vec::new();
     let mut payload_bytes: u64 = 0;
     let mut seen_done = false;
+    let mut seen_finish = false;
+    let mut think_splitter = ThinkSplitter::default();
     let mut stopped = false;
     let mut lines = reader.split(b'\n');
     while let Some(raw) = lines.next().transpose().map_err(|e| LlmError {
@@ -98,7 +164,7 @@ pub fn parse_sse_lines(
                     seen_done = true;
                     break;
                 }
-                if !dispatch(&payload, on_chunk)? {
+                if !dispatch(&payload, on_chunk, &mut seen_finish, &mut think_splitter)? {
                     stopped = true;
                     break;
                 }
@@ -120,10 +186,10 @@ pub fn parse_sse_lines(
             data_lines.push(rest.to_string());
         }
     }
-    if !seen_done && !stopped {
+    if !seen_done && !seen_finish && !stopped {
         return Err(LlmError {
             code: "STREAM_CLOSED".into(),
-            message: "SSE 流结束而无 [DONE]（疑被截断）".into(),
+            message: "SSE 流结束而无 [DONE] 或 finish_reason（疑被截断）".into(),
         });
     }
     Ok(())
@@ -133,6 +199,8 @@ pub fn parse_sse_lines(
 fn dispatch(
     payload: &str,
     on_chunk: &mut dyn FnMut(StreamChunk) -> bool,
+    seen_finish: &mut bool,
+    think_splitter: &mut ThinkSplitter,
 ) -> Result<bool, LlmError> {
     let wire: WireChunk = serde_json::from_str(payload).map_err(|e| LlmError {
         code: "BAD_RESPONSE".into(),
@@ -162,11 +230,15 @@ fn dispatch(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
     {
-        if !on_chunk(StreamChunk::TextDelta {
-            index: 0,
-            text: t.to_string(),
-        }) {
-            return Ok(false);
+        for (is_reasoning, text) in think_splitter.push(t) {
+            let chunk = if is_reasoning {
+                StreamChunk::ReasoningDelta { index: 0, text }
+            } else {
+                StreamChunk::TextDelta { index: 0, text }
+            };
+            if !on_chunk(chunk) {
+                return Ok(false);
+            }
         }
     }
     // reasoning 字段回退：reasoning_content → reasoning → reasoning_text，取第一个非空。
@@ -221,6 +293,7 @@ fn dispatch(
         }
     }
     if let Some(reason) = choice.finish_reason.filter(|r| !r.is_empty()) {
+        *seen_finish = true;
         if !on_chunk(StreamChunk::Finish { reason }) {
             return Ok(false);
         }
@@ -306,6 +379,65 @@ mod tests {
         });
         assert!(r.is_ok());
         assert!(matches!(&out[0], StreamChunk::TextDelta { text, .. } if text == "特征值"));
+    }
+
+    #[test]
+    fn finish_reason_then_eof_without_done_is_complete() {
+        // MiniMax 兼容方言：finish_reason 后先发 usage-only，再直接 EOF，不发 [DONE]。
+        let body = br#"data: {"choices":[{"delta":{"content":"<think>plan</think>","tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read","arguments":"{\"path\":\"readme.md\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":6}}
+
+"#;
+        let (chunks, r) = collect(body);
+        assert!(r.is_ok());
+        assert!(matches!(&chunks[0], StreamChunk::ReasoningDelta { text, .. } if text == "plan"));
+        assert!(
+            matches!(&chunks[1], StreamChunk::ToolCallDelta { id, name: Some(name), .. } if id == "c1" && name == "read")
+        );
+        assert!(matches!(&chunks[2], StreamChunk::Finish { reason } if reason == "tool_calls"));
+        assert!(
+            matches!(&chunks[3], StreamChunk::Usage { usage } if usage.prompt_tokens == 11 && usage.completion_tokens == 6)
+        );
+    }
+
+    #[test]
+    fn minimax_think_tags_split_across_chunks_become_reasoning_then_text() {
+        let body = br#"data: {"choices":[{"delta":{"content":"<th"}}]}
+
+data: {"choices":[{"delta":{"content":"ink>secret "}}]}
+
+data: {"choices":[{"delta":{"content":"plan</th"}}]}
+
+data: {"choices":[{"delta":{"content":"ink>visible"}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+"#;
+        let (chunks, result) = collect(body);
+        assert!(result.is_ok());
+        assert!(
+            matches!(&chunks[0], StreamChunk::ReasoningDelta { text, .. } if text == "secret ")
+        );
+        assert!(matches!(&chunks[1], StreamChunk::ReasoningDelta { text, .. } if text == "plan"));
+        assert!(matches!(&chunks[2], StreamChunk::TextDelta { text, .. } if text == "visible"));
+        assert!(matches!(&chunks[3], StreamChunk::Usage { .. }));
+        assert!(matches!(&chunks[4], StreamChunk::Finish { reason } if reason == "stop"));
+    }
+
+    #[test]
+    fn plain_angle_bracket_text_is_not_treated_as_think_dialect() {
+        let body = br#"data: {"choices":[{"delta":{"content":"compare < a and b"}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+"#;
+        let (chunks, result) = collect(body);
+        assert!(result.is_ok());
+        assert!(
+            matches!(&chunks[0], StreamChunk::TextDelta { text, .. } if text == "compare < a and b")
+        );
+        assert!(matches!(&chunks[1], StreamChunk::Finish { .. }));
     }
 
     #[test]

@@ -45,6 +45,13 @@ export function apply(ctx: Context): () => void {
   });
 }
 
+/** 模型能力勾选组：name 即保存载荷能力值，text 为面板显示文案。 */
+const CAPABILITY_CHECKS = [
+  { value: "vision", text: "vision" },
+  { value: "audio", text: "audio" },
+  { value: "tools", text: "工具调用" },
+] as const;
+
 /** 面板本体：模态覆盖层（Esc 可关），每次动作后整体重渲染。 */
 async function openPanel(ctx: Context): Promise<void> {
   document.querySelector(".llm-panel")?.remove();
@@ -471,30 +478,21 @@ async function renderForm(
       id.value = m.id;
       id.placeholder = "模型 id";
       id.addEventListener("input", () => (m.id = id.value));
-      const vision = document.createElement("input");
-      vision.type = "checkbox";
-      vision.name = "vision";
-      vision.checked = m.capabilities.includes("vision");
-      vision.addEventListener("change", () => {
-        m.capabilities = vision.checked
-          ? [...m.capabilities.filter((c) => c !== "vision"), "vision"]
-          : m.capabilities.filter((c) => c !== "vision");
-      });
-      const visionLabel = document.createElement("label");
-      visionLabel.className = "llm-vision";
-      visionLabel.append(vision, document.createTextNode("vision"));
-      const audio = document.createElement("input");
-      audio.type = "checkbox";
-      audio.name = "audio";
-      audio.checked = m.capabilities.includes("audio");
-      audio.addEventListener("change", () => {
-        m.capabilities = audio.checked
-          ? [...m.capabilities.filter((c) => c !== "audio"), "audio"]
-          : m.capabilities.filter((c) => c !== "audio");
-      });
-      const audioLabel = document.createElement("label");
-      audioLabel.className = "llm-vision";
-      audioLabel.append(audio, document.createTextNode("audio"));
+      row.append(id);
+      for (const { value, text } of CAPABILITY_CHECKS) {
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.name = value;
+        check.checked = m.capabilities.includes(value);
+        check.addEventListener("change", () => {
+          const withoutCapability = m.capabilities.filter((capability) => capability !== value);
+          m.capabilities = check.checked ? [...withoutCapability, value] : withoutCapability;
+        });
+        const label = document.createElement("label");
+        label.className = "llm-vision";
+        label.append(check, document.createTextNode(text));
+        row.append(label);
+      }
       const del = document.createElement("button");
       del.type = "button";
       del.className = "btn btn-ghost";
@@ -503,7 +501,7 @@ async function renderForm(
         draft.models.splice(i, 1);
         drawFields();
       });
-      row.append(id, visionLabel, audioLabel, del);
+      row.append(del);
       fieldset.append(row);
     }
     const addModel = document.createElement("button");
