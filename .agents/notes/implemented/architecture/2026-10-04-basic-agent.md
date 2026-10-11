@@ -94,4 +94,5 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 - app-chat 退役；`sidebar.right` 唯一注册者换成 app-agent；m2-02 的渲染与附件投入整体继承。
 - Rust 增四条命令（grep_files / authorize_read_path / append_session_event / delete_session_file）+ sidecar 配置与构建脚本；commands.md、code-map、dep-allowlist、doc-budgets 同步。
 - 环境无关性文档登记 rg sidecar（构建期打包、运行零下载）。
+- GLM/DeepSeek/Kimi/MiniMax 的已知预置模型默认声明 `tools`，自定义新增模型仍保守默认仅 `text`；app-agent 下拉标注 tools，已保存端点不做自动迁移。
 - 欠账：compaction 摘要质量无评估机制；并行工具执行；同会话多窗锁；审批卡 diff 渲染；guardian 独立模型配置槽；会话搜索/分叉；块级增量 markdown 渲染（沿 m2-02 欠账）；repeat-tool-reminder 式软防循环提示。

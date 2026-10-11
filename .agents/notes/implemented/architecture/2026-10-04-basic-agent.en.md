@@ -94,4 +94,5 @@ All tool results have a unified size cap; overflow is truncated and explicitly m
 - app-chat retires; `sidebar.right`'s sole registrant becomes app-agent; m2-02's rendering and attachment investment is inherited wholesale.
 - Rust gains four commands (grep_files / authorize_read_path / append_session_event / delete_session_file) plus sidecar configuration and a build script; commands.md, code-map, dep-allowlist, and doc-budgets move in sync.
 - The environment-independence doc registers the rg sidecar (packaged at build time, zero runtime downloads).
+- Known GLM/DeepSeek/Kimi/MiniMax preset models declare `tools` by default, while newly added custom models remain conservatively text-only; the app-agent dropdown marks tools, and saved endpoints are not migrated automatically.
 - Debts: no evaluation mechanism for compaction summary quality; parallel tool execution; multi-window locks for one session; diff rendering on approval cards; an independent model slot for the guardian; session search/forking; block-level incremental markdown rendering (carried over from m2-02); a repeat-tool-reminder-style soft anti-loop nudge.

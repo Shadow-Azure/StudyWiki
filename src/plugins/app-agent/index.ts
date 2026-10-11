@@ -55,6 +55,7 @@ function composeContent(text: string, attachments: PendingAttachment[]): string 
 /** Add capability suffixes to a model option without mutating the id. */
 function modelLabel(id: string, capabilities: string[]): string {
   const marks = [
+    ...(capabilities.includes("tools") ? ["tools"] : []),
     ...(capabilities.includes("vision") ? ["vision"] : []),
     ...(capabilities.includes("audio") ? ["audio"] : []),
   ];

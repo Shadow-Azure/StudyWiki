@@ -9,6 +9,7 @@ function fakeCtx(
     lines?: unknown[];
     models?: Array<{ id: string; capabilities: string[] }>;
     defaultModel?: string | null;
+    defaultMode?: "ask" | "auto";
     root?: string | null;
   } = {},
 ) {
@@ -165,6 +166,20 @@ describe("app-agent 面板", () => {
     select.value = "m2";
     select.dispatchEvent(new Event("change"));
     expect(calls).toContainEqual(["setModel", "m2"]);
+  });
+
+  it("模型下拉标注 tools 能力", async () => {
+    const { ctx, el } = fakeCtx([], {
+      models: [
+        { id: "m-tools", capabilities: ["text", "tools"] },
+        { id: "m-text", capabilities: ["text"] },
+      ],
+      defaultModel: "m-tools",
+    });
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const options = [...el.querySelectorAll<HTMLSelectElement>(".agent-model-select")[0].options];
+    expect(options.map((option) => option.textContent)).toEqual(["m-tools · tools", "m-text"]);
   });
 
   it("历史审批行渲染为只读决定卡", async () => {
