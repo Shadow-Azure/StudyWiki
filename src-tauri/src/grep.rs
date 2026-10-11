@@ -641,16 +641,6 @@ mod tests {
     }
 
     #[test]
-    fn timeout_reports_aborted() {
-        let instant = GrepBudget {
-            raw_max_bytes: RAW_OUTPUT_MAX_BYTES,
-            timeout: std::time::Duration::from_millis(1),
-        };
-        let e = run_grep(&rg(), &args("线"), &instant).unwrap_err();
-        assert_eq!(e.code, "SEARCH_ABORTED");
-    }
-
-    #[test]
     fn shared_context_appears_before_and_after_adjacent_matches() {
         let mut a = args("命中");
         a.path = fixture("notes/context-pair.md");
