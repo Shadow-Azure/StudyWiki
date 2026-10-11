@@ -454,6 +454,16 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         break;
       case "aborted":
         turnRunning = false;
+        approvalQueue = [];
+        activeApproval = null;
+        approvalDetail?.remove();
+        approvalDetail = null;
+        approvalToggle = null;
+        if (decideTimer) {
+          clearTimeout(decideTimer);
+          decideTimer = null;
+        }
+        if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
         processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
         processGroup = null;
         appendInterrupted();

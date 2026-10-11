@@ -201,6 +201,54 @@ describe("app-agent 面板", () => {
     expect(composer.dataset.approvalId).toBe("a2");
   });
 
+  it("中断时清理当前审批并恢复输入框", async () => {
+    const { ctx, el, calls, sessionEvents, approvalEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const input = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    input.value = "我的草稿";
+    approvalEvents.emit("r", {
+      id: "a1", kind: "write", tool: "write", path: "/1.md", summary: "写",
+      preview: { text: "1", omitted: false, totalCharacters: 1, totalLines: 1 },
+    } as never);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.state).toBe("approval");
+    expect(composer.dataset.approvalId).toBe("a1");
+    expect(el.querySelector(".agent-approval-detail")).not.toBeNull();
+
+    sessionEvents.emit("e", { type: "aborted" });
+
+    expect(composer.dataset.state).toBe("normal");
+    expect(composer.dataset.approvalId).toBeUndefined();
+    expect(el.querySelector(".agent-approval-detail")).toBeNull();
+    expect(el.querySelector(".agent-approval-card")).toBeNull();
+    expect(input.value).toBe("我的草稿");
+    expect(calls).not.toContainEqual(["respond", "a1", expect.anything()]);
+  });
+
+  it("中断时取消决策延迟并清空排队审批", async () => {
+    const { ctx, el, calls, sessionEvents, approvalEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (const id of ["a1", "a2"]) {
+      approvalEvents.emit("r", {
+        id, kind: "write", tool: "write", path: `/${id}.md`, summary: "写",
+        preview: { text: id, omitted: false, totalCharacters: 1, totalLines: 1 },
+      } as never);
+    }
+    el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    expect(calls).toContainEqual(["respond", "a1", { decision: "allow" }]);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.state).toBe("decided");
+
+    sessionEvents.emit("e", { type: "aborted" });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(composer.dataset.state).toBe("normal");
+    expect(composer.dataset.approvalId).toBeUndefined();
+    expect(el.querySelector(".agent-approval-detail")).toBeNull();
+  });
+
   it("批准模式用图标浮窗切换", async () => {
     const { ctx, el, calls } = fakeCtx([]);
     apply(ctx as never);
