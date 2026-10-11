@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadManifest, parseArgs, provisionRipgrep } from "./provision-ripgrep.mjs";
+import { isCliEntry, loadManifest, parseArgs, provisionRipgrep } from "./provision-ripgrep.mjs";
 
 const isWindows = process.platform === "win32";
 
@@ -32,6 +33,12 @@ describe("ripgrep provisioning", () => {
 
   afterEach(() => {
     rmSync(workspace, { recursive: true, force: true });
+  });
+
+  it("recognizes the script entry without relying on platform path text", () => {
+    const entry = path.resolve("scripts/provision-ripgrep.mjs");
+    expect(isCliEntry(entry, pathToFileURL(entry).href)).toBe(true);
+    expect(isCliEntry("", pathToFileURL(entry).href)).toBe(false);
   });
 
   it("accepts the pnpm value separator before target arguments", () => {

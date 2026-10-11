@@ -18,7 +18,9 @@ scope:
   - docs/architecture.*
   - docs/commands.*
   - docs/environment-independence.*
+  - docs/development.*
   - docs/plugins/*
+  - docs/release-checklist.*
   - package.json
   - pnpm-lock.yaml
   - scripts/code-map.manifest.json
@@ -35,6 +37,7 @@ scope:
   - src-tauri/**
   - src/ui/**
   - tests/**
+  - AGENTS.md
 adr:
   - ../../notes/implemented/architecture/2026-10-04-basic-agent.md
 github:

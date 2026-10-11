@@ -18,7 +18,7 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -211,7 +211,11 @@ export function parseArgs(argv) {
   return values;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export function isCliEntry(entryPath, moduleUrl) {
+  return Boolean(entryPath) && pathToFileURL(path.resolve(entryPath)).href === moduleUrl;
+}
+
+if (isCliEntry(process.argv[1], import.meta.url)) {
   try {
     const results = await provisionRipgrep(parseArgs(process.argv.slice(2)));
     for (const result of results) {
