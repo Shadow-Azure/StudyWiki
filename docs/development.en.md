@@ -9,6 +9,7 @@ English | [中文](development.md)
 - Node ≥ 22, pnpm ≥ 10, Rust stable (1.77+)
 - macOS: Xcode CLT; Windows: MSVC Build Tools; Linux: `libwebkit2gtk-dev` etc. (see the official Tauri 2 prerequisites)
 - These are **build-time** only; the artifact-side environment-independence constraint is in [environment-independence.en.md](environment-independence.en.md)
+- `pnpm tauri dev` provisions the sidecar. For direct Cargo, run `pnpm ripgrep:provision`; pass `--target` when cross-building.
 
 ## Development flow
 

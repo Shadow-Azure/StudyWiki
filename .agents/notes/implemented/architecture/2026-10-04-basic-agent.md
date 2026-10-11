@@ -44,9 +44,9 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 工具结果统一大小上限，超限截断并显式标注。「当前打开的文件」不做占位符魔法：活动文件路径在 system prompt 里，模型自己传给 read。
 
-### grep 供给：sidecar ripgrep（dsh 式构建期打包）
+### grep 供给：sidecar ripgrep（pinned 构建期打包）
 
-- 二进制经 `@vscode/ripgrep` npm 包供给（当前 1.18.0，内含 ripgrep 15.0.0；「npm 当仓库用」定论的延伸），构建脚本复制为 Tauri sidecar（`binaries/rg-<target-triple>`），CI 按平台构建各拿各的；`dep-allowlist` 登记该包，`docs/environment-independence.md` 登记自带 sidecar 说明。否决 pi 式运行时下载（硬约束直接拒绝）与纯前端 TS 扫描（遍历已在 Rust——read_tree 同族，IPC 只回命中行）。
+- 二进制由 `scripts/ripgrep-manifest.json` 固定 ripgrep 15.2.0 官方 release 资产；`pnpm ripgrep:provision` 按 Rust target 下载、校验 SHA-256、缓存并落位 Tauri sidecar（`binaries/rg-<target-triple>`）。`build.rs` 只校验输出与其 SHA 元数据，不再解析包管理器布局；CI Rust lane 构建前供给宿主 target，release lane 显式供给 macOS 双 target 与 Windows/Linux。否决包管理器 optional dependency 决定目标平台的隐式布局，也继续否决运行时下载与纯前端 TS 扫描。
 - Rust 新增 grep 命令：裸 argv spawn（不过 shell，无引号面）、解析 `rg --json` 完整 stdout、上述预算与错误词表；spawn 前过 `path_authorized`（与所有文件命令同一决策点）。
 
 ### 授权边界与越界读
@@ -73,8 +73,8 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 ### 门禁与测试
 
 - vitest（假 ctx 全链路）：loop 状态机（脚本化 chatStream 多轮工具调用）、审批路由两模式、guardian 裁决解析与 fail-closed、pending 审批快照与切回重放、JSONL 序列化/重放/截断、compaction 触发与视图重建、str-replace 边界、授权判定；面板回归钉住渲染器 reasoning/代码/usage/error、aborted/error 横幅、EOF 复位与卸载 late 事件隔离。
-- cargo test：`append_session_event` / `authorize_read_path` 授权校验、grep 命令预算与错误词表（fixture 目录 + 真 sidecar）。
-- 机械面：commands.md / code-map 生成区重建；`verify:layering`（新插件同样禁 `@tauri-apps/*`）、`verify:env-independence`（sidecar 登记）、`verify:dep-audit`（`@vscode/ripgrep` 白名单）、doc-budgets 登记新增常驻文档；本 Note 与 issue #30 更新（status→in-progress、adr、scope 扩 `src-tauri/**` 等）同 PR。
+- cargo test：`append_session_event` / `authorize_read_path` 授权校验、grep 命令预算与错误词表（fixture 目录 + 真 sidecar），以及供给产物 SHA 元数据；Vitest 钉 manifest target 集、SHA mismatch、跨 target sidecar 文件名和缓存修复。
+- 机械面：commands.md / code-map 生成区重建；`verify:layering`（新插件同样禁 `@tauri-apps/*`）、`verify:env-independence`（sidecar 登记）、`verify:dep-audit`（依赖白名单）、doc-budgets 登记新增常驻文档；本 Note 与 issue #30 更新（status→in-progress、adr、scope 扩 `src-tauri/**` 等）同 PR。
 
 ## Alternatives considered
 

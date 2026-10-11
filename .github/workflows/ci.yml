@@ -87,6 +87,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: 供给 pinned ripgrep sidecar
+        run: pnpm ripgrep:provision
       - name: Linux 系统依赖
         if: runner.os == 'Linux'
         run: |

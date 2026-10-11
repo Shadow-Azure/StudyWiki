@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "ripgrep:provision": "node scripts/provision-ripgrep.mjs",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "pnpm ripgrep:provision && tauri",
     "lint:docs": "node scripts/run-gates.mjs --mode doc-quick",
     "verify:docs": "node scripts/run-gates.mjs --mode doc-sync",
     "verify:release": "node scripts/run-gates.mjs --mode release",
@@ -39,7 +40,6 @@
     "@lezer/highlight": "^1.2.3",
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
-    "@vscode/ripgrep": "^1.18.0",
     "codemirror": "^6.0.2",
     "exceljs": "^4.4.0",
     "markdown-it": "^14.1.0",

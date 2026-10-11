@@ -9,6 +9,7 @@
 - Node ≥ 22、pnpm ≥ 10、Rust stable（1.77+）
 - macOS：Xcode CLT；Windows：MSVC Build Tools；Linux：`libwebkit2gtk-dev` 等（见 Tauri 2 官方前置清单）
 - 以上仅**构建**需要；产物的环境无关性约束见 [environment-independence.md](environment-independence.md)
+- `pnpm tauri dev` 供给 sidecar；直接跑 Cargo 先跑 `pnpm ripgrep:provision`，跨 target 加 `--target`。
 
 ## 开发流程
 

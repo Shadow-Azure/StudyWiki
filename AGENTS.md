@@ -10,6 +10,7 @@ StudyWiki 是一个本地 Markdown + 视频学习客户端（Tauri 2 桌面应�
 
 ```sh
 pnpm install             # 依赖
+pnpm ripgrep:provision   # 按 Rust target 供给 pinned ripgrep sidecar（-- --target <triple>）
 pnpm tauri dev           # 开发
 pnpm tauri build         # 发布构建
 pnpm lint:docs           # 快速文档门禁

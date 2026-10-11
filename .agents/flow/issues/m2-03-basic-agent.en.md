@@ -13,6 +13,7 @@ scope:
   - .agents/plans/**
   - .gitignore
   - .github/workflows/ci.yml
+  - .github/workflows/release.yml
   - docs/README.*
   - docs/architecture.*
   - docs/commands.*
@@ -24,6 +25,8 @@ scope:
   - scripts/dep-allowlist.json
   - scripts/doc-budgets.manifest.json
   - scripts/install-git-hooks.*
+  - scripts/provision-ripgrep.*
+  - scripts/ripgrep-manifest.json
   - src/host/**
   - src/loader/**
   - src/plugins/**

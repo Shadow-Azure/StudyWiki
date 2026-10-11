@@ -44,9 +44,9 @@ Tools are designed as a generic file agent with no baked-in study context; study
 
 All tool results have a unified size cap; overflow is truncated and explicitly marked. "The currently open file" gets no placeholder magic: the active file path lives in the system prompt and the model passes it to read itself.
 
-### grep supply: sidecar ripgrep (dsh-style build-time packaging)
+### grep supply: sidecar ripgrep (pinned build-time packaging)
 
-- The binary is supplied via the `@vscode/ripgrep` npm package (currently 1.18.0, containing ripgrep 15.0.0; an extension of the "npm as repository, not runtime" ruling); a build script copies it as a Tauri sidecar (`binaries/rg-<target-triple>`), and per-platform CI builds each pick their own; `dep-allowlist` registers the package and `docs/environment-independence.md` registers the bundled-sidecar note. pi-style runtime download is rejected (the hard constraint forbids it outright), as is pure-frontend TS scanning (traversal already lives in Rust — same family as read_tree — and only matching lines cross IPC).
+- `scripts/ripgrep-manifest.json` pins ripgrep 15.2.0 official release assets; `pnpm ripgrep:provision` selects by Rust target, downloads, verifies SHA-256, caches, and places the Tauri sidecar (`binaries/rg-<target-triple>`). `build.rs` validates only the output and its SHA metadata, without parsing package-manager layout; the CI Rust lane provisions the host target before building, while release explicitly provisions both macOS targets plus Windows/Linux. Package-manager optional dependencies deciding the target implicitly are rejected, as runtime download and pure-frontend TS scanning continue to be.
 - A new Rust grep command: bare argv spawn (no shell, no quoting surface), parses the complete `rg --json` stdout, the budgets and error vocabulary above; `path_authorized` runs before spawn (the same single decision point as every file command).
 
 ### Authorization boundary and out-of-bounds reads
@@ -73,8 +73,8 @@ All tool results have a unified size cap; overflow is truncated and explicitly m
 ### Gates and tests
 
 - vitest (full chain with a fake ctx): the loop state machine (scripted chatStream multi-round tool calls), two-mode approval routing, guardian verdict parsing and fail-closed paths, pending-approval snapshots and replay after switching back, JSONL serialization/replay/truncation, compaction triggering and view rebuild, str-replace boundaries, authorization decisions; panel regressions pin renderer reasoning/code/usage/error, aborted/error banners, EOF reset, and detached teardown event isolation.
-- cargo test: `append_session_event` / `authorize_read_path` authorization checks, grep command budgets and error vocabulary (fixture directories + the real sidecar).
-- Mechanical surface: commands.md / code-map generated regions rebuilt; `verify:layering` (new plugins equally forbidden from `@tauri-apps/*`), `verify:env-independence` (sidecar registration), `verify:dep-audit` (`@vscode/ripgrep` allowlist), doc-budgets registering new standing docs; this Note and the issue #30 update (status→in-progress, adr, scope extended with `src-tauri/**` etc.) land in the same PR.
+- cargo test: `append_session_event` / `authorize_read_path` authorization checks, grep command budgets and error vocabulary (fixture directories + the real sidecar), plus provisioned-sidecar SHA metadata; Vitest pins the manifest target set, SHA mismatch, cross-target sidecar names, and cache repair.
+- Mechanical surface: commands.md / code-map generated regions rebuilt; `verify:layering` (new plugins equally forbidden from `@tauri-apps/*`), `verify:env-independence` (sidecar registration), `verify:dep-audit` (dependency allowlist), doc-budgets registering new standing docs; this Note and the issue #30 update (status→in-progress, adr, scope extended with `src-tauri/**` etc.) land in the same PR.
 
 ## Alternatives considered
 
