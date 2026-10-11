@@ -103,7 +103,8 @@ describe("app-agent 面板", () => {
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     approvalEvents.emit("r", {
-      id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写", newText: "机密内容",
+      id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写",
+      preview: { text: "机密内容", omitted: false, totalCharacters: 4, totalLines: 1 },
     } as never);
     el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
     expect(el.querySelector<HTMLElement>("[data-approval-id='a1']")?.textContent).toContain("机密内容");

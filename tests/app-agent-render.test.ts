@@ -20,7 +20,10 @@ describe("app-agent render", () => {
   it("write 审批卡 pending：批准/拒绝回传", () => {
     const outcomes: string[] = [];
     const card = renderApprovalCard(
-      { id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入笔记", newText: "# 笔记" },
+      {
+        id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入笔记",
+        preview: { text: "# 笔记", omitted: false, totalCharacters: 4, totalLines: 1 },
+      },
       "pending",
       (o) => outcomes.push(o.decision),
     );
@@ -43,13 +46,30 @@ describe("app-agent render", () => {
 
   it("decided 卡只读且 guardian 标注", () => {
     const card = renderApprovalCard(
-      { id: "a3", kind: "edit", tool: "edit", path: "/lib/a.md", summary: "替换", oldText: "甲", newText: "乙" },
+      {
+        id: "a3", kind: "edit", tool: "edit", path: "/lib/a.md", summary: "替换",
+        preview: { text: "-甲\n+乙", omitted: false, totalCharacters: 2, totalLines: 2 },
+      },
       { decision: "deny", decider: "guardian", reason: "可疑" },
     );
     expect(card.textContent).toContain("审查模型");
     expect(card.textContent).toContain("可疑");
     expect(card.querySelector("button")).toBeNull();
     expect(card.textContent).toContain("甲").and.toContain("乙");
+  });
+
+  it("审批卡只渲染有界 preview，不泄漏完整载荷", () => {
+    const fullTail = "机密尾部".repeat(100);
+    const card = renderApprovalCard(
+      {
+        id: "a4", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入超长笔记",
+        preview: { text: "机密头部…（已省略 100 字符）…", omitted: true, totalCharacters: 400, totalLines: 1 },
+      },
+      "pending",
+    );
+    expect(card.textContent).toContain("机密头部");
+    expect(card.textContent).toContain("已省略");
+    expect(card.textContent).not.toContain(fullTail);
   });
 
   it("工具卡结果折叠与错误样式", () => {

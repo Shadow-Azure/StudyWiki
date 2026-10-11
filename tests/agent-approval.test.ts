@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createApprovalGate, type ApprovalGate } from "../src/plugins/agent-core/approval";
 import type { SessionLine } from "../src/plugins/agent-core/session";
 
-const REQ = { id: "a1", kind: "write" as const, tool: "write", path: "/lib/n.md", summary: "写入 5 字节" };
+const REQ = {
+  id: "a1", kind: "write" as const, tool: "write", path: "/lib/n.md", summary: "写入 5 字节",
+  preview: { text: "写入 5 字节", omitted: false, totalCharacters: 5, totalLines: 1 },
+};
 
 function gateWith(mode: "ask" | "auto", impl: {
   human?: (req: typeof REQ) => Promise<{ decision: "allow" | "deny"; reason?: string }>;
@@ -27,10 +30,39 @@ describe("approval gate", () => {
   });
 
   it("auto 模式 guardian 批准 JSON → allow", async () => {
-    const { gate, log } = gateWith("auto", { chat: async () => ({ content: "```json\n{\"approve\":true,\"reason\":\"库内笔记\"}\n```" }) });
+    let guardianPayload = "";
+    const { gate, log } = gateWith("auto", {
+      chat: async (request) => {
+        guardianPayload = request.messages.at(-1)?.content ?? "";
+        return { content: "```json\n{\"approve\":true,\"reason\":\"库内笔记\"}\n```" };
+      },
+    });
     const out = await gate.ask(REQ);
     expect(out.decision).toBe("allow");
+    const payload = JSON.parse(guardianPayload);
+    expect(payload).toMatchObject({ tool: "write", preview: REQ.preview });
+    expect(payload).not.toHaveProperty("newText");
     expect(log.at(-1)).toMatchObject({ decider: "guardian", decision: "allow", reason: "库内笔记" });
+  });
+
+  it("guardian 载荷超预算转人工审批", async () => {
+    const humanRequests: unknown[] = [];
+    const { gate, log } = gateWith("auto", {
+      human: async (request) => {
+        humanRequests.push(request);
+        return { decision: "allow" };
+      },
+      chat: async () => {
+        throw new Error("不该调用 guardian");
+      },
+    });
+    const oversized = {
+      ...REQ,
+      preview: { text: "中".repeat(8_000), omitted: true, totalCharacters: 8_000, totalLines: 1 },
+    };
+    await expect(gate.ask(oversized)).resolves.toMatchObject({ decision: "allow" });
+    expect(humanRequests).toEqual([oversized]);
+    expect(log.at(-1)).toMatchObject({ decider: "human", decision: "allow" });
   });
 
   it("guardian 非 JSON → fail-closed 拒绝", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executeTool, isUnauthorized, TOOL_DECLARATIONS,
+import { executeTool, isUnauthorized, MAX_APPROVAL_PREVIEW_CHARACTERS, TOOL_DECLARATIONS,
   type ToolRunContext, type ApprovalOutcome, type ApprovalRequest } from "../src/plugins/agent-core/tools";
 
 function ctxWith(
@@ -54,15 +54,46 @@ describe("tools", () => {
     expect(r.content).toContain("已写入");
   });
 
-  it("write 审批请求携带完整内容预览", async () => {
-    const ctx = ctxWith({ writeText: async () => {} });
+  it("write 审批请求携带有界预览且执行保留完整内容", async () => {
+    const head = "机密笔记预览";
+    const content = `${head}\n${"中".repeat(MAX_APPROVAL_PREVIEW_CHARACTERS * 2)}\n尾部标记`;
+    let saved = "";
+    const ctx = ctxWith({ writeText: async (_path, value) => { saved = value; } });
     await executeTool({
       id: "preview", name: "write",
-      argumentsText: JSON.stringify({ path: "/lib/n.md", content: "机密笔记预览" }),
+      argumentsText: JSON.stringify({ path: "/lib/n.md", content }),
     }, ctx);
-    expect(ctx.requests).toEqual([
-      expect.objectContaining({ kind: "write", path: "/lib/n.md", newText: "机密笔记预览" }),
-    ]);
+    expect(ctx.requests).toHaveLength(1);
+    expect(ctx.requests[0]).not.toHaveProperty("newText");
+    expect(ctx.requests[0]?.preview).toMatchObject({
+      omitted: true,
+      totalCharacters: content.length,
+      totalLines: 3,
+    });
+    expect(ctx.requests[0]?.preview.text).toContain(head);
+    expect(ctx.requests[0]?.preview.text).toContain("尾部标记");
+    expect(ctx.requests[0]?.preview.text.length).toBeLessThanOrEqual(MAX_APPROVAL_PREVIEW_CHARACTERS);
+    expect(saved).toBe(content);
+  });
+
+  it("edit 审批请求生成有界上下文 diff", async () => {
+    const current = Array.from({ length: 20 }, (_, index) => `${index + 1} 行`).join("\n");
+    const ctx = ctxWith({ readText: async () => current });
+    await executeTool({
+      id: "edit-preview", name: "edit",
+      argumentsText: JSON.stringify({ path: "/lib/a.md", old_string: "10 行", new_string: "第十行" }),
+    }, ctx);
+    expect(ctx.requests[0]?.summary).toContain("旧 4 字符");
+    expect(ctx.requests[0]?.summary).toContain("新 3 字符");
+    expect(ctx.requests[0]?.preview).toMatchObject({
+      omitted: false,
+      totalCharacters: 7,
+      totalLines: 2,
+    });
+    expect(ctx.requests[0]?.preview.text).toContain("@@ -7,7 +7,7 @@");
+    expect(ctx.requests[0]?.preview.text).toContain("-10 行");
+    expect(ctx.requests[0]?.preview.text).toContain("+第十行");
+    expect(ctx.requests[0]?.preview.text).toContain(" 7 行");
   });
 
   it("write 原样保留末尾换行", async () => {

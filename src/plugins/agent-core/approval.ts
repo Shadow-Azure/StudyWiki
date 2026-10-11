@@ -36,6 +36,9 @@ export const GUARDIAN_SYSTEM_PROMPT = [
   '只输出一个 JSON 对象：{"approve":true或false,"reason":"简短中文理由"}。不要输出 Markdown、解释或其他文本。',
 ].join("\n");
 
+/** Hard byte ceiling for one guardian user payload, excluding the system prompt. */
+export const GUARDIAN_PAYLOAD_BUDGET_BYTES = 16 * 1024;
+
 /**
  * Create a pure approval gate that routes requests by the current mode.
  * @param deps Injected mode source, human approver, guardian chat client, and session logger.
@@ -113,14 +116,7 @@ export function createApprovalGate(
         { role: "system", content: GUARDIAN_SYSTEM_PROMPT },
         {
           role: "user",
-          content: JSON.stringify({
-            tool: req.tool,
-            kind: req.kind,
-            path: req.path,
-            summary: req.summary,
-            oldText: req.oldText,
-            newText: req.newText,
-          }),
+          content: guardianPayload(req),
         },
       ],
     };
@@ -147,7 +143,9 @@ export function createApprovalGate(
 
   return {
     ask(req: ApprovalRequest): Promise<ApprovalOutcome> {
-      const decider: ApprovalDecider = deps.mode() === "auto" ? "guardian" : "human";
+      const guardianAllowed = deps.mode() === "auto" &&
+        guardianPayloadBytes(req) <= GUARDIAN_PAYLOAD_BUDGET_BYTES;
+      const decider: ApprovalDecider = guardianAllowed ? "guardian" : "human";
       const source = decider === "guardian" ? askGuardian(req) : askHuman(req);
       return track(req, decider, source);
     },
@@ -157,6 +155,26 @@ export function createApprovalGate(
       }
     },
   };
+}
+
+/** Serialize only the bounded fields that guardian review may see.
+ * @param req Approval request to serialize for guardian review.
+ * @returns JSON user-message payload for the guardian chat. */
+export function guardianPayload(req: ApprovalRequest): string {
+  return JSON.stringify({
+    tool: req.tool,
+    kind: req.kind,
+    path: req.path,
+    summary: req.summary,
+    preview: req.preview,
+  });
+}
+
+/** Measure the exact guardian user payload, including JSON escaping overhead.
+ * @param req Approval request to serialize for guardian review.
+ * @returns UTF-8 byte length of the bounded guardian payload. */
+export function guardianPayloadBytes(req: ApprovalRequest): number {
+  return new TextEncoder().encode(guardianPayload(req)).length;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

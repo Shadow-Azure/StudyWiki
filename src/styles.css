@@ -1711,6 +1711,11 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
   font-weight: 400;
 }
 .agent-approval-card-kind { margin-top: 5px; color: var(--ink-3); font-size: 11px; }
+.agent-approval-card-preview-meta {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
 .agent-approval-card-text {
   margin-top: 8px;
   border: 1px solid var(--hairline-soft);

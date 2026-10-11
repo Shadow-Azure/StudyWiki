@@ -203,15 +203,15 @@ export function renderCompactionDivider(summary: string): HTMLElement {
 
 /** Add the kind-specific pending payload: write preview or explicit edit diff. */
 function appendApprovalBody(card: HTMLElement, req: ApprovalRequest): void {
-  if (req.kind === "edit") {
-    card.append(
-      approvalText("旧内容", req.oldText ?? ""),
-      approvalText("新内容", req.newText ?? ""),
-    );
-    return;
-  }
-  if (req.kind === "write" && req.newText) {
-    card.append(approvalText("写入内容", req.newText));
+  if (req.preview) {
+    if (req.preview.omitted) {
+      const notice = document.createElement("div");
+      notice.className = "agent-approval-card-preview-meta";
+      notice.textContent =
+        `预览已省略：完整载荷 ${req.preview.totalCharacters} 字符 / ${req.preview.totalLines} 行`;
+      card.append(notice);
+    }
+    card.append(approvalText(req.kind === "edit" ? "变更预览" : "写入预览", req.preview.text));
   }
 }
 

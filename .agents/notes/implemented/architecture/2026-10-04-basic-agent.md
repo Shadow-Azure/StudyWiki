@@ -97,5 +97,6 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 - Rust 增四条命令（grep_files / authorize_read_path / append_session_event / delete_session_file）+ sidecar 配置与构建脚本；commands.md、code-map、dep-allowlist、doc-budgets 同步。
 - 环境无关性文档登记 rg sidecar（构建期打包、运行零下载）。
 - GLM/DeepSeek/Kimi/MiniMax 的已知预置模型默认声明 `tools`，自定义新增模型仍保守默认仅 `text`；app-agent 下拉标注 tools，已保存端点不做自动迁移。
-- 欠账：compaction 摘要质量无评估机制；并行工具执行；同会话多窗锁；审批卡 diff 渲染；guardian 独立模型配置槽；会话搜索/分叉；块级增量 markdown 渲染（沿 m2-02 欠账）；repeat-tool-reminder 式软防循环提示。
+- write/edit 审批契约使用有界 preview：执行层继续保存完整 content/old/new，审批卡与 guardian 只见首块纯文本 diff（write 另见首尾片段）与 omitted/总量；guardian 载荷超 16 KiB 时转人工。
+- 欠账：compaction 摘要质量无评估机制；并行工具执行；同会话多窗锁；审批卡富 diff 渲染（当前为有界纯文本 hunk）；guardian 独立模型配置槽；会话搜索/分叉；块级增量 markdown 渲染（沿 m2-02 欠账）；repeat-tool-reminder 式软防循环提示。
 - pending `ask` 审批保持进程内会话状态：切会话只重挂 UI、不重启 loop；应用关闭仍通过 dispose 将 pending fail-closed。
