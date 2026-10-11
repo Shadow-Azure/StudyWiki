@@ -1,6 +1,20 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { renderApprovalCard, renderToolCard, renderCompactionDivider } from "../src/plugins/app-agent/render";
+import {
+  createStreamRenderer,
+  renderApprovalCard,
+  renderToolCard,
+  renderCompactionDivider,
+} from "../src/plugins/app-agent/render";
+import type { PartialAssistant } from "../src/host/llm-stream";
+
+const snapshot = (patch: Partial<PartialAssistant> = {}): PartialAssistant => ({
+  reasoning: "",
+  text: "",
+  toolCalls: [],
+  ...patch,
+});
+const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 
 describe("app-agent render", () => {
   it("write 审批卡 pending：批准/拒绝回传", () => {
@@ -49,5 +63,46 @@ describe("app-agent render", () => {
     const el = renderCompactionDivider("早前讨论了线代");
     expect(el.textContent).toContain("压缩");
     expect(el.querySelector("details")?.textContent).toContain("线代");
+  });
+
+  it("流式渲染：reasoning 流式展开、finish 折叠、代码围栏包装、usage 落行", async () => {
+    const el = document.createElement("div");
+    const renderer = createStreamRenderer(el);
+    renderer.update(snapshot({
+      reasoning: "先整理公式",
+      text: "### 答案\n\n```ts\nconst answer = 42\n```",
+      usage: { promptTokens: 3, completionTokens: 5 },
+    }));
+    await nextFrame();
+
+    expect(el.querySelector<HTMLElement>(".chat-reason")?.open).toBe(true);
+    expect(el.querySelector<HTMLElement>(".chat-md")?.innerHTML).toContain("<h3>");
+    const code = el.querySelector<HTMLElement>(".chat-code");
+    expect(code?.textContent).toContain("ts");
+    expect(code?.querySelector(".chat-code-copy")).not.toBeNull();
+    expect(el.querySelector<HTMLElement>(".chat-usage")?.textContent).toContain("3 → 5 tokens");
+
+    renderer.update(snapshot({
+      reasoning: "先整理公式",
+      text: "### 答案",
+      usage: { promptTokens: 3, completionTokens: 5 },
+      finishReason: "stop",
+    }));
+    await nextFrame();
+    expect(el.querySelector<HTMLElement>(".chat-reason")?.open).toBe(false);
+    expect(el.querySelector<HTMLElement>(".chat-usage")?.textContent).toContain("finish stop");
+  });
+
+  it("流式 error chunk 渲染横幅并折叠 reasoning", async () => {
+    const el = document.createElement("div");
+    const renderer = createStreamRenderer(el);
+    renderer.update(snapshot({
+      reasoning: "半截思考",
+      error: { code: "BAD_RESPONSE", message: "响应中断" },
+    }));
+    await nextFrame();
+
+    expect(el.querySelector<HTMLElement>(".chat-reason")?.open).toBe(false);
+    expect(el.querySelector<HTMLElement>(".chat-error-text")?.textContent).toBe("BAD_RESPONSE: 响应中断");
   });
 });

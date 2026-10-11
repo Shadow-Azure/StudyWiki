@@ -72,7 +72,7 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 ### 门禁与测试
 
-- vitest（假 ctx 全链路）：loop 状态机（脚本化 chatStream 多轮工具调用）、审批路由两模式、guardian 裁决解析与 fail-closed、pending 审批快照与切回重放、JSONL 序列化/重放/截断、compaction 触发与视图重建、str-replace 边界、授权判定。
+- vitest（假 ctx 全链路）：loop 状态机（脚本化 chatStream 多轮工具调用）、审批路由两模式、guardian 裁决解析与 fail-closed、pending 审批快照与切回重放、JSONL 序列化/重放/截断、compaction 触发与视图重建、str-replace 边界、授权判定；面板回归钉住渲染器 reasoning/代码/usage/error、aborted/error 横幅、EOF 复位与卸载 late 事件隔离。
 - cargo test：`append_session_event` / `authorize_read_path` 授权校验、grep 命令预算与错误词表（fixture 目录 + 真 sidecar）。
 - 机械面：commands.md / code-map 生成区重建；`verify:layering`（新插件同样禁 `@tauri-apps/*`）、`verify:env-independence`（sidecar 登记）、`verify:dep-audit`（`@vscode/ripgrep` 白名单）、doc-budgets 登记新增常驻文档；本 Note 与 issue #30 更新（status→in-progress、adr、scope 扩 `src-tauri/**` 等）同 PR。
 

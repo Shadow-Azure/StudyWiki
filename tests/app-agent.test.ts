@@ -111,6 +111,94 @@ describe("app-agent 面板", () => {
     expect(calls[0]?.[1]).toBe("a1");
   });
 
+  it("aborted 事件渲染中断标注", async () => {
+    const { ctx, el, session, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.running = true;
+    sessionEvents.emit("e", { type: "turn-start" });
+    sessionEvents.emit("e", { type: "aborted" });
+
+    expect(el.querySelector<HTMLElement>(".chat-interrupted")?.textContent).toContain("已中断");
+  });
+
+  it("error 事件渲染面板横幅", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionEvents.emit("e", { type: "error", message: "CHAT_FAILED: 流失败" });
+
+    expect(el.querySelector<HTMLElement>(".chat-error-text")?.textContent).toBe("CHAT_FAILED: 流失败");
+  });
+
+  it("send Promise 自然结束后复位发送态，即使没有 finish/turn-end", async () => {
+    let release!: () => void;
+    const { ctx, el, session } = fakeCtx([]);
+    const settled = new Promise<void>((resolve) => {
+      release = () => {
+        session.running = false;
+        resolve();
+      };
+    });
+    session.send = () => settled;
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.running = true;
+    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "继续";
+    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
+
+    release();
+    await settled;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(el.querySelector<HTMLButtonElement>("[data-send]")?.disabled).toBe(false);
+  });
+
+  it("卸载中止在途流，late 事件不改动 transcript", async () => {
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => { release = resolve; });
+    const { ctx, el, calls, session, sessionEvents } = fakeCtx([]);
+    session.send = () => settled;
+    const dispose = apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.running = true;
+    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "在途";
+    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
+    sessionEvents.emit("e", { type: "turn-start" });
+    const transcript = el.querySelector<HTMLElement>(".agent-transcript")!;
+    const html = transcript.innerHTML;
+
+    dispose();
+    release();
+    sessionEvents.emit("e", { type: "snapshot", snapshot: { reasoning: "", text: "late", toolCalls: [] } });
+    sessionEvents.emit("e", { type: "error", message: "late error" });
+    sessionEvents.emit("e", { type: "aborted" });
+
+    expect(calls).toContainEqual(["abort"]);
+    expect(transcript.innerHTML).toBe(html);
+  });
+
+  it("卸载后 late listEndpoints 不更新已拆离面板", async () => {
+    const { ctx, el } = fakeCtx([], { models: [{ id: "m1", capabilities: ["text"] }] });
+    let resolveEndpoints!: (value: unknown) => void;
+    ctx.llm.listEndpoints = () => new Promise((resolve) => { resolveEndpoints = resolve; });
+    const dispose = apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const modelSelect = el.querySelector<HTMLSelectElement>(".agent-model-select")!;
+    const context = el.querySelector<HTMLElement>(".agent-context")!;
+    const options = modelSelect.innerHTML;
+    const contextHTML = context.innerHTML;
+    dispose();
+
+    resolveEndpoints({
+      endpoints: [{ id: "e1", kind: "chat", models: [{ id: "late", capabilities: ["text"] }] }],
+      defaultModel: "late",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(modelSelect.innerHTML).toBe(options);
+    expect(context.innerHTML).toBe(contextHTML);
+    expect(el.textContent).not.toContain("模型配置不可用");
+  });
+
   it("模式胶囊切换调 setMode", async () => {
     const { ctx, el, calls } = fakeCtx([]);
     apply(ctx as never);

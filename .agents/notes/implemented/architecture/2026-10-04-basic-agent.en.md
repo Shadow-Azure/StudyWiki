@@ -72,7 +72,7 @@ All tool results have a unified size cap; overflow is truncated and explicitly m
 
 ### Gates and tests
 
-- vitest (full chain with a fake ctx): the loop state machine (scripted chatStream multi-round tool calls), two-mode approval routing, guardian verdict parsing and fail-closed paths, pending-approval snapshots and replay after switching back, JSONL serialization/replay/truncation, compaction triggering and view rebuild, str-replace boundaries, authorization decisions.
+- vitest (full chain with a fake ctx): the loop state machine (scripted chatStream multi-round tool calls), two-mode approval routing, guardian verdict parsing and fail-closed paths, pending-approval snapshots and replay after switching back, JSONL serialization/replay/truncation, compaction triggering and view rebuild, str-replace boundaries, authorization decisions; panel regressions pin renderer reasoning/code/usage/error, aborted/error banners, EOF reset, and detached teardown event isolation.
 - cargo test: `append_session_event` / `authorize_read_path` authorization checks, grep command budgets and error vocabulary (fixture directories + the real sidecar).
 - Mechanical surface: commands.md / code-map generated regions rebuilt; `verify:layering` (new plugins equally forbidden from `@tauri-apps/*`), `verify:env-independence` (sidecar registration), `verify:dep-audit` (`@vscode/ripgrep` allowlist), doc-budgets registering new standing docs; this Note and the issue #30 update (status→in-progress, adr, scope extended with `src-tauri/**` etc.) land in the same PR.
 
