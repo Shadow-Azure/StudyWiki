@@ -125,6 +125,9 @@ export interface ChatInput {
   maxTokens?: number;
   /** Optional sampling temperature. */
   temperature?: number;
+  /** Cooperative cancellation for callers that can stop an in-flight request.
+   * This is a client-side routing input and is never serialized to Rust. */
+  signal?: AbortSignal;
 }
 
 /** Non-streaming chat result (first choice only). */
@@ -232,6 +235,9 @@ export class LlmService {
     if (req.tools?.length && !entry.capabilities.includes("tools")) {
       throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持工具调用");
     }
+    if (req.signal) {
+      return await this.#consumeChatStream(await this.chatStream(req), req.signal);
+    }
     return this.#call<ChatResult>("llm_chat", {
       req: {
         endpointId,
@@ -242,6 +248,32 @@ export class LlmService {
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       },
     });
+  }
+
+  /** Convert an abortable stream into the non-streaming result shape. */
+  async #consumeChatStream(handle: ChatStreamHandle, signal: AbortSignal): Promise<ChatResult> {
+    const abort = (): void => {
+      void handle.abort().catch(() => {});
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    try {
+      for await (const _chunk of handle.events) {
+        if (signal.aborted) abort();
+      }
+      await handle.settled;
+      const snapshot = handle.snapshot();
+      if (!snapshot.finishReason) {
+        throw new LlmError("BAD_RESPONSE", "模型响应缺少 finish reason");
+      }
+      return {
+        content: snapshot.text,
+        finishReason: snapshot.finishReason,
+        ...(snapshot.usage ? { usage: snapshot.usage } : {}),
+      };
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
   }
 
   /** 流式 chat：模型路由与 tools/媒体能力门禁在本层，chunk 经 Tauri Channel 逐个交付。

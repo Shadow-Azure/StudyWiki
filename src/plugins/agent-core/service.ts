@@ -233,7 +233,9 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         pendingApprovalRequests.set(request.id, request);
         internal.approvals.emit("approval", request);
       }),
-      chat: async (request) => ({ content: (await deps.llm.chat(request)).content }),
+      chat: async (request, signal) => ({
+        content: (await deps.llm.chat({ ...request, signal })).content,
+      }),
       log: (line) => void persist(internal, line),
     });
     const session: AgentSession = {

@@ -18,7 +18,10 @@ type ApprovalChatRequest = {
   messages: ApprovalChatMessage[];
 };
 
-type ApprovalChat = (req: ApprovalChatRequest) => Promise<{ content: string }>;
+type ApprovalChat = (
+  req: ApprovalChatRequest,
+  signal: AbortSignal,
+) => Promise<{ content: string }>;
 
 type ApprovalDecider = "human" | "guardian";
 
@@ -27,7 +30,15 @@ type PendingApproval = {
   decider: ApprovalDecider;
   resolve: (outcome: ApprovalOutcome) => void;
   settled: boolean;
+  abort?: () => void;
 };
+
+/** Shared guardian review deadline; retries never reset it. */
+export const GUARDIAN_REVIEW_TIMEOUT_MS = 90_000;
+/** Total guardian review attempts, including the first call. */
+export const GUARDIAN_MAX_REVIEW_ATTEMPTS = 3;
+/** Maximum time to wait after deadline abort for cancellation to settle. */
+const GUARDIAN_INTERRUPT_DRAIN_MS = 5_000;
 
 /** Guardian policy for stateless review of an agent tool action. */
 export const GUARDIAN_SYSTEM_PROMPT = [
@@ -42,8 +53,8 @@ export const GUARDIAN_PAYLOAD_BUDGET_BYTES = 16 * 1024;
 /**
  * Create a pure approval gate that routes requests by the current mode.
  * @param deps Injected mode source, human approver, guardian chat client, and session logger.
- * @param guardianTimeoutMs Guardian review deadline in milliseconds; production defaults to 30 seconds.
- * @param retry Parse failures and transient transport failures get bounded exponential retries; valid denials do not.
+ * @param guardianTimeoutMs Shared guardian review deadline in milliseconds; defaults to 90 seconds.
+ * @param retry Parse failures and transient transport failures get bounded retries within the shared deadline; valid denials do not.
  * @returns A gate whose canceled approvals resolve fail-closed exactly once.
  */
 export function createApprovalGate(
@@ -53,12 +64,17 @@ export function createApprovalGate(
     chat: ApprovalChat;
     log: (line: SessionLine) => void;
   },
-  guardianTimeoutMs = 30_000,
-  retry: { maxRetries?: number; sleep?: (ms: number) => Promise<void> } = {},
+  guardianTimeoutMs = GUARDIAN_REVIEW_TIMEOUT_MS,
+  retry: {
+    maxRetries?: number;
+    sleep?: (ms: number) => Promise<void>;
+    interruptDrainMs?: number;
+  } = {},
 ): ApprovalGate {
-  const maxRetries = retry.maxRetries ?? 2;
+  const maxRetries = retry.maxRetries ?? GUARDIAN_MAX_REVIEW_ATTEMPTS - 1;
   const sleep = retry.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const pending = new Set<PendingApproval>();
+  const interruptDrainMs = retry.interruptDrainMs ?? GUARDIAN_INTERRUPT_DRAIN_MS;
 
   function recordAndResolve(
     entry: PendingApproval,
@@ -83,13 +99,19 @@ export function createApprovalGate(
     entry.resolve(outcome);
   }
 
-  function track(req: ApprovalRequest, decider: ApprovalDecider, source: Promise<ApprovalOutcome>): Promise<ApprovalOutcome> {
+  function track(
+    req: ApprovalRequest,
+    decider: ApprovalDecider,
+    source: Promise<ApprovalOutcome>,
+    abort?: () => void,
+  ): Promise<ApprovalOutcome> {
     return new Promise<ApprovalOutcome>((resolve) => {
       const entry: PendingApproval = {
         request: req,
         decider,
         resolve,
         settled: false,
+        abort,
       };
       pending.add(entry);
       void source.then(
@@ -110,7 +132,10 @@ export function createApprovalGate(
     }
   }
 
-  async function askGuardian(req: ApprovalRequest): Promise<ApprovalOutcome> {
+  async function askGuardian(
+    req: ApprovalRequest,
+    controller: AbortController,
+  ): Promise<ApprovalOutcome> {
     const prompt = {
       messages: [
         { role: "system", content: GUARDIAN_SYSTEM_PROMPT },
@@ -125,19 +150,25 @@ export function createApprovalGate(
       const remaining = Math.max(0, guardianTimeoutMs - (Date.now() - startedAt));
       let response: { content: string };
       try {
-        response = await withTimeout(deps.chat(prompt), remaining);
+        response = await withGuardianDeadline(
+          deps.chat(prompt, controller.signal),
+          controller,
+          remaining,
+          interruptDrainMs,
+        );
       } catch (cause) {
-        if (attempt >= maxRetries || !isRetryableGuardianTransport(cause)) {
+        if (cause instanceof GuardianDeadlineError || attempt >= maxRetries ||
+          !isRetryableGuardianTransport(cause)) {
           return { decision: "deny", reason: describeError("Guardian 审查失败：", cause) };
         }
-        await sleep(200 * 2 ** attempt);
+        await sleep(Math.min(200 * 2 ** attempt, Math.max(0, remaining)));
         continue;
       }
       const parsed = parseGuardianResponseWithStatus(response.content);
       if (parsed.valid || attempt >= maxRetries) {
         return parsed.outcome;
       }
-      await sleep(200 * 2 ** attempt);
+      await sleep(Math.min(200 * 2 ** attempt, Math.max(0, remaining)));
     }
   }
 
@@ -146,11 +177,15 @@ export function createApprovalGate(
       const guardianAllowed = deps.mode() === "auto" &&
         guardianPayloadBytes(req) <= GUARDIAN_PAYLOAD_BUDGET_BYTES;
       const decider: ApprovalDecider = guardianAllowed ? "guardian" : "human";
-      const source = decider === "guardian" ? askGuardian(req) : askHuman(req);
-      return track(req, decider, source);
+      const controller = new AbortController();
+      const source = decider === "guardian"
+        ? askGuardian(req, controller)
+        : askHuman(req);
+      return track(req, decider, source, () => controller.abort(new Error("审批已取消")));
     },
     cancelAll(reason: string): void {
       for (const entry of [...pending]) {
+        entry.abort?.();
         recordAndResolve(entry, "unavailable", { decision: "deny", reason });
       }
     },
@@ -243,17 +278,48 @@ function isRetryableGuardianTransport(cause: unknown): boolean {
   return /\bHTTP (408|429|5\d\d)\b/.test(message) || /\b(429|408|5\d\d)\b/.test(message);
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return await promise;
+class GuardianDeadlineError extends Error {
+  constructor() {
+    super("Guardian 审查超时");
+    this.name = "GuardianDeadlineError";
+  }
+}
+
+async function withGuardianDeadline<T>(
+  promise: Promise<T>,
+  controller: AbortController,
+  timeoutMs: number,
+  interruptDrainMs: number,
+): Promise<T> {
+  const deadlineError = new GuardianDeadlineError();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    controller.abort(deadlineError);
+    await Promise.race([promise.catch(() => undefined), sleep(interruptDrainMs)]);
+    throw deadlineError;
+  }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("Guardian 审查超时")), timeoutMs);
+  let deadlineHit = false;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      deadlineHit = true;
+      controller.abort(deadlineError);
+      reject(deadlineError);
+    }, timeoutMs);
   });
 
   try {
-    return await Promise.race([promise, timeout]);
+    return await Promise.race([promise, deadline]);
+  } catch (cause) {
+    if (!deadlineHit) throw cause;
+    await Promise.race([promise.catch(() => undefined), sleep(interruptDrainMs)]);
+    throw deadlineError;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function sleep(timeoutMs: number): Promise<void> {
+  if (timeoutMs <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
 }

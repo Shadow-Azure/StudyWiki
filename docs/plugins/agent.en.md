@@ -21,7 +21,7 @@ Oversized output is truncated and marked. Outside reads/searches ask first; appr
 
 ## Approval modes
 
-The durable default approval mode for new sessions is `agentApprovalMode` in settings (default ask). Switching inside a session writes only that session log and does not rewrite the default. Approvals cover in-boundary write/edit and outside read/grep. `ask` waits for a human; `auto` uses the session model for an independent history-free guardian review with a shared 30-second deadline; JSON wrapped in reasoning/prose is extracted, parse failures and transient 408/429/5xx use two exponential-backoff retries, valid denials do not retry, and final failure denies. Abort records pending items `unavailable`; decisions and reasons enter the log.
+The durable default approval mode for new sessions is settings `agentApprovalMode` (default ask); in-session switches write only the session log. Approvals cover in-boundary write/edit and outside read/grep. `ask` waits for a human; `auto` uses the session model for independent history-free guardian review under a shared 90-second deadline and 3-attempt cap; JSON wrappers are extracted, parse failures and transient 408/429/5xx back off within that deadline, valid denials do not retry; expiry aborts and settles cancellation before timeout/final failure deny. Abort records pending items `unavailable`; decisions and reasons enter the log.
 
 ## Session format
 

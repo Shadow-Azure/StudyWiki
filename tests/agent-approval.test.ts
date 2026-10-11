@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createApprovalGate, type ApprovalGate } from "../src/plugins/agent-core/approval";
+import {
+  createApprovalGate,
+  GUARDIAN_MAX_REVIEW_ATTEMPTS,
+  GUARDIAN_REVIEW_TIMEOUT_MS,
+  type ApprovalGate,
+} from "../src/plugins/agent-core/approval";
 import type { SessionLine } from "../src/plugins/agent-core/session";
 
 const REQ = {
@@ -7,21 +12,36 @@ const REQ = {
   preview: { text: "写入 5 字节", omitted: false, totalCharacters: 5, totalLines: 1 },
 };
 
-function gateWith(mode: "ask" | "auto", impl: {
-  human?: (req: typeof REQ) => Promise<{ decision: "allow" | "deny"; reason?: string }>;
-  chat?: (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string }>;
-  retry?: { maxRetries?: number; sleep?: (ms: number) => Promise<void> };
-}) {
+function gateWith(
+  mode: "ask" | "auto",
+  impl: {
+    human?: (req: typeof REQ) => Promise<{ decision: "allow" | "deny"; reason?: string }>;
+    chat?: (
+      req: { messages: { role: string; content: string }[] },
+      signal: AbortSignal,
+    ) => Promise<{ content: string }>;
+    retry?: { maxRetries?: number; sleep?: (ms: number) => Promise<void> };
+  },
+  gateOptions?: { timeoutMs?: number; interruptDrainMs?: number },
+) {
   const log: SessionLine[] = [];
   const gate = createApprovalGate({
     mode: () => mode, log: (l) => log.push(l),
     askHuman: impl.human ?? (async () => { throw new Error("不该问人"); }),
     chat: impl.chat ?? (async () => { throw new Error("不该问模型"); }),
-  }, 30_000, impl.retry);
+  }, gateOptions?.timeoutMs ?? 30_000, {
+    ...impl.retry,
+    interruptDrainMs: gateOptions?.interruptDrainMs,
+  });
   return { gate, log };
 }
 
 describe("approval gate", () => {
+  it("uses a shared 90 second guardian deadline with three attempts", () => {
+    expect(GUARDIAN_REVIEW_TIMEOUT_MS).toBe(90_000);
+    expect(GUARDIAN_MAX_REVIEW_ATTEMPTS).toBe(3);
+  });
+
   it("ask 模式路由到人并记日志", async () => {
     const { gate, log } = gateWith("ask", { human: async () => ({ decision: "allow" }) });
     const out = await gate.ask(REQ);
@@ -140,6 +160,61 @@ describe("approval gate", () => {
     expect(calls).toBe(2);
     expect(sleeps).toEqual([200]);
     expect(out).toEqual({ decision: "allow", reason: "恢复" });
+  });
+
+  it("guardian deadline 到期 abort 当前 chat 并 fail-closed", async () => {
+    let aborted = false;
+    const { gate } = gateWith("auto", {
+      chat: (_request, signal) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("chat aborted"));
+        }, { once: true });
+      }),
+    }, { timeoutMs: 10, interruptDrainMs: 0 });
+    const out = await gate.ask(REQ);
+    expect(aborted).toBe(true);
+    expect(out.decision).toBe("deny");
+    expect(out.reason).toContain("Guardian 审查超时");
+  });
+
+  it("guardian retries share one deadline and abort the latest chat at expiry", async () => {
+    const signals: AbortSignal[] = [];
+    let calls = 0;
+    const { gate } = gateWith("auto", {
+      chat: (_request, signal) => {
+        calls += 1;
+        signals.push(signal);
+        if (calls === 1) {
+          throw Object.assign(new Error("BAD_RESPONSE: HTTP 529"), { code: "BAD_RESPONSE" });
+        }
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("chat aborted")), { once: true });
+        });
+      },
+      retry: { maxRetries: 2, sleep: async () => {} },
+    }, { timeoutMs: 10, interruptDrainMs: 0 });
+    const out = await gate.ask(REQ);
+    expect(calls).toBe(2);
+    expect(signals[1]?.aborted).toBe(true);
+    expect(out.decision).toBe("deny");
+    expect(out.reason).toContain("Guardian 审查超时");
+  });
+
+  it("cancelAll aborts the active guardian chat before settling unavailable", async () => {
+    let aborted = false;
+    const { gate } = gateWith("auto", {
+      chat: (_request, signal) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("chat aborted"));
+        }, { once: true });
+      }),
+    }, { timeoutMs: 30_000 });
+    const pending = gate.ask(REQ);
+    gate.cancelAll("已停止");
+    await expect(pending).resolves.toMatchObject({ decision: "deny", reason: "已停止" });
+    expect(aborted).toBe(true);
   });
 
   it("cancelAll 悬挂审批 fail-closed", async () => {
