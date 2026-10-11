@@ -14,6 +14,18 @@ export interface AgentHost {
   authorizeRead(path: string): Promise<void>;
 }
 
+/** Bounded approval-display payload; never carries the full execution payload. */
+export interface ApprovalPreview {
+  /** Human-readable bounded preview or contextual diff. */
+  text: string;
+  /** True when any part of the source action is not represented in `text`. */
+  omitted: boolean;
+  /** Full action size before preview bounding, in UTF-16 code units. */
+  totalCharacters: number;
+  /** Full action line count before preview bounding. */
+  totalLines: number;
+}
+
 /** Approval-card payload; write/edit decisions occur before any disk mutation. */
 export interface ApprovalRequest {
   /** Stable request id, normally the model tool-call id. */
@@ -26,10 +38,8 @@ export interface ApprovalRequest {
   path: string;
   /** Short human-readable action summary. */
   summary: string;
-  /** Edit comparison source, attached only by the edit tool. */
-  oldText?: string;
-  /** Edit replacement text, attached only by the edit tool. */
-  newText?: string;
+  /** Bounded write/edit payload consumed by the UI and guardian; absent for path-only approvals. */
+  preview?: ApprovalPreview;
 }
 
 /** Human approval result; `grant` applies only to read-outside requests. */
@@ -127,6 +137,9 @@ export const TOOL_DECLARATIONS: ToolDeclaration[] = [
 const UNAUTHORIZED_PREFIX = "UNAUTHORIZED_PATH|";
 const MAX_READ_LINES = 2000;
 const MAX_READ_BYTES = 200 * 1024;
+/** Upper bound for rendered approval text; larger payloads keep head/tail and an omission marker. */
+export const MAX_APPROVAL_PREVIEW_CHARACTERS = 2_000;
+const APPROVAL_PREVIEW_CONTEXT_LINES = 3;
 const READ_TRUNCATION_NOTICE = "\n\n...（输出超过 200 KB，已截断）";
 const BINARY_EXTENSIONS = new Set([
   "xlsx", "xls", "pdf", "zip", "gz", "tar", "7z", "rar",
@@ -223,13 +236,83 @@ async function executeWrite(call: AgentToolCall, args: Record<string, unknown>, 
     tool: "write",
     path,
     summary: `写入 ${content.length} 字符`,
-    newText: content,
+    preview: createTextPreview(content, content.length, countContentLines(content)),
   });
   if (!approval.ok) return approval.result;
   if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝写入");
 
   await ctx.host.writeText(path, content);
   return { content: `已写入 ${path}` };
+}
+
+/** Bound one approval payload while preserving head and tail context. */
+function createTextPreview(
+  text: string,
+  totalCharacters: number,
+  totalLines: number,
+  omitted = text.length > MAX_APPROVAL_PREVIEW_CHARACTERS,
+): ApprovalPreview {
+  if (!omitted && text.length <= MAX_APPROVAL_PREVIEW_CHARACTERS) {
+    return { text, omitted: false, totalCharacters, totalLines };
+  }
+  const omittedCount = Math.max(0, text.length - MAX_APPROVAL_PREVIEW_CHARACTERS);
+  const marker = `…（已省略 ${omittedCount} 字符）…`;
+  const sideLength = Math.max(
+    0,
+    Math.floor((MAX_APPROVAL_PREVIEW_CHARACTERS - marker.length - 2) / 2),
+  );
+  const bounded = text.length <= MAX_APPROVAL_PREVIEW_CHARACTERS
+    ? text
+    : `${text.slice(0, sideLength)}\n${marker}\n${text.slice(-sideLength)}`;
+  return { text: bounded, omitted: true, totalCharacters, totalLines };
+}
+
+/** Build a first-hunk edit preview with surrounding unchanged lines. */
+function buildEditPreview(
+  current: string | null,
+  oldString: string,
+  newString: string,
+): ApprovalPreview {
+  const totalCharacters = oldString.length + newString.length;
+  const totalLines = countContentLines(oldString) + countContentLines(newString);
+  if (current === null || !current.includes(oldString)) {
+    return createTextPreview(`- ${oldString}\n+ ${newString}`, totalCharacters, totalLines, true);
+  }
+
+  const currentLines = splitContentLines(current);
+  const firstLine = countContentLines(current.slice(0, current.indexOf(oldString)));
+  const lastLine = firstLine + splitContentLines(oldString).length - 1;
+  const start = Math.max(0, firstLine - APPROVAL_PREVIEW_CONTEXT_LINES);
+  const end = Math.min(currentLines.length - 1, lastLine + APPROVAL_PREVIEW_CONTEXT_LINES);
+  const before = currentLines.slice(start, firstLine);
+  const after = currentLines.slice(lastLine + 1, end + 1);
+  const oldMatchLines = splitContentLines(oldString);
+  const newMatchLines = splitContentLines(newString);
+  const lines = [
+    ...before.map((line) => ` ${line}`),
+    ...oldMatchLines.map((line) => `-${line}`),
+    ...newMatchLines.map((line) => `+${line}`),
+    ...after.map((line) => ` ${line}`),
+  ];
+  const oldLength = before.length + oldMatchLines.length + after.length;
+  const newLength = before.length + (newString.length === 0 ? 0 : newMatchLines.length) + after.length;
+  let text = `@@ -${start + 1},${oldLength} +${start + 1},${newLength} @@\n${lines.join("\n")}`;
+  const matchCount = countOccurrences(current, oldString);
+  const multiple = matchCount > 1;
+  if (multiple) text += `\n…（共 ${matchCount} 处匹配，仅显示第一处）…`;
+  return createTextPreview(text, totalCharacters, totalLines, multiple);
+}
+
+/** Split common newline forms while keeping empty intermediate lines. */
+function splitContentLines(value: string): string[] {
+  return value.length === 0 ? [] : value.split(/\r\n|\r|\n/);
+}
+
+/** Count user-visible lines; a trailing newline closes the prior line. */
+function countContentLines(value: string): number {
+  if (value.length === 0) return 0;
+  const lines = value.split(/\r\n|\r|\n/);
+  return value.endsWith("\n") || value.endsWith("\r") ? lines.length - 1 : lines.length;
 }
 
 async function executeEdit(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
@@ -243,14 +326,20 @@ async function executeEdit(call: AgentToolCall, args: Record<string, unknown>, c
   if (oldString === "") return { content: "old_string 不能是空字符串。", isError: true };
   if (!isWithinRoot(path, ctx.root)) return { content: "edit 拒绝：目标路径不在库根内；写入永远不会越界。", isError: true };
 
+  let currentForPreview: string | null = null;
+  try {
+    currentForPreview = await ctx.host.readText(path);
+  } catch {
+    // Preserve approval-then-read behavior: preview failures do not leak
+    // authorization errors or turn into execution results before approval.
+  }
   const approval = await askApproval(ctx, {
     id: call.id,
     kind: "edit",
     tool: "edit",
     path,
-    summary: "文本替换",
-    oldText: oldString,
-    newText: newString,
+    summary: `文本替换（旧 ${oldString.length} 字符 · 新 ${newString.length} 字符）`,
+    preview: buildEditPreview(currentForPreview, oldString, newString),
   });
   if (!approval.ok) return approval.result;
   if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝编辑");

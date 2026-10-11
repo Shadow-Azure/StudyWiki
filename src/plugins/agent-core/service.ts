@@ -40,6 +40,8 @@ export interface AgentSession {
   on(listener: (e: AgentEvent) => void): () => void;
   /** Subscribe to human approval requests raised in `ask` mode. */
   onApproval(listener: (req: ApprovalRequest) => void): () => void;
+  /** Snapshot human approval requests still awaiting a decision in this process. */
+  pendingApprovals(): ApprovalRequest[];
   /** Append user input, run the next turn, and persist completed messages. */
   send(text: string, content?: ContentPart[]): Promise<void>;
   /** Stop the active stream and fail all pending human approvals closed. */
@@ -115,6 +117,7 @@ interface InternalSession {
   events: PluginEmitter<AgentEvent>;
   approvals: PluginEmitter<ApprovalRequest>;
   pendingApprovals: Map<string, (outcome: ApprovalOutcome) => void>;
+  pendingApprovalRequests: Map<string, ApprovalRequest>;
   gate: ApprovalGate;
   isNew: boolean;
   persistQueue: Promise<void>;
@@ -192,6 +195,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
   ): { internal: InternalSession; session: AgentSession } {
     const controller = new AbortController();
     const pendingApprovals = new Map<string, (outcome: ApprovalOutcome) => void>();
+    const pendingApprovalRequests = new Map<string, ApprovalRequest>();
     const internal: InternalSession = {
       id: header.id,
       path,
@@ -206,6 +210,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       events: createPluginEmitter<AgentEvent>(),
       approvals: createPluginEmitter<ApprovalRequest>(),
       pendingApprovals,
+      pendingApprovalRequests,
       gate: undefined as unknown as ApprovalGate,
       isNew,
       persistQueue: Promise.resolve(),
@@ -219,10 +224,18 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
     internal.gate = createApprovalGate({
       mode: () => internal.mode,
       askHuman: (request) => new Promise<ApprovalOutcome>((resolve) => {
-        pendingApprovals.set(request.id, resolve);
+        const settle = (outcome: ApprovalOutcome): void => {
+          pendingApprovals.delete(request.id);
+          pendingApprovalRequests.delete(request.id);
+          resolve(outcome);
+        };
+        pendingApprovals.set(request.id, settle);
+        pendingApprovalRequests.set(request.id, request);
         internal.approvals.emit("approval", request);
       }),
-      chat: async (request) => ({ content: (await deps.llm.chat(request)).content }),
+      chat: async (request, signal) => ({
+        content: (await deps.llm.chat({ ...request, signal })).content,
+      }),
       log: (line) => void persist(internal, line),
     });
     const session: AgentSession = {
@@ -243,6 +256,9 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
       },
       onApproval(listener) {
         return internal.approvals.on("approval", listener);
+      },
+      pendingApprovals() {
+        return [...internal.pendingApprovalRequests.values()];
       },
       async send(text, content) {
         if (internal.running) throw new Error("会话正在运行");
@@ -306,6 +322,8 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         current.abort();
         internal.controller = new AbortController();
         internal.gate.cancelAll("已停止");
+        internal.pendingApprovals.clear();
+        internal.pendingApprovalRequests.clear();
       },
       setModel(next) {
         internal.model = next;
@@ -319,6 +337,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
         const resolve = internal.pendingApprovals.get(requestId);
         if (!resolve) return;
         internal.pendingApprovals.delete(requestId);
+        internal.pendingApprovalRequests.delete(requestId);
         resolve(outcome);
       },
     };

@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "ripgrep:provision": "node scripts/provision-ripgrep.mjs",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "pnpm ripgrep:provision && tauri",
     "lint:docs": "node scripts/run-gates.mjs --mode doc-quick",
     "verify:docs": "node scripts/run-gates.mjs --mode doc-sync",
     "verify:release": "node scripts/run-gates.mjs --mode release",

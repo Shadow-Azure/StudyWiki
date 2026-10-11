@@ -13,17 +13,22 @@ scope:
   - .agents/plans/**
   - .gitignore
   - .github/workflows/ci.yml
+  - .github/workflows/release.yml
   - docs/README.*
   - docs/architecture.*
   - docs/commands.*
   - docs/environment-independence.*
+  - docs/development.*
   - docs/plugins/*
+  - docs/release-checklist.*
   - package.json
   - pnpm-lock.yaml
   - scripts/code-map.manifest.json
   - scripts/dep-allowlist.json
   - scripts/doc-budgets.manifest.json
   - scripts/install-git-hooks.*
+  - scripts/provision-ripgrep.*
+  - scripts/ripgrep-manifest.json
   - src/host/**
   - src/loader/**
   - src/plugins/**
@@ -32,6 +37,7 @@ scope:
   - src-tauri/**
   - src/ui/**
   - tests/**
+  - AGENTS.md
 adr:
   - ../../notes/implemented/architecture/2026-10-04-basic-agent.md
 github:

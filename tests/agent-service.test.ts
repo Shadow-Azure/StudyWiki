@@ -180,6 +180,36 @@ describe("AgentService", () => {
     expect(next.mode).toBe("auto");
   });
 
+  it("ask 审批等待期间暴露快照，人答后清空并可完成回合", async () => {
+    const { svc } = serviceWith({}, { scripts: [WRITE_CALL, TEXT("完成")] });
+    const session = await svc.openSession(null, "ask");
+    const pending = session.send("写笔记");
+
+    await vi.waitFor(() => expect(session.pendingApprovals()).toHaveLength(1));
+    const request = session.pendingApprovals()[0]!;
+    expect(request).toMatchObject({ kind: "write", tool: "write", path: "/lib/n.md" });
+
+    session.respond(request.id, { decision: "allow", reason: "通过" });
+    await pending;
+    expect(session.pendingApprovals()).toEqual([]);
+    expect(session.lines().at(-1)).toMatchObject({ type: "message", message: { text: "完成" } });
+  });
+
+  it("ask 审批等待期间停止会清空快照并落 unavailable", async () => {
+    const { svc, host } = serviceWith({}, { scripts: [WRITE_CALL, TEXT("完成")] });
+    const session = await svc.openSession(null, "ask");
+    const pending = session.send("写笔记");
+
+    await vi.waitFor(() => expect(session.pendingApprovals()).toHaveLength(1));
+    const request = session.pendingApprovals()[0]!;
+    await session.abort();
+    await pending;
+
+    expect(session.pendingApprovals()).toEqual([]);
+    expect(session.lines().some((line) => line.type === "approval" &&
+      line.id === request.id && line.decision === "unavailable")).toBe(true);
+  });
+
   it("附件-only 首发保留标题改写资格，后续文本重写文件头", async () => {
     const { svc, host } = serviceWith({}, {
       scripts: [TEXT("附件回合"), TEXT("文字回合")],

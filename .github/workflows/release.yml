@@ -21,12 +21,15 @@ jobs:
           - label: macOS (universal)
             os: macos-latest
             args: --target universal-apple-darwin
+            ripgrep_targets: --target aarch64-apple-darwin --target x86_64-apple-darwin
           - label: Windows (x64, NSIS)
             os: windows-latest
             args: ""
+            ripgrep_targets: --target x86_64-pc-windows-msvc
           - label: Linux (x64, AppImage)
             os: ubuntu-latest
             args: ""
+            ripgrep_targets: --target x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
@@ -46,10 +49,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: pnpm install --frozen-lockfile
+      - name: 供给 pinned ripgrep sidecar
+        shell: bash
+        run: pnpm ripgrep:provision -- ${{ matrix.ripgrep_targets }}
       - name: 发布门禁（版本一致 + 环境无关，产物前置检查）
         run: node scripts/run-gates.mjs --mode release --tag ${{ github.ref_name }}
       - name: 构建
-        run: pnpm tauri build ${{ matrix.args }}
+        run: pnpm exec tauri build ${{ matrix.args }}
       - name: 发布门禁（环境无关 · 产物扫描）
         run: node scripts/verify-env-independence.mjs
       - name: 产物非空校验

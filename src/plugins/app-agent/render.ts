@@ -324,9 +324,9 @@ export function renderApprovalPrompt(
   path.className = "agent-approval-path";
   path.textContent = req.path;
   sub.append(path);
-  if (req.newText) {
+  if (req.preview) {
     const size = document.createElement("span");
-    size.textContent = ` · ${[...req.newText].length} 字符`;
+    size.textContent = ` · ${req.preview.totalCharacters} 字符`;
     sub.append(size);
   }
   body.append(question, sub);
@@ -407,29 +407,17 @@ export function renderApprovalDetail(req: ApprovalRequest): HTMLElement {
     rows.append(row);
   };
   addRow("目标", req.path, true);
-  if (req.newText) {
-    addRow("变更", `+${[...req.newText].length} 字符${req.oldText ? ` · 替换 ${[...req.oldText].length} 字符` : ""}`);
+  if (req.preview) {
+    addRow(
+      "变更",
+      `${req.preview.totalCharacters} 字符 · ${req.preview.totalLines} 行${req.preview.omitted ? " · 已省略" : ""}`,
+    );
   }
   addRow("工具", `${req.tool}(${req.kind})`, true);
-  if (req.newText || req.oldText) {
+  if (req.preview) {
     const diff = document.createElement("pre");
     diff.className = "agent-approval-diff";
-    if (req.oldText) {
-      for (const lineText of req.oldText.split("\n")) {
-        const line = document.createElement("span");
-        line.className = "del";
-        line.textContent = `-${lineText}`;
-        diff.append(line);
-      }
-    }
-    if (req.newText) {
-      for (const lineText of req.newText.split("\n")) {
-        const line = document.createElement("span");
-        line.className = "add";
-        line.textContent = `+${lineText}`;
-        diff.append(line);
-      }
-    }
+    diff.textContent = req.preview.text;
     rows.append(diff);
   }
   const note = document.createElement("div");

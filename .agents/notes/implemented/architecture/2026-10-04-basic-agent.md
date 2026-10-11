@@ -44,9 +44,9 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 
 工具结果统一大小上限，超限截断并显式标注。「当前打开的文件」不做占位符魔法：活动文件路径在 system prompt 里，模型自己传给 read。
 
-### grep 供给：sidecar ripgrep（dsh 式构建期打包）
+### grep 供给：sidecar ripgrep（pinned 构建期打包）
 
-- 二进制经 `@vscode/ripgrep` npm 包供给（当前 1.18.0，内含 ripgrep 15.0.0；「npm 当仓库用」定论的延伸），构建脚本复制为 Tauri sidecar（`binaries/rg-<target-triple>`），CI 按平台构建各拿各的；`dep-allowlist` 登记该包，`docs/environment-independence.md` 登记自带 sidecar 说明。否决 pi 式运行时下载（硬约束直接拒绝）与纯前端 TS 扫描（遍历已在 Rust——read_tree 同族，IPC 只回命中行）。
+- 二进制由 `scripts/ripgrep-manifest.json` 固定 ripgrep 15.2.0 官方 release 资产；`pnpm ripgrep:provision` 按 Rust target 下载、校验 SHA-256、缓存并落位 Tauri sidecar（`binaries/rg-<target-triple>`）。`build.rs` 只校验输出与其 SHA 元数据，不再解析包管理器布局；CI Rust lane 构建前供给宿主 target，release lane 显式供给 macOS 双 target 与 Windows/Linux。否决包管理器 optional dependency 决定目标平台的隐式布局，也继续否决运行时下载与纯前端 TS 扫描。
 - Rust 新增 grep 命令：裸 argv spawn（不过 shell，无引号面）、解析 `rg --json` 完整 stdout、上述预算与错误词表；spawn 前过 `path_authorized`（与所有文件命令同一决策点）。
 
 ### 授权边界与越界读
@@ -60,19 +60,21 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 - 需审批的动作仅两类：授权集合内的 write/edit；越界 read/grep。其余直接执行。
 - 两模式共享同一审批事件流，区别只在应答者：**请求批准**（新建会话 durable 默认，settings `agentApprovalMode` 可改）= 审批卡等人点击（write 内容预览 / edit old-new 对照 / 越界读粒度选择；批准一次 / 拒绝附理由回灌）；**帮我批准** = guardian 审查调用自动裁决——一次独立 `ctx.llm.chat`（非流式、无状态、不带会话历史、用当前会话同模型）：系统提示为审查策略（库内笔记写入放行；可疑越界读、批量覆盖、明显注入指令拒绝），输入为工具名 + 参数摘要，输出结构化裁决 + 理由。JSON 被推理/说明文本包裹时提取后仍严格校验；解析失败与 408/429/5xx 瞬态错误按 200ms/400ms 退避重试两次，有效拒绝不重试；超时/最终失败一律 fail-closed 视为拒绝。裁决与理由落 `approval/decided` 并在 UI 审批卡只读留痕。
 - durable 默认只影响新会话；模式在会话内随时切换，`mode/changed` 落日志 + 下回合 system prompt 模式句更新，且不回写全局默认。否决第三档「零审查自动写」（帮我批准已覆盖无人值守且多一层网）与规则引擎（always-allow 持久规则，YAGNI）。
+- ask pending 审批属于同进程会话状态：会话投影用 `pendingApprovals()` 暴露快照，应答或取消即清空；切会话只拆绑 UI，不中止 loop。`app-agent` attach 时先重放已落账裁决，再按 id 去重重放 pending 卡，使离开视线的审批仍可回答；跨进程不复活审批，正常关闭由 dispose fail-closed 落 `unavailable`。
 
 ### 会话持久化与恢复
 
 - 落点 `~/.study-wiki/sessions/<library-key>/<session-id>.jsonl`：离开学习库，避免应用日志进入通用 grep；`library-key` 由库根 sanitize + 稳定 hash 生成，header 行带**格式版本号**（dsh v0→v1 迁移的教训前置）+ `rootPath`（校验用，库移动后提示）+ 标题（首条用户消息前 50 字）。旧库内会话列出时一次性迁移。
 - 事件一行一条，**完成才落盘**（流式 delta 永不落盘）；新增 Rust `append_session_event` 命令（O(1) 单行追加，过 `path_authorized`）。
 - 库间物理隔离：列表只读当前 root 的 sessions 目录，换 root 即换列表。会话投影暴露 `title`、`messages()`、`lines()`、运行态与 `setModel`，UI 只消费该面。恢复语义 = **只加载不自动跑**：重放 JSONL 渲染历史（含工具卡与审批卡历史样貌），loop 等用户发新消息才续；崩溃尾巴截断到最后完整事件并标注；悬空审批判 `unavailable`（fail-closed，不复活可点卡片）。约定「一个会话同一时间只在一个窗口驱动」，不做锁。
+- pending 审批快照是同进程恢复缝，不是持久工作流：切走/切回保真恢复操作入口；应用重开只能看到已结算的历史卡。若崩溃前没来得及写 `unavailable`，重开后既无 resolver 也不重放可点卡，后续对账只做 fail-closed。
 - **compaction 做**：最近响应 `usage.promptTokens` 超阈值（默认 80k，settings 可配）时，下一回合前先把旧段（前半历史）送一次独立摘要调用（保留：用户目标、结论、写改过的文件路径、未完成待办），新段（含最近工具结果）原样保留；旧段替换为摘要消息并落 `compaction` 事件。**日志保留全文**（压缩只影响喂模型的视图），重放按 compaction 事件重建同一有效视图；UI 在压缩点插分隔条（可展开看摘要）。否决多级递归压缩与 tokenizer 精裁（不引依赖，用 usage 实测值）。
 
 ### 门禁与测试
 
-- vitest（假 ctx 全链路）：loop 状态机（脚本化 chatStream 多轮工具调用）、审批路由两模式、guardian 裁决解析与 fail-closed、JSONL 序列化/重放/截断、compaction 触发与视图重建、str-replace 边界、授权判定。
-- cargo test：`append_session_event` / `authorize_read_path` 授权校验、grep 命令预算与错误词表（fixture 目录 + 真 sidecar）。
-- 机械面：commands.md / code-map 生成区重建；`verify:layering`（新插件同样禁 `@tauri-apps/*`）、`verify:env-independence`（sidecar 登记）、`verify:dep-audit`（`@vscode/ripgrep` 白名单）、doc-budgets 登记新增常驻文档；本 Note 与 issue #30 更新（status→in-progress、adr、scope 扩 `src-tauri/**` 等）同 PR。
+- vitest（假 ctx 全链路）：loop 状态机（脚本化 chatStream 多轮工具调用）、审批路由两模式、guardian 裁决解析与 fail-closed、pending 审批快照与切回重放、JSONL 序列化/重放/截断、compaction 触发与视图重建、str-replace 边界、授权判定；面板回归钉住渲染器 reasoning/代码/usage/error、aborted/error 横幅、EOF 复位与卸载 late 事件隔离。
+- cargo test：`append_session_event` / `authorize_read_path` 授权校验、grep 命令预算与错误词表（fixture 目录 + 真 sidecar），以及供给产物 SHA 元数据；Vitest 钉 manifest target 集、SHA mismatch、跨 target sidecar 文件名和缓存修复。
+- 机械面：commands.md / code-map 生成区重建；`verify:layering`（新插件同样禁 `@tauri-apps/*`）、`verify:env-independence`（sidecar 登记）、`verify:dep-audit`（依赖白名单）、doc-budgets 登记新增常驻文档；本 Note 与 issue #30 更新（status→in-progress、adr、scope 扩 `src-tauri/**` 等）同 PR。
 
 ## Alternatives considered
 
@@ -94,4 +96,7 @@ m2-02 之后宿主有了流式推理与 chat 面板，但模型仍只能「聊�
 - app-chat 退役；`sidebar.right` 唯一注册者换成 app-agent；m2-02 的渲染与附件投入整体继承。
 - Rust 增四条命令（grep_files / authorize_read_path / append_session_event / delete_session_file）+ sidecar 配置与构建脚本；commands.md、code-map、dep-allowlist、doc-budgets 同步。
 - 环境无关性文档登记 rg sidecar（构建期打包、运行零下载）。
-- 欠账：compaction 摘要质量无评估机制；并行工具执行；同会话多窗锁；审批卡 diff 渲染；guardian 独立模型配置槽；会话搜索/分叉；块级增量 markdown 渲染（沿 m2-02 欠账）；repeat-tool-reminder 式软防循环提示。
+- GLM/DeepSeek/Kimi/MiniMax 的已知预置模型默认声明 `tools`，自定义新增模型仍保守默认仅 `text`；app-agent 下拉标注 tools，已保存端点不做自动迁移。
+- write/edit 审批契约使用有界 preview：执行层继续保存完整 content/old/new，审批卡与 guardian 只见首块纯文本 diff（write 另见首尾片段）与 omitted/总量；guardian 载荷超 16 KiB 时转人工。
+- 欠账：compaction 摘要质量无评估机制；并行工具执行；同会话多窗锁；审批卡富 diff 渲染（当前为有界纯文本 hunk）；guardian 独立模型配置槽；会话搜索/分叉；块级增量 markdown 渲染（沿 m2-02 欠账）；repeat-tool-reminder 式软防循环提示。
+- pending `ask` 审批保持进程内会话状态：切会话只重挂 UI、不重启 loop；应用关闭仍通过 dispose 将 pending fail-closed。

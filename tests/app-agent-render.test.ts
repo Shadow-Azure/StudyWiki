@@ -1,12 +1,24 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { renderApprovalPrompt, renderToolCard, renderCompactionDivider, createProcessGroup, renderDecisionLine } from "../src/plugins/app-agent/render";
+import { createStreamRenderer, renderApprovalPrompt, renderToolCard, renderCompactionDivider, createProcessGroup, renderDecisionLine } from "../src/plugins/app-agent/render";
+import type { PartialAssistant } from "../src/host/llm-stream";
+
+const snapshot = (patch: Partial<PartialAssistant> = {}): PartialAssistant => ({
+  reasoning: "",
+  text: "",
+  toolCalls: [],
+  ...patch,
+});
+const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 
 describe("app-agent render", () => {
   it("审批 prompt：批准/拒绝回传，详情含 diff 文本", () => {
     const outcomes: string[] = [];
     const h = renderApprovalPrompt(
-      { id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入笔记", newText: "# 笔记" },
+      {
+        id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入笔记",
+        preview: { text: "# 笔记", omitted: false, totalCharacters: 4, totalLines: 1 },
+      },
       (o) => outcomes.push(o.decision),
     );
     expect(h.root.textContent).toContain("/lib/n.md");
@@ -28,7 +40,10 @@ describe("app-agent render", () => {
 
   it("详情浮层 toggle 状态由 handle 暴露", () => {
     const h = renderApprovalPrompt(
-      { id: "a4", kind: "write", tool: "write", path: "/lib/b.md", summary: "写", newText: "x" },
+      {
+        id: "a4", kind: "write", tool: "write", path: "/lib/b.md", summary: "写",
+        preview: { text: "x", omitted: false, totalCharacters: 1, totalLines: 1 },
+      },
       () => {},
     );
     expect(h.detail.classList.contains("open")).toBe(false);
@@ -36,6 +51,20 @@ describe("app-agent render", () => {
     expect(h.detail.classList.contains("open")).toBe(true);
     h.toggle.click();
     expect(h.detail.classList.contains("open")).toBe(false);
+  });
+
+  it("审批详情只渲染有界 preview，不泄漏完整载荷", () => {
+    const fullTail = "机密尾部".repeat(100);
+    const h = renderApprovalPrompt(
+      {
+        id: "a5", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入超长笔记",
+        preview: { text: "机密头部…（已省略 100 字符）…", omitted: true, totalCharacters: 400, totalLines: 1 },
+      },
+      () => {},
+    );
+    expect(h.detail.textContent).toContain("机密头部");
+    expect(h.detail.textContent).toContain("已省略");
+    expect(h.detail.textContent).not.toContain(fullTail);
   });
 
   it("工具卡结果折叠与错误样式", () => {
@@ -88,5 +117,46 @@ describe("agent-ui v2 过程组", () => {
     expect(el.textContent).toContain("已批准写入 summary.md");
     expect(el.textContent).toContain("用户");
     expect(el.querySelector("button")).toBeNull();
+  });
+
+  it("流式渲染：reasoning 流式展开、finish 折叠、代码围栏包装、usage 落行", async () => {
+    const el = document.createElement("div");
+    const renderer = createStreamRenderer(el);
+    renderer.update(snapshot({
+      reasoning: "先整理公式",
+      text: "### 答案\n\n```ts\nconst answer = 42\n```",
+      usage: { promptTokens: 3, completionTokens: 5 },
+    }));
+    await nextFrame();
+
+    expect(el.querySelector<HTMLElement>(".chat-reason")?.open).toBe(true);
+    expect(el.querySelector<HTMLElement>(".chat-md")?.innerHTML).toContain("<h3>");
+    const code = el.querySelector<HTMLElement>(".chat-code");
+    expect(code?.textContent).toContain("ts");
+    expect(code?.querySelector(".chat-code-copy")).not.toBeNull();
+    expect(el.querySelector<HTMLElement>(".chat-usage")?.textContent).toContain("3 → 5 tokens");
+
+    renderer.update(snapshot({
+      reasoning: "先整理公式",
+      text: "### 答案",
+      usage: { promptTokens: 3, completionTokens: 5 },
+      finishReason: "stop",
+    }));
+    await nextFrame();
+    expect(el.querySelector<HTMLElement>(".chat-reason")?.open).toBe(false);
+    expect(el.querySelector<HTMLElement>(".chat-usage")?.textContent).toContain("finish stop");
+  });
+
+  it("流式 error chunk 渲染横幅并折叠 reasoning", async () => {
+    const el = document.createElement("div");
+    const renderer = createStreamRenderer(el);
+    renderer.update(snapshot({
+      reasoning: "半截思考",
+      error: { code: "BAD_RESPONSE", message: "响应中断" },
+    }));
+    await nextFrame();
+
+    expect(el.querySelector<HTMLElement>(".chat-reason")?.open).toBe(false);
+    expect(el.querySelector<HTMLElement>(".chat-error-text")?.textContent).toBe("BAD_RESPONSE: 响应中断");
   });
 });

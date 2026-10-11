@@ -8,7 +8,7 @@ const preset = {
   vendor: "deepseek",
   name: "DeepSeek",
   baseUrl: "https://api.deepseek.com/v1",
-  models: [{ id: "deepseek-v4-pro", capabilities: ["text"] }],
+  models: [{ id: "deepseek-v4-pro", capabilities: ["text", "tools"] }],
 };
 
 // 钉子（PR #15 检视 §6.14）：doc-markdown 的关闭守卫在每个窗口注册 onCloseRequested
@@ -47,7 +47,7 @@ describe("llm-settings capability checkboxes", () => {
     return { ctx: { llm, slots }, upserts, renders };
   }
 
-  it("tools 能力可勾选保存并进入 upsert 载荷", async () => {
+  it("厂商预置模型默认启用 tools 并进入 upsert 载荷", async () => {
     const { ctx, upserts, renders } = fakeCtx();
     llmSettings.apply(ctx as never);
     const host = document.createElement("div");
@@ -62,8 +62,7 @@ describe("llm-settings capability checkboxes", () => {
     (form.querySelector("[name=vendor]") as HTMLSelectElement).dispatchEvent(new Event("change"));
     const tools = form.querySelector("[name=tools]") as HTMLInputElement;
     expect(tools).not.toBeNull();
-    tools.checked = true;
-    tools.dispatchEvent(new Event("change"));
+    expect(tools.checked).toBe(true);
     (form.querySelector("[name=apiKey]") as HTMLInputElement).value = "sk-test";
     (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
       Promise.resolve({
@@ -74,7 +73,7 @@ describe("llm-settings capability checkboxes", () => {
     form.dispatchEvent(new Event("submit", { cancelable: true }));
     await new Promise((r) => setTimeout(r));
     const caps = (upserts[0].endpoint as { models: { capabilities: string[] }[] }).models[0].capabilities;
-    expect(caps).toContain("tools");
+    expect(caps).toEqual(["text", "tools"]);
 
     const card = document.querySelector(".llm-card") as HTMLElement;
     (card.querySelectorAll("button")[1] as HTMLButtonElement).click();
@@ -88,5 +87,33 @@ describe("llm-settings capability checkboxes", () => {
     await new Promise((r) => setTimeout(r));
     const savedCaps = (upserts[1].endpoint as { models: { capabilities: string[] }[] }).models[0].capabilities;
     expect(savedCaps).not.toContain("tools");
+  });
+
+  it("自定义新增模型保持 tools 默认关闭", async () => {
+    const { ctx, upserts, renders } = fakeCtx();
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    (document.querySelector(".llm-panel [data-action=add]") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const form = document.querySelector(".llm-panel form") as HTMLFormElement;
+    const vendor = form.querySelector("[name=vendor]") as HTMLSelectElement;
+    vendor.value = "custom";
+    vendor.dispatchEvent(new Event("change"));
+    (form.querySelector(".llm-model-add") as HTMLButtonElement).click();
+    const tools = form.querySelector("[name=tools]") as HTMLInputElement;
+    expect(tools.checked).toBe(false);
+    (form.querySelector("[name=id]") as HTMLInputElement).value = "custom-endpoint";
+    (form.querySelector("[name=name]") as HTMLInputElement).value = "自定义端点";
+    (form.querySelector("[name=baseUrl]") as HTMLInputElement).value = "https://example.com/v1";
+    (form.querySelector(".llm-model-row input") as HTMLInputElement).value = "custom-model";
+    (form.querySelector(".llm-model-row input") as HTMLInputElement).dispatchEvent(new Event("input"));
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await new Promise((r) => setTimeout(r));
+    const caps = (upserts[0].endpoint as { models: { capabilities: string[] }[] }).models[0].capabilities;
+    expect(caps).toEqual(["text"]);
   });
 });

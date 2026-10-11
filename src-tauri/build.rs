@@ -1,58 +1,68 @@
-use std::{env, fs, path::PathBuf};
+use sha2::{Digest, Sha256};
+use std::{env, fs, path::Path, path::PathBuf};
 
-/// 构建期把 @vscode/ripgrep 的平台二进制落位为 Tauri sidecar（npm 当仓库用，
-/// 运行零下载；node_modules 缺失时明确指向 pnpm install）。同时导出 TARGET_TRIPLE
-/// 供运行期解析 sidecar 文件名。
+/// 校验供给脚本已按 Rust TARGET 落位的 pinned ripgrep sidecar。
+/// 二进制下载、SHA-256、缓存与跨 target 选择都在 `pnpm ripgrep:provision` 完成；
+/// 构建期不联网，也不依赖包管理器的平台包布局。
 fn main() {
     let target = env::var("TARGET").expect("TARGET 由 cargo 提供");
-    let windows = target.contains("windows");
-    let exe = if windows { "rg.exe" } else { "rg" };
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let package_dir = fs::canonicalize(manifest.join("../node_modules/@vscode/ripgrep"))
-        .expect("定位 @vscode/ripgrep（node_modules 缺失？先跑 pnpm install）");
-    let platform = if windows {
-        "win32"
-    } else if target.contains("darwin") {
-        "darwin"
-    } else if target.contains("linux") {
-        "linux"
-    } else {
-        panic!("暂不支持 TARGET 平台：{target}");
-    };
-    let arch = if target.contains("x86_64") {
-        "x64"
-    } else if target.contains("aarch64") {
-        "arm64"
-    } else if target.contains("i686") || target.contains("i586") || target.contains("i386") {
-        "ia32"
-    } else if target.contains("armv7") {
-        "arm"
-    } else if target.contains("powerpc64") {
-        "ppc64"
-    } else if target.contains("riscv64") {
-        "riscv64"
-    } else if target.contains("s390x") {
-        "s390x"
-    } else {
-        panic!("暂不支持 TARGET 架构：{target}");
-    };
-    let src = package_dir
-        .join(format!("../ripgrep-{platform}-{arch}/bin"))
-        .join(exe);
-    let out_dir = manifest.join("binaries");
-    fs::create_dir_all(&out_dir).expect("创建 binaries 目录");
-    let dst = out_dir.join(format!("rg-{target}{}", if windows { ".exe" } else { "" }));
-    let stale = fs::metadata(&dst).map(|m| m.len()).unwrap_or(0)
-        != fs::metadata(&src).map(|m| m.len()).unwrap_or(u64::MAX);
-    if stale {
-        fs::copy(&src, &dst).unwrap_or_else(|e| {
-            panic!(
-                "落位 rg sidecar 失败：{e}（{} 缺失？先跑 pnpm install）",
-                src.display()
-            )
-        });
+    let binary = manifest.join("binaries").join(format!(
+        "rg-{target}{}",
+        if target.contains("windows") {
+            ".exe"
+        } else {
+            ""
+        }
+    ));
+    let metadata = PathBuf::from(format!("{}.sha256", binary.display()));
+    if !binary.is_file() || !metadata.is_file() {
+        panic!(
+            "rg sidecar 未供给：{}（先运行 pnpm ripgrep:provision -- --target {target}）",
+            binary.display()
+        );
     }
-    println!("cargo:rerun-if-changed={}", src.display());
+    let expected = fs::read_to_string(&metadata)
+        .unwrap_or_else(|e| {
+            panic!(
+                "读取 rg sidecar SHA-256 失败（{}）：{e}",
+                metadata.display()
+            )
+        })
+        .trim()
+        .to_owned();
+    let actual = sha256_file(&binary);
+    if actual != expected {
+        panic!(
+            "rg sidecar SHA-256 mismatch（{}）：期望 {expected}，实际 {actual}（重跑 pnpm ripgrep:provision -- --target {target}）",
+            binary.display()
+        );
+    }
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("../scripts/ripgrep-manifest.json").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("../scripts/provision-ripgrep.mjs").display()
+    );
+    println!("cargo:rerun-if-changed={}", binary.display());
+    println!("cargo:rerun-if-changed={}", metadata.display());
     println!("cargo:rustc-env=TARGET_TRIPLE={target}");
     tauri_build::build()
+}
+
+fn sha256_file(path: &Path) -> String {
+    let bytes = fs::read(path)
+        .unwrap_or_else(|e| panic!("读取 rg sidecar 失败（{}）：{e}", path.display()));
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::new(), |mut out, byte| {
+            use std::fmt::Write;
+            write!(out, "{byte:02x}").expect("hex 编码不会失败");
+            out
+        })
 }

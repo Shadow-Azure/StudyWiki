@@ -451,8 +451,8 @@ fn presets() -> Vec<LlmPreset> {
             name: "智谱 GLM".into(),
             base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
             models: vec![
-                m("glm-5.3", &["text", "vision"]),
-                m("glm-5.3-flash", &["text"]),
+                m("glm-5.3", &["text", "tools", "vision"]),
+                m("glm-5.3-flash", &["text", "tools"]),
             ],
         },
         LlmPreset {
@@ -460,21 +460,21 @@ fn presets() -> Vec<LlmPreset> {
             name: "DeepSeek".into(),
             base_url: "https://api.deepseek.com/v1".into(),
             models: vec![
-                m("deepseek-v4-pro", &["text"]),
-                m("deepseek-v4-flash", &["text"]),
+                m("deepseek-v4-pro", &["text", "tools"]),
+                m("deepseek-v4-flash", &["text", "tools"]),
             ],
         },
         LlmPreset {
             vendor: "moonshot".into(),
             name: "Kimi（月之暗面）".into(),
             base_url: "https://api.moonshot.cn/v1".into(),
-            models: vec![m("kimi-k3", &["text"])],
+            models: vec![m("kimi-k3", &["text", "tools"])],
         },
         LlmPreset {
             vendor: "minimax".into(),
             name: "MiniMax".into(),
             base_url: "https://api.minimaxi.com/v1".into(),
-            models: vec![m("minimax-m3", &["text"])],
+            models: vec![m("minimax-m3", &["text", "tools"])],
         },
     ]
 }
@@ -1078,6 +1078,34 @@ mod tests {
                 .code,
             "UNREACHABLE"
         );
+    }
+
+    #[test]
+    fn presets_cover_known_tool_models() {
+        let models = presets()
+            .into_iter()
+            .flat_map(|preset| preset.models)
+            .collect::<Vec<ModelEntry>>();
+        let ids = models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<&str>>();
+
+        assert_eq!(
+            ids,
+            [
+                "glm-5.3",
+                "glm-5.3-flash",
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+                "kimi-k3",
+                "minimax-m3"
+            ]
+        );
+        for model in models {
+            assert!(model.capabilities.contains(&"text".to_string()));
+            assert!(model.capabilities.contains(&"tools".to_string()));
+        }
     }
 
     #[test]

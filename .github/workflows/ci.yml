@@ -73,8 +73,6 @@ jobs:
           - os: windows-latest
     steps:
       - uses: actions/checkout@v6
-      # build.rs 依赖 node_modules 里的 @vscode/ripgrep（sidecar 落位），
-      # rust lane 与前端 lane 同源安装依赖。
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
@@ -87,6 +85,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: 供给 pinned ripgrep sidecar
+        run: pnpm ripgrep:provision
       - name: Linux 系统依赖
         if: runner.os == 'Linux'
         run: |
