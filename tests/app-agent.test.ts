@@ -102,9 +102,12 @@ describe("app-agent 面板", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(el.querySelector<HTMLButtonElement>("[data-send]")!.hidden).toBe(false);
     expect(el.querySelector<HTMLButtonElement>("[data-stop]")!.hidden).toBe(true);
-    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "总结一下";
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "总结一下";
+    textarea.dispatchEvent(new Event("input"));
     el.querySelector<HTMLButtonElement>("[data-send]")!.click();
     sessionEvents.emit("e", { type: "turn-start" } as never);
+    expect(el.querySelector<HTMLButtonElement>("[data-send]")!.hidden).toBe(true);
     expect(el.querySelector<HTMLButtonElement>("[data-stop]")!.hidden).toBe(false);
     el.querySelector<HTMLButtonElement>("[data-stop]")!.click();
     expect(calls).toContainEqual(["send", "总结一下", undefined]);
@@ -131,6 +134,89 @@ describe("app-agent 面板", () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(composer.dataset.state).toBe("normal");
     expect(input.value).toBe("我的草稿");
+  });
+
+  it("运行中有草稿时发送进入队列，并支持单条移除", async () => {
+    const { ctx, el, calls, session } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.running = true;
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "排队消息 A";
+    textarea.dispatchEvent(new Event("input"));
+    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
+
+    const queue = el.querySelector<HTMLElement>("[data-agent-queue]");
+    expect(queue).not.toBeNull();
+    expect(queue!.hidden).toBe(false);
+    expect(queue!.textContent).toContain("排队消息 A");
+    expect(calls).not.toContainEqual(["send", "排队消息 A", undefined]);
+
+    el.querySelector<HTMLButtonElement>('[data-remove-queue="queue-1"]')!.click();
+    expect(el.querySelector<HTMLElement>("[data-agent-queue]")!.hidden).toBe(true);
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(0);
+  });
+
+  it("多条排队消息折叠计数，并可展开后移除指定消息", async () => {
+    const { ctx, el, session } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.running = true;
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    const send = el.querySelector<HTMLButtonElement>("[data-send]")!;
+    textarea.value = "排队消息 A";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    textarea.value = "排队消息 B";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+
+    const queue = el.querySelector<HTMLElement>("[data-agent-queue]")!;
+    const toggle = el.querySelector<HTMLButtonElement>("[data-queue-toggle]")!;
+    expect(toggle.textContent).toContain("2 条排队消息");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(0);
+
+    toggle.click();
+    const expandedToggle = el.querySelector<HTMLButtonElement>("[data-queue-toggle]")!;
+    expect(expandedToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(2);
+    el.querySelector<HTMLButtonElement>('[data-remove-queue="queue-2"]')!.click();
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(1);
+    expect(el.querySelector("[data-queue-item]")!.textContent).toContain("排队消息 A");
+  });
+
+  it("当前回合结束后按顺序发送排队消息", async () => {
+    const { ctx, el, calls, session, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let releaseFirst!: () => void;
+    const firstTurn = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let sendCount = 0;
+    session.send = async (text: string) => {
+      sendCount += 1;
+      calls.push(["send", text, undefined]);
+      session.running = true;
+      if (sendCount === 1) await firstTurn;
+      session.running = false;
+    };
+
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    const send = el.querySelector<HTMLButtonElement>("[data-send]")!;
+    textarea.value = "第一条";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    await Promise.resolve();
+    textarea.value = "第二条";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    expect(calls).toEqual([["send", "第一条", undefined]]);
+
+    releaseFirst();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toEqual([["send", "第一条", undefined], ["send", "第二条", undefined]]);
+    expect(el.querySelector<HTMLElement>("[data-agent-queue]")!.hidden).toBe(true);
+    expect(sessionEvents).toBeDefined();
   });
 
   it("浮层挂在 Agent 面板内，面板提供定位上下文", async () => {
@@ -516,6 +602,7 @@ describe("app-agent 面板", () => {
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     el.querySelector<HTMLTextAreaElement>("textarea")!.value = "总结一下";
+    el.querySelector<HTMLTextAreaElement>("textarea")!.dispatchEvent(new Event("input"));
     el.querySelector<HTMLButtonElement>("[data-send]")!.click();
     expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("新会话");
     await new Promise((resolve) => setTimeout(resolve, 0));

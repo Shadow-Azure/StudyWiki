@@ -37,6 +37,14 @@ interface ActiveToolCard {
   callId: string;
 }
 
+/** A composer draft held while the current agent turn finishes. */
+interface QueuedDraft {
+  id: string;
+  text: string;
+  content: string | ContentPart[];
+  preview: string;
+}
+
 /** Extract a stable UI-facing code/message pair from optional facade failures. */
 function toPanelError(error: unknown): { code: string; message: string } {
   const shape = error as { code?: unknown; message?: unknown };
@@ -77,7 +85,7 @@ function assistantSnapshot(message: Extract<AgentMessage, { role: "assistant" }>
 }
 
 /** Provide the right-rail persistent agent panel: sessions, approvals, modes,
- * model choice, streaming turns, and multimodal composer attachments.
+ * model choice, streaming turns, queued drafts, and multimodal composer attachments.
  * @param ctx Host context（agent/workspace/slots injected; llm read only if present）。
  * @param _config Reserved for future panel defaults.
  * @returns Teardown that unsubscribes and aborts the open session without disposing agent-core.
@@ -116,6 +124,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let sessionTitle = "新会话";
   let sessions: SessionMeta[] = [];
   let pendingSend = false;
+  let messageQueue: QueuedDraft[] = [];
+  let queueCollapsed = true;
+  let queueSequence = 0;
 
   let panel: HTMLElement | null = null;
   let titleEl: HTMLElement | null = null;
@@ -140,6 +151,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let transcript: HTMLElement | null = null;
   let chips: HTMLElement | null = null;
   let notice: HTMLElement | null = null;
+  let queueDock: HTMLElement | null = null;
   let input: HTMLTextAreaElement | null = null;
   let sendButton: HTMLButtonElement | null = null;
   let stopButton: HTMLButtonElement | null = null;
@@ -155,14 +167,18 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   });
 
   const paintButtons = (): void => {
+    const running = turnRunning || session?.running === true;
     if (statusline) {
-      const running = turnRunning || session?.running === true;
       statusline.classList.toggle("run", running);
       const text = statusline.firstElementChild;
       if (text) text.textContent = running ? "回合运行中 · 可随时停止" : "Enter 发送 · Shift+Enter 换行";
     }
-    const running = turnRunning || session?.running === true;
-    if (sendButton) sendButton.disabled = running;
+    const hasDraft = Boolean(input?.value.trim() || attachments.length > 0);
+    const primaryStops = running && !hasDraft;
+    if (sendButton) {
+      sendButton.hidden = primaryStops;
+      sendButton.disabled = !hasDraft;
+    }
     if (stopButton) stopButton.hidden = !running;
   };
 
@@ -482,6 +498,8 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
           decideTimer = null;
         }
         if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
+        messageQueue = [];
+        renderQueue();
         processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
         processGroup = null;
         appendInterrupted();
@@ -730,6 +748,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       if (disposed || generation !== rootGeneration) return;
       if (title) sessionTitle = title;
       attachSession(next);
+      messageQueue = [];
+      queueCollapsed = true;
+      renderQueue();
       await refreshSessions();
     } catch (error) {
       if (!disposed && notice) {
@@ -740,7 +761,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   };
 
   const sendDraft = (): void => {
-    if (disposed || !input || session?.running) return;
+    if (disposed || !input) return;
     if (!session) {
       pendingSend = true;
       return;
@@ -749,17 +770,49 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (!text && attachments.length === 0) return;
     if (session && session.model !== selectedModel) session.setModel(selectedModel);
     const content = composeContent(text, attachments);
-    addUserMessage(content);
-    input.value = "";
+
+    if (turnRunning || session.running) {
+      queueSequence += 1;
+      const preview = text || attachments.map((attachment) => attachment.label).join("、");
+      messageQueue.push({
+        id: `queue-${queueSequence}`,
+        text,
+        content,
+        preview,
+      });
+      input.value = "";
+      attachments = [];
+      renderChips();
+      renderQueue();
+      paintButtons();
+      return;
+    }
+
     const outgoingContent = attachments.length > 0 ? content as ContentPart[] : undefined;
     attachments = [];
+    input.value = "";
     renderChips();
     if (notice) notice.hidden = true;
-    paintButtons();
-    const activeSession = session;
-    void activeSession.send(text, outgoingContent)
+    sendMessage(session, text, content, outgoingContent);
+  };
+
+  const sendNextQueued = (): void => {
+    if (disposed || !session || session.running || messageQueue.length === 0) return;
+    const next = messageQueue.shift()!;
+    renderQueue();
+    sendMessage(session, next.text, next.content, Array.isArray(next.content) ? next.content : undefined);
+  };
+
+  const sendMessage = (
+    target: AgentSession,
+    text: string,
+    content: string | ContentPart[],
+    outgoingContent: ContentPart[] | undefined,
+  ): void => {
+    addUserMessage(content);
+    void target.send(text, outgoingContent)
       .then(async () => {
-        sessionTitle = activeSession.title;
+        sessionTitle = target.title;
         paintTitle();
         paintSessionOptions();
         await refreshSessions();
@@ -770,11 +823,62 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       })
       .finally(() => {
         paintButtons();
+        sendNextQueued();
       });
+  };
+
+  const renderQueue = (): void => {
+    if (!queueDock) return;
+    queueDock.hidden = messageQueue.length === 0;
+    queueDock.replaceChildren();
+    if (messageQueue.length === 0) return;
+
+    if (messageQueue.length > 1) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "agent-queue-toggle";
+      toggle.dataset.queueToggle = "";
+      toggle.setAttribute("aria-expanded", String(!queueCollapsed));
+      toggle.textContent = `${messageQueue.length} 条排队消息 ${queueCollapsed ? "▸" : "▾"}`;
+      toggle.addEventListener("click", () => {
+        queueCollapsed = !queueCollapsed;
+        renderQueue();
+      });
+      queueDock.append(toggle);
+    }
+
+    const list = document.createElement("ul");
+    list.className = "agent-queue-list";
+    if (messageQueue.length === 1 || !queueCollapsed) {
+      for (const item of messageQueue) {
+        const row = document.createElement("li");
+        row.className = "agent-queue-row";
+        row.dataset.queueItem = item.id;
+        const label = document.createElement("span");
+        label.className = "agent-queue-preview";
+        label.textContent = item.preview;
+        label.title = item.preview;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "agent-queue-remove";
+        remove.dataset.removeQueue = item.id;
+        remove.setAttribute("aria-label", `移除排队消息 ${item.preview}`);
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          messageQueue = messageQueue.filter((queued) => queued.id !== item.id);
+          renderQueue();
+        });
+        row.append(label, remove);
+        list.append(row);
+      }
+    }
+    queueDock.append(list);
   };
 
   const stopSession = (): void => {
     if (!session) return;
+    messageQueue = [];
+    renderQueue();
     void session.abort().catch((error: unknown) => {
       if (!disposed) showError(`停止失败：${toPanelError(error).message}`);
     });
@@ -804,6 +908,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       chip.append(label, remove);
       chipHost.append(chip);
     });
+    paintButtons();
   };
 
   const addFiles = async (files: FileList | File[]): Promise<void> => {
@@ -1010,6 +1115,11 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     composer.className = "chat-composer";
     composer.dataset.state = "normal";
     composerEl = composer;
+    const queue = document.createElement("div");
+    queue.className = "agent-queue-dock";
+    queue.dataset.agentQueue = "";
+    queue.hidden = true;
+    queueDock = queue;
     const attach = document.createElement("button");
     attach.type = "button";
     attach.className = "chat-attach";
@@ -1035,6 +1145,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     stopButton.addEventListener("click", stopSession);
     input.addEventListener("keydown", onKeyDown);
     input.addEventListener("paste", onPaste);
+    input.addEventListener("input", paintButtons);
 
     // composer 座位：附件 · 模型 pill · 宽态分段/窄态图标 · 发送/停止。
     modelToggle = document.createElement("button");
@@ -1081,7 +1192,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     if (modelPop) pops.push(modelPop);
     if (modePop) pops.push(modePop);
     panel.append(...pops);
-    panel.append(rootNotice, contextRow, transcript, chips, notice, composer, statusline);
+    panel.append(rootNotice, contextRow, transcript, chips, notice, queueDock, composer, statusline);
     panel.addEventListener("dragover", onDragOver);
     panel.addEventListener("drop", onDrop);
     el.append(panel);

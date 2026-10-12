@@ -1573,6 +1573,69 @@ input[type="checkbox"] { accent-color: var(--azurite); width: 15px; height: 15px
 .chat-send:hover { background: var(--azurite-deep); }
 .chat-send.chat-stopping { background: var(--raise); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2); }
 
+/* 运行中排队消息：贴在 composer 上方的轻量 dock，只管理尚未发送的草稿。 */
+.agent-queue-dock {
+  flex: none;
+  margin: 0 12px 6px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 10px;
+  background: var(--raise);
+}
+.agent-queue-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.agent-queue-toggle:hover { background: var(--wash); color: var(--ink); }
+.agent-queue-list {
+  margin: 0;
+  padding: 2px 4px 4px;
+  list-style: none;
+}
+.agent-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: 7px;
+}
+.agent-queue-row:hover { background: var(--wash); }
+.agent-queue-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-queue-remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.agent-queue-remove:hover { background: color-mix(in srgb, var(--cinnabar) 12%, transparent); color: var(--cinnabar); }
+
 /* ============ Agent 侧栏 ============ */
 /* 会话面板沿用 chat 的气泡/流式/composer 视觉；新增会话与审批控制壳层。
    卡片与分隔条是 Agent 状态语义，全部走既有 token 并跟随明暗主题。 */

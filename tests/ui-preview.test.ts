@@ -128,6 +128,7 @@ test("ui preview: PreviewLlm streams a fake chat answer end-to-end", async () =>
 
   const input = root.querySelector("textarea")!;
   input.value = "预览提问";
+  input.dispatchEvent(new Event("input"));
   root.querySelector<HTMLButtonElement>(".chat-send")!.click();
   const start = Date.now();
   while (!root.querySelector(".chat-usage")?.textContent?.includes("finish stop")
