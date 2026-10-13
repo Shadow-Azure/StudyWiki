@@ -75,22 +75,26 @@ describe("panel", () => {
       probe: () => Promise.resolve(42),
     };
     const renders: ((host: HTMLElement) => void)[] = [];
+    const registered: string[] = [];
     const slots = {
-      register: (_slot: string, render: (host: HTMLElement) => void) => {
+      register: (slot: string, render: (host: HTMLElement) => void) => {
+        registered.push(slot);
         renders.push(render);
         return () => {};
       },
     };
-    return { ctx: { llm, slots }, saved, renders };
+    return { ctx: { llm, slots }, saved, renders, registered };
   }
 
   it("saves a preset-instantiated endpoint through ctx.llm", async () => {
-    const { ctx, saved, renders } = fakeCtx();
+    const { ctx, saved, renders, registered } = fakeCtx();
     llmSettings.apply(ctx as never);
     const host = document.createElement("div");
     renders[0](host);
     document.body.append(host);
-    (host.querySelector("button") as HTMLButtonElement).click(); // 顶栏按钮 → 面板
+    expect(registered).toEqual(["activity.left"]);
+    expect(host.querySelector("button")?.classList.contains("activity-item")).toBe(true);
+    (host.querySelector("button") as HTMLButtonElement).click(); // Activity Rail 按钮 → 面板
     await new Promise((r) => setTimeout(r)); // 面板数据加载
     (document.querySelector(".llm-panel [data-action=add]") as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r));

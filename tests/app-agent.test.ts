@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { apply, name, inject } from "../src/plugins/app-agent";
 import { createEmitter } from "../src/host/emitter";
+import { activeLayers } from "../src/ui/active-layer";
 
 function fakeCtx(
   sessions: { id: string; title: string }[],
   opts: {
     lines?: unknown[];
     models?: Array<{ id: string; capabilities: string[] }>;
-    defaultModel?: string | null;
+    endpointNames?: string[];
     defaultMode?: "ask" | "auto";
+    defaultModel?: string | null;
     root?: string | null;
   } = {},
 ) {
@@ -24,9 +28,9 @@ function fakeCtx(
     id: "s1", title: "新会话", mode: "ask" as const, model: null as string | null, running: false,
     messages: () => [],
     lines: () => [...opts.lines ?? []],
-    pendingApprovals: () => [],
     on: (l: (e: never) => void) => sessionEvents.on("e", l),
     onApproval: (l: (r: never) => void) => approvalEvents.on("r", l),
+    pendingApprovals: () => [],
     send: async (text: string, content?: unknown) => {
       calls.push(["send", text, content]);
       if (text === "" && Array.isArray(content)) session.title = "新会话";
@@ -62,8 +66,13 @@ function fakeCtx(
     ...(opts.models ? {
       llm: {
         listEndpoints: async () => ({
-          endpoints: [{ id: "e1", kind: "chat", models: opts.models }],
-          defaultModel: opts.defaultModel ?? opts.models[0]?.id ?? null,
+          endpoints: (opts.endpointNames ?? ["e1"]).map((name, index) => ({
+            id: `e${index + 1}`,
+            name,
+            kind: "chat",
+            models: index === 0 ? opts.models ?? [] : [],
+          })),
+          defaultModel: opts.defaultModel ?? opts.models?.[0]?.id ?? null,
           agentApprovalMode: durableMode,
         }),
         setDefaultAgentApprovalMode: async (mode: "ask" | "auto") => {
@@ -88,124 +97,345 @@ describe("app-agent 面板", () => {
   });
 
   it("发送按钮调 session.send；停止调 abort", async () => {
-    const { ctx, el, calls } = fakeCtx([]);
+    const { ctx, el, calls, sessionEvents } = fakeCtx([]);
     apply(ctx as never);
-    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "总结一下";
-    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(calls).toContainEqual(["send", "总结一下", undefined]);
+    expect(el.querySelector<HTMLButtonElement>("[data-send]")!.hidden).toBe(false);
+    expect(el.querySelector<HTMLButtonElement>("[data-stop]")!.hidden).toBe(true);
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "总结一下";
+    textarea.dispatchEvent(new Event("input"));
+    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    expect(el.querySelector<HTMLButtonElement>("[data-send]")!.hidden).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>("[data-stop]")!.hidden).toBe(false);
     el.querySelector<HTMLButtonElement>("[data-stop]")!.click();
+    expect(calls).toContainEqual(["send", "总结一下", undefined]);
     expect(calls).toContainEqual(["abort"]);
   });
 
-  it("审批事件渲染卡片，点击回传 respond", async () => {
+  it("审批接管 composer；批准后恢复草稿", async () => {
     const { ctx, el, calls, approvalEvents } = fakeCtx([]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    const input = el.querySelector<HTMLTextAreaElement>(".chat-input")!;
+    input.value = "我的草稿";
     approvalEvents.emit("r", {
       id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写",
       preview: { text: "机密内容", omitted: false, totalCharacters: 4, totalLines: 1 },
     } as never);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.state).toBe("approval");
+    expect(el.querySelector(".agent-approval-card")).toBeNull();
+    expect(el.querySelector<HTMLElement>(".agent-approval-detail")!.textContent).toContain("机密内容");
     el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
-    expect(el.querySelector<HTMLElement>("[data-approval-id='a1']")?.textContent).toContain("机密内容");
-    expect(calls[0]?.[0]).toBe("respond");
-    expect(calls[0]?.[1]).toBe("a1");
+    expect(calls[0]).toEqual(["respond", "a1", { decision: "allow" }]);
+    expect(composer.dataset.state).toBe("decided");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(composer.dataset.state).toBe("normal");
+    expect(input.value).toBe("我的草稿");
   });
 
-  it("aborted 事件渲染中断标注", async () => {
-    const { ctx, el, session, sessionEvents } = fakeCtx([]);
+  it("运行中有草稿时发送进入队列，并支持单条移除", async () => {
+    const { ctx, el, calls, session } = fakeCtx([]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     session.running = true;
-    sessionEvents.emit("e", { type: "turn-start" });
-    sessionEvents.emit("e", { type: "aborted" });
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "排队消息 A";
+    textarea.dispatchEvent(new Event("input"));
+    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
 
-    expect(el.querySelector<HTMLElement>(".chat-interrupted")?.textContent).toContain("已中断");
+    const queue = el.querySelector<HTMLElement>("[data-agent-queue]");
+    expect(queue).not.toBeNull();
+    expect(queue!.hidden).toBe(false);
+    expect(queue!.textContent).toContain("排队消息 A");
+    expect(calls).not.toContainEqual(["send", "排队消息 A", undefined]);
+
+    el.querySelector<HTMLButtonElement>('[data-remove-queue="queue-1"]')!.click();
+    expect(el.querySelector<HTMLElement>("[data-agent-queue]")!.hidden).toBe(true);
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(0);
   });
 
-  it("error 事件渲染面板横幅", async () => {
-    const { ctx, el, sessionEvents } = fakeCtx([]);
-    apply(ctx as never);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    sessionEvents.emit("e", { type: "error", message: "CHAT_FAILED: 流失败" });
-
-    expect(el.querySelector<HTMLElement>(".chat-error-text")?.textContent).toBe("CHAT_FAILED: 流失败");
-  });
-
-  it("send Promise 自然结束后复位发送态，即使没有 finish/turn-end", async () => {
-    let release!: () => void;
+  it("多条排队消息折叠计数，并可展开后移除指定消息", async () => {
     const { ctx, el, session } = fakeCtx([]);
-    const settled = new Promise<void>((resolve) => {
-      release = () => {
-        session.running = false;
-        resolve();
-      };
-    });
-    session.send = () => settled;
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     session.running = true;
-    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "继续";
-    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    const send = el.querySelector<HTMLButtonElement>("[data-send]")!;
+    textarea.value = "排队消息 A";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    textarea.value = "排队消息 B";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
 
-    release();
-    await settled;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(el.querySelector<HTMLButtonElement>("[data-send]")?.disabled).toBe(false);
+    const queue = el.querySelector<HTMLElement>("[data-agent-queue]")!;
+    const toggle = el.querySelector<HTMLButtonElement>("[data-queue-toggle]")!;
+    expect(toggle.textContent).toContain("2 条排队消息");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(0);
+
+    toggle.click();
+    const expandedToggle = el.querySelector<HTMLButtonElement>("[data-queue-toggle]")!;
+    expect(expandedToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(2);
+    el.querySelector<HTMLButtonElement>('[data-remove-queue="queue-2"]')!.click();
+    expect(el.querySelectorAll("[data-queue-item]")).toHaveLength(1);
+    expect(el.querySelector("[data-queue-item]")!.textContent).toContain("排队消息 A");
   });
 
-  it("卸载中止在途流，late 事件不改动 transcript", async () => {
-    let release!: () => void;
-    const settled = new Promise<void>((resolve) => { release = resolve; });
+  it("当前回合结束后按顺序发送排队消息", async () => {
     const { ctx, el, calls, session, sessionEvents } = fakeCtx([]);
-    session.send = () => settled;
-    const dispose = apply(ctx as never);
+    apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    session.running = true;
-    el.querySelector<HTMLTextAreaElement>("textarea")!.value = "在途";
-    el.querySelector<HTMLButtonElement>("[data-send]")!.click();
-    sessionEvents.emit("e", { type: "turn-start" });
-    const transcript = el.querySelector<HTMLElement>(".agent-transcript")!;
-    const html = transcript.innerHTML;
+    let releaseFirst!: () => void;
+    const firstTurn = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let sendCount = 0;
+    session.send = async (text: string) => {
+      sendCount += 1;
+      calls.push(["send", text, undefined]);
+      session.running = true;
+      if (sendCount === 1) await firstTurn;
+      session.running = false;
+    };
 
-    dispose();
-    release();
-    sessionEvents.emit("e", { type: "snapshot", snapshot: { reasoning: "", text: "late", toolCalls: [] } });
-    sessionEvents.emit("e", { type: "error", message: "late error" });
+    const textarea = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    const send = el.querySelector<HTMLButtonElement>("[data-send]")!;
+    textarea.value = "第一条";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    await Promise.resolve();
+    textarea.value = "第二条";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    expect(calls).toEqual([["send", "第一条", undefined]]);
+
+    releaseFirst();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toEqual([["send", "第一条", undefined], ["send", "第二条", undefined]]);
+    expect(el.querySelector<HTMLElement>("[data-agent-queue]")!.hidden).toBe(true);
+    expect(sessionEvents).toBeDefined();
+  });
+
+  it("浮层挂在 Agent 面板内，面板提供定位上下文", async () => {
+    const { ctx, el, approvalEvents } = fakeCtx([], {
+      models: [{ id: "m1", capabilities: ["tools"] }],
+    });
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const panel = el.querySelector<HTMLElement>(".agent-panel")!;
+    for (const selector of [
+      ".agent-history-pop",
+      ".agent-more-pop",
+      ".agent-model-pop",
+      ".agent-mode-pop",
+    ]) {
+      expect(panel.querySelector(selector)).not.toBeNull();
+    }
+    approvalEvents.emit("r", {
+      id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写",
+      preview: { text: "x", omitted: false, totalCharacters: 1, totalLines: 1 },
+    } as never);
+    expect(panel.querySelector(".agent-approval-detail")).not.toBeNull();
+
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const start = css.indexOf(".agent-panel {");
+    const end = css.indexOf("}", start);
+    expect(css.slice(start, end)).toContain("position: relative;");
+  });
+
+  it("审批详情浮层 toggle 与 Esc 关闭", async () => {
+    const { ctx, el, approvalEvents } = fakeCtx([]);
+    document.body.append(el); // 事件冒泡到 document 需要真实树
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    approvalEvents.emit("r", {
+      id: "a2", kind: "write", tool: "write", path: "/lib/n.md", summary: "写",
+      preview: { text: "x", omitted: false, totalCharacters: 1, totalLines: 1 },
+    } as never);
+    const detail = el.querySelector<HTMLElement>(".agent-approval-detail")!;
+    expect(detail.classList.contains("open")).toBe(false);
+    el.querySelector<HTMLButtonElement>("[data-detail-toggle]")!.click();
+    expect(detail.classList.contains("open")).toBe(true);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(detail.classList.contains("open")).toBe(false);
+    el.querySelector<HTMLButtonElement>("[data-detail-toggle]")!.click();
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(detail.classList.contains("open")).toBe(false);
+    el.remove();
+  });
+
+  it("多个审批排队，处理完自动显示下一个", async () => {
+    const { ctx, el, calls, approvalEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    approvalEvents.emit("r", {
+      id: "a1", kind: "write", tool: "write", path: "/1.md", summary: "写",
+      preview: { text: "1", omitted: false, totalCharacters: 1, totalLines: 1 },
+    } as never);
+    approvalEvents.emit("r", {
+      id: "a2", kind: "write", tool: "write", path: "/2.md", summary: "写",
+      preview: { text: "2", omitted: false, totalCharacters: 1, totalLines: 1 },
+    } as never);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.approvalId).toBe("a1");
+    el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    expect(calls[0]).toEqual(["respond", "a1", { decision: "allow" }]);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(composer.dataset.state).toBe("approval");
+    expect(composer.dataset.approvalId).toBe("a2");
+  });
+
+  it("中断时清理当前审批并恢复输入框", async () => {
+    const { ctx, el, calls, sessionEvents, approvalEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const input = el.querySelector<HTMLTextAreaElement>("textarea")!;
+    input.value = "我的草稿";
+    approvalEvents.emit("r", {
+      id: "a1", kind: "write", tool: "write", path: "/1.md", summary: "写",
+      preview: { text: "1", omitted: false, totalCharacters: 1, totalLines: 1 },
+    } as never);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.state).toBe("approval");
+    expect(composer.dataset.approvalId).toBe("a1");
+    expect(el.querySelector(".agent-approval-detail")).not.toBeNull();
+
     sessionEvents.emit("e", { type: "aborted" });
 
-    expect(calls).toContainEqual(["abort"]);
-    expect(transcript.innerHTML).toBe(html);
+    expect(composer.dataset.state).toBe("normal");
+    expect(composer.dataset.approvalId).toBeUndefined();
+    expect(el.querySelector(".agent-approval-detail")).toBeNull();
+    expect(el.querySelector(".agent-approval-card")).toBeNull();
+    expect(input.value).toBe("我的草稿");
+    expect(calls).not.toContainEqual(["respond", "a1", expect.anything()]);
   });
 
-  it("卸载后 late listEndpoints 不更新已拆离面板", async () => {
-    const { ctx, el } = fakeCtx([], { models: [{ id: "m1", capabilities: ["text"] }] });
-    let resolveEndpoints!: (value: unknown) => void;
-    ctx.llm.listEndpoints = () => new Promise((resolve) => { resolveEndpoints = resolve; });
-    const dispose = apply(ctx as never);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const modelSelect = el.querySelector<HTMLSelectElement>(".agent-model-select")!;
-    const context = el.querySelector<HTMLElement>(".agent-context")!;
-    const options = modelSelect.innerHTML;
-    const contextHTML = context.innerHTML;
-    dispose();
-
-    resolveEndpoints({
-      endpoints: [{ id: "e1", kind: "chat", models: [{ id: "late", capabilities: ["text"] }] }],
-      defaultModel: "late",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(modelSelect.innerHTML).toBe(options);
-    expect(context.innerHTML).toBe(contextHTML);
-    expect(el.textContent).not.toContain("模型配置不可用");
-  });
-
-  it("模式胶囊切换调 setMode", async () => {
-    const { ctx, el, calls } = fakeCtx([]);
+  it("中断时取消决策延迟并清空排队审批", async () => {
+    const { ctx, el, calls, sessionEvents, approvalEvents } = fakeCtx([]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    el.querySelector<HTMLButtonElement>("[data-mode-auto]")!.click();
-    expect(calls).toContainEqual(["setMode", "auto"]);
+    for (const id of ["a1", "a2"]) {
+      approvalEvents.emit("r", {
+        id, kind: "write", tool: "write", path: `/${id}.md`, summary: "写",
+        preview: { text: id, omitted: false, totalCharacters: 1, totalLines: 1 },
+      } as never);
+    }
+    el.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    expect(calls).toContainEqual(["respond", "a1", { decision: "allow" }]);
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.state).toBe("decided");
+
+    sessionEvents.emit("e", { type: "aborted" });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(composer.dataset.state).toBe("normal");
+    expect(composer.dataset.approvalId).toBeUndefined();
+    expect(el.querySelector(".agent-approval-detail")).toBeNull();
+  });
+
+  it("浮层持有 Escape 时审批不响应，浮层关闭后继续排队", async () => {
+    const { ctx, el, calls, approvalEvents } = fakeCtx([]);
+    const dispose = apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (const id of ["a1", "a2"]) {
+      approvalEvents.emit("r", {
+        id, kind: "write", tool: "write", path: `/${id}.md`, summary: "写",
+        preview: { text: id, omitted: false, totalCharacters: 1, totalLines: 1 },
+      } as never);
+    }
+    const composer = el.querySelector<HTMLElement>(".chat-composer")!;
+    expect(composer.dataset.approvalId).toBe("a1");
+
+    const modal = document.createElement("div");
+    modal.className = "plugin-panel";
+    document.body.append(modal);
+    let releaseModal = () => {};
+    const closeModal = (): void => {
+      modal.remove();
+      releaseModal();
+      document.removeEventListener("keydown", onModalKeydown);
+    };
+    const onModalKeydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") closeModal();
+    };
+    releaseModal = activeLayers.push(modal, { close: closeModal });
+    document.addEventListener("keydown", onModalKeydown);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    expect(document.querySelector(".plugin-panel")).toBeNull();
+    expect(composer.dataset.state).toBe("approval");
+    expect(composer.dataset.approvalId).toBe("a1");
+    expect(el.querySelector(".agent-approval-detail")).not.toBeNull();
+    expect(calls).not.toContainEqual(["respond", "a1", expect.anything()]);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(calls).toContainEqual(["respond", "a1", { decision: "deny" }]);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(composer.dataset.approvalId).toBe("a2");
+    dispose();
+  });
+
+  it("批准模式随 composer 宽度自适应切换分段与图标浮窗", async () => {
+    class ResizeObserverStub {
+      static instances: ResizeObserverStub[] = [];
+      target: Element | null = null;
+
+      constructor(private readonly callback: ResizeObserverCallback) {
+        ResizeObserverStub.instances.push(this);
+      }
+
+      observe(target: Element): void {
+        this.target = target;
+      }
+
+      disconnect(): void {
+        this.target = null;
+      }
+
+      emit(width: number): void {
+        this.callback(
+          [{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver,
+        );
+      }
+    }
+    const originalObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+    try {
+      const { ctx, el, calls } = fakeCtx([]);
+      apply(ctx as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const observer = ResizeObserverStub.instances.at(-1)!;
+      const panel = el.querySelector<HTMLElement>(".agent-panel")!;
+      const group = el.querySelector<HTMLElement>(".agent-mode-group")!;
+      const toggle = el.querySelector<HTMLButtonElement>("[data-mode-toggle]")!;
+
+      observer.emit(420);
+      expect(panel.dataset.modeLayout).toBe("wide");
+      expect(group.hidden).toBe(false);
+      expect(toggle.hidden).toBe(true);
+      const inlineAuto = el.querySelector<HTMLButtonElement>("[data-mode-inline-auto]")!;
+      inlineAuto.click();
+      expect(calls).toContainEqual(["setMode", "auto"]);
+      expect(inlineAuto.getAttribute("aria-pressed")).toBe("true");
+
+      observer.emit(240);
+      expect(panel.dataset.modeLayout).toBe("compact");
+      expect(group.hidden).toBe(true);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(toggle.hidden).toBe(false);
+      toggle.click();
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      el.querySelector<HTMLButtonElement>("[data-mode-auto]")!.click();
+      expect(calls).toContainEqual(["setMode", "auto"]);
+      expect(toggle.textContent).toBe("⚡");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      globalThis.ResizeObserver = originalObserver;
+    }
   });
 
   it("新会话使用 durable 审批模式；模式胶囊仍只改当前会话", async () => {
@@ -217,9 +447,11 @@ describe("app-agent 面板", () => {
     apply(ctx as never);
     setRoot("/lib/root");
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(openCalls.at(-1)).toEqual({ id: null, mode: "auto" });
     expect(session.mode).toBe("auto");
 
+    el.querySelector<HTMLButtonElement>("[data-mode-toggle]")!.click();
     el.querySelector<HTMLButtonElement>("[data-mode-ask]")!.click();
     expect(calls).toContainEqual(["setMode", "ask"]);
     expect(calls).not.toContainEqual(["setDefaultAgentApprovalMode", "ask"]);
@@ -245,99 +477,71 @@ describe("app-agent 面板", () => {
     expect(session.mode).toBe("ask");
   });
 
-  it("模型选择回写 session.setModel", async () => {
+  it("模型 pill 菜单选择回写 session.setModel", async () => {
     const { ctx, el, calls } = fakeCtx([], {
       models: [{ id: "m1", capabilities: [] }, { id: "m2", capabilities: ["vision"] }],
       defaultModel: "m1",
     });
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const select = el.querySelector<HTMLSelectElement>(".agent-model-select")!;
-    select.value = "m2";
-    select.dispatchEvent(new Event("change"));
+    el.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
+    el.querySelector<HTMLElement>("[data-model-option='m2']")!.click();
     expect(calls).toContainEqual(["setModel", "m2"]);
   });
 
-  it("模型下拉标注 tools 能力", async () => {
+  it("模型菜单按厂商分组展示", async () => {
     const { ctx, el } = fakeCtx([], {
-      models: [
-        { id: "m-tools", capabilities: ["text", "tools"] },
-        { id: "m-text", capabilities: ["text"] },
-      ],
-      defaultModel: "m-tools",
+      models: [{ id: "m1", capabilities: [] }],
+      endpointNames: ["MiniMax", "Mock"],
+      defaultModel: "m1",
     });
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const options = [...el.querySelectorAll<HTMLSelectElement>(".agent-model-select")[0].options];
-    expect(options.map((option) => option.textContent)).toEqual(["m-tools · tools", "m-text"]);
+    el.querySelector<HTMLButtonElement>("[data-model-toggle]")!.click();
+    const pop = el.querySelector<HTMLElement>(".agent-model-pop")!;
+    expect(pop.textContent).toContain("MiniMax");
+    expect(pop.textContent).toContain("Mock");
+    expect(el.querySelectorAll("[data-model-option]").length).toBe(1);
   });
 
-  it("历史审批行渲染为只读决定卡", async () => {
+  it("历史审批行渲染为只读决策行", async () => {
     const { ctx, el } = fakeCtx([], {
       lines: [{ type: "approval", id: "a9", kind: "edit", tool: "edit", path: "/lib/a.md", decider: "human", decision: "allow" }],
     });
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const card = el.querySelector<HTMLElement>("[data-approval-id='a9']");
-    expect(card?.dataset.state).toBe("decided");
-    expect(card?.textContent).toContain("/lib/a.md");
-    expect(card?.querySelector("button")).toBeNull();
+    const line = el.querySelector<HTMLElement>(".agent-decision-line");
+    expect(line?.textContent).toContain("/lib/a.md");
+    expect(line?.textContent).toContain("已批准");
+    expect(line?.querySelector("button")).toBeNull();
   });
 
-  it("历史会话下拉列出并打开", async () => {
-    const { ctx, el } = fakeCtx([{ id: "s9", title: "旧会话" }]);
+  it("历史浮层列出会话并点击切换", async () => {
+    const { ctx, el, openCalls } = fakeCtx([{ id: "s9", title: "旧会话" }]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const item = el.querySelector<HTMLElement>("[data-session-id='s9']");
-    expect(item?.textContent).toContain("旧会话");
+    el.querySelector<HTMLButtonElement>("[data-history-toggle]")!.click();
+    expect(el.querySelector<HTMLElement>(".agent-history-pop")!.classList.contains("open")).toBe(true);
+    const item = el.querySelector<HTMLElement>("[data-session-id='s9']")!;
+    expect(item.textContent).toContain("旧会话");
+    item.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(openCalls.at(-1)).toMatchObject({ id: "s9" });
+    expect(el.querySelector<HTMLElement>(".agent-history-pop")!.classList.contains("open")).toBe(false);
   });
 
-  it("切走 ask 审批会话再切回时恢复可操作审批卡", async () => {
-    const request = { id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写" };
-    const { ctx, el, calls, session } = fakeCtx([
-      { id: "s1", title: "第一会话" },
-      { id: "s2", title: "第二会话" },
-    ]);
-    const secondEvents = createEmitter<Record<string, unknown>>();
-    const secondApprovals = createEmitter<Record<string, unknown>>();
-    session.pendingApprovals = () => [request];
-    const second = {
-      id: "s2", title: "第二会话", mode: "ask" as const, model: null as string | null, running: false,
-      messages: () => [],
-      lines: () => [],
-      on: (listener: (event: never) => void) => secondEvents.on("e", listener),
-      onApproval: (listener: (request: never) => void) => secondApprovals.on("r", listener),
-      pendingApprovals: () => [],
-      send: async () => {},
-      abort: async () => {},
-      setMode: () => {},
-      setModel: () => {},
-      respond: (id: string, outcome: unknown) => { calls.push(["respond", id, outcome]); },
-    };
-    const openSession = ctx.agent.openSession.bind(ctx.agent);
-    (ctx.agent as { openSession: typeof openSession }).openSession = async (id, mode) =>
-      id === "s2" ? second : await openSession(id, mode);
-
+  it("header 单行且历史可搜索", async () => {
+    const { ctx, el } = fakeCtx([{ id: "s1", title: "总结笔记" }, { id: "s2", title: "线代复习" }]);
     apply(ctx as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(session.id).toBe("s1");
-
-    const select = el.querySelector<HTMLSelectElement>(".agent-session-select")!;
-    select.value = "s2";
-    select.dispatchEvent(new Event("change"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("第二会话");
-
-    select.value = "s1";
-    select.dispatchEvent(new Event("change"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const card = el.querySelector<HTMLElement>("[data-approval-id='a1']");
-    expect(card?.dataset.state).toBe("pending");
-    expect(card?.textContent).toContain("/lib/n.md");
-
-    card!.querySelector<HTMLButtonElement>("[data-approve]")!.click();
-    expect(calls).toContainEqual(["respond", "a1", { decision: "allow", reason: undefined }]);
-    expect(el.querySelector<HTMLElement>("[data-approval-id='a1']")?.dataset.state).toBe("decided");
+    expect(el.querySelectorAll(".agent-head-row > *").length).toBeLessThanOrEqual(5);
+    el.querySelector<HTMLButtonElement>("[data-history-toggle]")!.click();
+    const search = el.querySelector<HTMLInputElement>("[data-history-search]")!;
+    search.value = "线代";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    const items = el.querySelectorAll("[data-session-option]");
+    expect(items.length).toBe(1);
+    expect(items[0].textContent).toContain("线代复习");
   });
 
   it("root 从未开库变为有值时重置并重建 agent 会话", async () => {
@@ -396,13 +600,12 @@ describe("app-agent 面板", () => {
       session.title = "服务同步标题";
     };
     apply(ctx as never);
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     el.querySelector<HTMLTextAreaElement>("textarea")!.value = "总结一下";
+    el.querySelector<HTMLTextAreaElement>("textarea")!.dispatchEvent(new Event("input"));
     el.querySelector<HTMLButtonElement>("[data-send]")!.click();
     expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("新会话");
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(el.querySelector<HTMLElement>(".agent-title")?.textContent).toBe("服务同步标题");
   });
 
@@ -424,7 +627,96 @@ describe("app-agent 面板", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const classes = [...el.querySelector<HTMLElement>(".agent-transcript")!.children]
       .map((node) => node.className);
-    expect(classes.indexOf("chat-message chat-user")).toBeLessThan(classes.indexOf("agent-approval-card"));
-    expect(classes.indexOf("agent-approval-card")).toBeLessThan(classes.indexOf("chat-message chat-assistant"));
+    expect(classes.indexOf("chat-message chat-user")).toBeLessThan(classes.indexOf("agent-decision-line"));
+    expect(classes.indexOf("agent-decision-line")).toBeLessThan(classes.indexOf("chat-message chat-assistant"));
+  });
+});
+
+describe("agent-ui v2 回合过程组", () => {
+  it("工具事件进过程组，turn-end 后默认折叠", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    sessionEvents.emit("e", { type: "tool-start", call: { id: "t1", name: "read", argumentsText: "{}" } } as never);
+    sessionEvents.emit("e", { type: "tool-end", call: { id: "t1", name: "read", argumentsText: "{}" }, content: "ok", isError: false } as never);
+    sessionEvents.emit("e", { type: "turn-end" } as never);
+    const group = el.querySelector<HTMLElement>(".agent-process")!;
+    expect(group).not.toBeNull();
+    expect(group.classList.contains("open")).toBe(false);
+    expect(group.textContent).toContain("已完成");
+    expect(group.querySelector(".agent-tool-card")).not.toBeNull();
+  });
+
+  it("运行中摘要显示当前动作", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    sessionEvents.emit("e", { type: "tool-start", call: { id: "t2", name: "grep", argumentsText: "{}" } } as never);
+    const group = el.querySelector<HTMLElement>(".agent-process")!;
+    expect(group.classList.contains("running")).toBe(true);
+    expect(group.textContent).toContain("正在");
+  });
+
+  it("历史中的工具行渲染为折叠过程组", async () => {
+    const { ctx, el } = fakeCtx([], {
+      lines: [
+        { type: "message", message: { role: "user", content: "读一下" } },
+        { type: "message", message: { role: "assistant", reasoning: null, text: "", toolCalls: [{ id: "h1", name: "read", argumentsText: "{}", index: 0 }], usage: null, finishReason: "tool_calls" } },
+        { type: "message", message: { role: "assistant", reasoning: null, text: "好了", toolCalls: [], usage: null, finishReason: "stop" } },
+      ],
+    });
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const group = el.querySelector<HTMLElement>(".agent-process")!;
+    expect(group).not.toBeNull();
+    expect(group.classList.contains("open")).toBe(false);
+    expect(group.querySelector(".agent-tool-card")).not.toBeNull();
+  });
+});
+
+describe("agent-ui v2 反馈", () => {
+  it("错误显示为可关闭 toast，5 秒自动消失", async () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, el, sessionEvents } = fakeCtx([]);
+      apply(ctx as never);
+      await vi.advanceTimersByTimeAsync(50);
+      sessionEvents.emit("e", { type: "error", message: "网络断了" } as never);
+      const toast = el.querySelector<HTMLElement>(".agent-toast")!;
+      expect(toast.textContent).toContain("网络断了");
+      toast.querySelector<HTMLButtonElement>("[data-toast-close]")!.click();
+      expect(el.querySelector(".agent-toast")).toBeNull();
+      sessionEvents.emit("e", { type: "error", message: "又断了" } as never);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(el.querySelector(".agent-toast")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("composer 状态行随会话运行态更新", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const line = el.querySelector<HTMLElement>(".agent-statusline")!;
+    expect(line.classList.contains("run")).toBe(false);
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    expect(line.classList.contains("run")).toBe(true);
+    expect(line.textContent).toContain("运行中");
+    sessionEvents.emit("e", { type: "turn-end" } as never);
+    expect(line.classList.contains("run")).toBe(false);
+  });
+
+  it("aborted 事件收起过程组并渲染中断标注", async () => {
+    const { ctx, el, sessionEvents } = fakeCtx([]);
+    apply(ctx as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionEvents.emit("e", { type: "turn-start" } as never);
+    sessionEvents.emit("e", { type: "aborted" } as never);
+
+    expect(el.querySelector<HTMLElement>(".chat-interrupted")?.textContent).toContain("已中断");
+    expect(el.querySelector<HTMLElement>(".agent-statusline")?.classList.contains("run")).toBe(false);
   });
 });

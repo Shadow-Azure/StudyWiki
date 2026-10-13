@@ -1,5 +1,5 @@
 import type { Context } from "cordis";
-import type { ContentPart, LlmService, RedactedSettings } from "../../host/llm";
+import type { ContentPart, LlmService, ModelEntry, RedactedSettings } from "../../host/llm";
 import type { PartialAssistant } from "../../host/llm-stream";
 import type { AgentEvent } from "../agent-core/loop";
 import type { AgentSession, SessionMeta } from "../agent-core/service";
@@ -7,11 +7,14 @@ import type { ApprovalOutcome, ApprovalRequest } from "../agent-core/tools";
 import type { AgentMessage } from "../agent-core/types";
 import { fileToAttachment, type PendingAttachment } from "./attachments";
 import {
+  createProcessGroup,
   createStreamRenderer,
-  renderApprovalCard,
+  renderApprovalPrompt,
   renderCompactionDivider,
+  renderDecisionLine,
   renderToolCard,
 } from "./render";
+import { activeLayers } from "../../ui/active-layer";
 
 /** Plugin id in the manifest and static module table. */
 export const name = "app-agent";
@@ -32,6 +35,14 @@ interface AgentWorkspace {
 interface ActiveToolCard {
   card: HTMLElement;
   callId: string;
+}
+
+/** A composer draft held while the current agent turn finishes. */
+interface QueuedDraft {
+  id: string;
+  text: string;
+  content: string | ContentPart[];
+  preview: string;
 }
 
 /** Extract a stable UI-facing code/message pair from optional facade failures. */
@@ -74,7 +85,7 @@ function assistantSnapshot(message: Extract<AgentMessage, { role: "assistant" }>
 }
 
 /** Provide the right-rail persistent agent panel: sessions, approvals, modes,
- * model choice, streaming turns, and multimodal composer attachments.
+ * model choice, streaming turns, queued drafts, and multimodal composer attachments.
  * @param ctx Host context（agent/workspace/slots injected; llm read only if present）。
  * @param _config Reserved for future panel defaults.
  * @returns Teardown that unsubscribes and aborts the open session without disposing agent-core.
@@ -92,6 +103,20 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let activeStream: HTMLElement | null = null;
   let activeWrapper: HTMLElement | null = null;
   let activeTools = new Map<string, ActiveToolCard>();
+  let processGroup: ReturnType<typeof createProcessGroup> | null = null;
+  let turnStartedAt = 0;
+  let turnStepCount = 0;
+  let approvalQueue: ApprovalRequest[] = [];
+  let activeApproval: ApprovalRequest | null = null;
+  let savedDraft = "";
+  let approvalDetail: HTMLElement | null = null;
+  let approvalToggle: HTMLButtonElement | null = null;
+  let composerEl: HTMLElement | null = null;
+  let composerRow: HTMLElement | null = null;
+  let decideTimer: ReturnType<typeof setTimeout> | null = null;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let statusline: HTMLElement | null = null;
+  let turnRunning = false;
   let selectedModel: string | null = null;
   let endpointDefault: string | null = null;
   let durableApprovalMode: "ask" | "auto" = "ask";
@@ -99,22 +124,40 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   let sessionTitle = "新会话";
   let sessions: SessionMeta[] = [];
   let pendingSend = false;
+  let messageQueue: QueuedDraft[] = [];
+  let queueCollapsed = true;
+  let queueSequence = 0;
 
   let panel: HTMLElement | null = null;
   let titleEl: HTMLElement | null = null;
-  let sessionSelect: HTMLSelectElement | null = null;
-  let modelSelect: HTMLSelectElement | null = null;
   let defaultModeElement: HTMLSelectElement | null = null;
+  let statusDot: HTMLElement | null = null;
+  let historyPop: HTMLElement | null = null;
+  let historyList: HTMLElement | null = null;
+  let historySearch: HTMLInputElement | null = null;
+  let historyToggle: HTMLButtonElement | null = null;
+  let modelPop: HTMLElement | null = null;
+  let modelPill: HTMLElement | null = null;
+  let modelToggle: HTMLButtonElement | null = null;
+  let modePop: HTMLElement | null = null;
+  let modeGroup: HTMLElement | null = null;
+  let modeGroupAsk: HTMLButtonElement | null = null;
+  let modeGroupAuto: HTMLButtonElement | null = null;
+  let modeToggle: HTMLButtonElement | null = null;
+  let morePop: HTMLElement | null = null;
+  let endpointGroups: Array<{ name: string; models: ModelEntry[] }> = [];
   let rootNotice: HTMLElement | null = null;
   let contextRow: HTMLElement | null = null;
   let transcript: HTMLElement | null = null;
   let chips: HTMLElement | null = null;
   let notice: HTMLElement | null = null;
+  let queueDock: HTMLElement | null = null;
   let input: HTMLTextAreaElement | null = null;
   let sendButton: HTMLButtonElement | null = null;
   let stopButton: HTMLButtonElement | null = null;
   let modeAsk: HTMLButtonElement | null = null;
   let modeAuto: HTMLButtonElement | null = null;
+  let modeLayoutObserver: ResizeObserver | null = null;
 
   const offWorkspace = workspace.events.on("file-opened", (file) => {
     if (contextRow) paintContext(contextRow, file === null || file === undefined ? null : file.name);
@@ -124,44 +167,103 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   });
 
   const paintButtons = (): void => {
-    const running = session?.running === true;
-    if (sendButton) sendButton.disabled = running;
-    if (stopButton) stopButton.disabled = false;
+    const running = turnRunning || session?.running === true;
+    if (statusline) {
+      statusline.classList.toggle("run", running);
+      const text = statusline.firstElementChild;
+      if (text) text.textContent = running ? "回合运行中 · 可随时停止" : "Enter 发送 · Shift+Enter 换行";
+    }
+    const hasDraft = Boolean(input?.value.trim() || attachments.length > 0);
+    const primaryStops = running && !hasDraft;
+    if (sendButton) {
+      sendButton.hidden = primaryStops;
+      sendButton.disabled = !hasDraft;
+    }
+    if (stopButton) stopButton.hidden = !running;
   };
 
-  const paintModes = (): void => {
-    const mode = session?.mode ?? "ask";
-    modeAsk?.classList.toggle("active", mode === "ask");
-    modeAuto?.classList.toggle("active", mode === "auto");
+  /** Close every header popover; opening one closes the others. */
+  const closePops = (): void => {
+    for (const pop of [historyPop, modelPop, modePop, morePop]) {
+      pop?.classList.remove("open");
+    }
+    modeToggle?.setAttribute("aria-expanded", "false");
+  };
+  const togglePop = (pop: HTMLElement | null): void => {
+    const willOpen = pop ? !pop.classList.contains("open") : false;
+    closePops();
+    pop?.classList.toggle("open", willOpen);
+  };
+
+  const paintModes = (mode: "ask" | "auto" = session?.mode ?? "ask"): void => {
+    modeAsk?.classList.toggle("current", mode === "ask");
+    modeAuto?.classList.toggle("current", mode === "auto");
+    modeGroupAsk?.classList.toggle("active", mode === "ask");
+    modeGroupAsk?.setAttribute("aria-pressed", String(mode === "ask"));
+    modeGroupAuto?.classList.toggle("active", mode === "auto");
+    modeGroupAuto?.setAttribute("aria-pressed", String(mode === "auto"));
+    if (modeToggle) {
+      modeToggle.textContent = mode === "ask" ? "🛡" : "⚡";
+      modeToggle.setAttribute(
+        "aria-label",
+        mode === "ask" ? "写操作批准模式：请求批准" : "写操作批准模式：帮我批准",
+      );
+      modeToggle.setAttribute(
+        "aria-expanded",
+        String(modePop?.classList.contains("open") === true),
+      );
+    }
+  };
+
+  const paintModeLayout = (width: number): void => {
+    if (!panel) return;
+    const compact = width < 280;
+    panel.dataset.modeLayout = compact ? "compact" : "wide";
+    if (modeGroup) modeGroup.hidden = compact;
+    if (modeToggle) modeToggle.hidden = !compact;
+    if (!compact && modePop?.classList.contains("open")) closePops();
   };
 
   const paintTitle = (): void => {
     if (titleEl) titleEl.textContent = sessionTitle;
+    if (statusDot) statusDot.classList.toggle("run", session?.running === true);
   };
 
   const paintModel = (): void => {
-    if (modelSelect && selectedModel) modelSelect.value = selectedModel;
+    if (modelPill) modelPill.textContent = selectedModel ?? "选择模型";
   };
 
   const paintSessionOptions = (): void => {
-    if (!sessionSelect) return;
-    sessionSelect.replaceChildren();
-    const current = document.createElement("option");
-    current.value = session?.id ?? "";
-    current.textContent = sessionTitle;
-    sessionSelect.append(current);
+    const list = historyList;
+    if (!list) return;
+    list.replaceChildren();
+    const filter = historySearch?.value.trim() ?? "";
+    const matches = (title: string): boolean => title.includes(filter);
+    const addItem = (id: string, title: string, current: boolean): void => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = current ? "agent-pop-item current" : "agent-pop-item";
+      item.dataset.sessionOption = "";
+      item.dataset.sessionId = id;
+      item.textContent = title;
+      item.addEventListener("click", () => {
+        closePops();
+        void openSession(id);
+      });
+      list.append(item);
+    };
+    if (session && matches(sessionTitle)) addItem(session.id, sessionTitle, true);
     for (const meta of sessions) {
-      if (meta.id === session?.id) {
-        current.value = meta.id;
-        continue;
-      }
-      const option = document.createElement("option");
-      option.value = meta.id;
-      option.dataset.sessionId = meta.id;
-      option.textContent = meta.title;
-      sessionSelect.append(option);
+      if (meta.id !== session?.id && matches(meta.title)) addItem(meta.id, meta.title, false);
+    }
+    if (list.children.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "agent-pop-empty";
+      empty.textContent = "无匹配会话";
+      list.append(empty);
     }
   };
+;
 
   const refreshSessions = async (): Promise<void> => {
     if (disposed) return;
@@ -220,21 +322,43 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     transcript.scrollTop = transcript.scrollHeight;
   };
 
-  const appendError = (message: string): void => {
-    if (!transcript) return;
-    const error = document.createElement("div");
-    error.className = "chat-error";
+  /** Show a transient, closable error toast on the panel; auto-dismisses in 5s. */
+  const showError = (message: string): void => {
+    if (!panel || disposed) return;
+    panel.querySelector(".agent-toast")?.remove();
+    if (toastTimer) clearTimeout(toastTimer);
+    const toast = document.createElement("div");
+    toast.className = "agent-toast";
     const text = document.createElement("div");
-    text.className = "chat-error-text";
     text.textContent = message;
-    error.append(text);
-    transcript.append(error);
-    transcript.scrollTop = transcript.scrollHeight;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "agent-toast-close";
+    close.dataset.toastClose = "";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "关闭错误提示");
+    const dismiss = (): void => {
+      toast.remove();
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+    };
+    close.addEventListener("click", dismiss);
+    toastTimer = setTimeout(dismiss, 5000);
+    toast.append(text, close);
+    panel.append(toast);
   };
+
+  /** Stream-level errors surface as toasts; the turn process group already
+   * collapsed with an error label. */
+  const appendError = (message: string): void => {
+    showError(message);
+  };
+
 
   const renderHistory = (): void => {
     if (!transcript || !session) return;
-    const historyCalls = new Map<string, { id: string; name: string; argumentsText: string }>();
 
     const appendMessage = (message: AgentMessage, target: HTMLElement[]): void => {
       if (message.role === "user") {
@@ -252,7 +376,17 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         return;
       }
       if (message.role === "assistant") {
-        for (const call of message.toolCalls) historyCalls.set(call.id, call);
+        if (message.toolCalls.length > 0) {
+          const group = createProcessGroup();
+          for (const call of message.toolCalls) {
+            group.addStep(renderToolCard(
+              call,
+              { content: "历史记录未含结果内容", isError: false },
+            ));
+          }
+          group.settle(`已执行 ${message.toolCalls.length} 个工具动作`, 0);
+          target.push(group.root);
+        }
         const wrapper = document.createElement("div");
         wrapper.className = "chat-message chat-assistant";
         const stream = document.createElement("div");
@@ -264,40 +398,42 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         historyRenderer.finalize();
         return;
       }
-      const call = historyCalls.get(message.callId) ??
-        { id: message.callId, name: message.name, argumentsText: "" };
-      target.push(renderToolCard(
-        call,
-        { content: message.content, isError: message.isError === true },
-      ));
     }
 
     const nodes: HTMLElement[] = [];
+    let historyGroup: ReturnType<typeof createProcessGroup> | null = null;
+    let historySteps = 0;
+    const flushHistoryGroup = (): void => {
+      if (!historyGroup) return;
+      historyGroup.settle(`已执行 ${historySteps} 个工具动作`, 0);
+      nodes.push(historyGroup.root);
+      historyGroup = null;
+      historySteps = 0;
+    };
     for (const line of session.lines()) {
       if (line.type === "message") {
+        flushHistoryGroup();
         appendMessage(line.message, nodes);
         continue;
       }
       if (line.type === "compaction") {
+        flushHistoryGroup();
         nodes.length = 0;
         nodes.push(renderCompactionDivider(line.summary));
         continue;
       }
-      if (line.type !== "approval") continue;
-      const request = {
-        id: line.id,
-        kind: line.kind,
-        tool: line.tool,
-        path: line.path,
-        summary: "历史审批",
-      };
-      const state = {
-        decision: line.decision === "allow" ? "allow" as const : "deny" as const,
-        decider: line.decider,
-        reason: line.reason ?? (line.decision === "unavailable" ? "审批不可用" : undefined),
-      };
-      nodes.push(renderApprovalCard(request, state));
+      if (line.type === "approval") {
+        flushHistoryGroup();
+        const decided = line.decision === "allow";
+        nodes.push(renderDecisionLine(
+          decided ? "allow" : "deny",
+          `${decided ? "已批准" : "已拒绝"} ${line.tool} ${line.path}${line.reason ? ` · ${line.reason}` : ""}`,
+          line.decider === "guardian" ? "审查模型" : "用户",
+        ));
+        continue;
+      }
     }
+    flushHistoryGroup();
     transcript.replaceChildren(...nodes);
     transcript.scrollTop = transcript.scrollHeight;
   };
@@ -307,42 +443,73 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     paintButtons();
     switch (event.type) {
       case "turn-start":
+        turnRunning = true;
         activeTools = new Map();
+        if (transcript) {
+          processGroup = createProcessGroup();
+          transcript.append(processGroup.root);
+        }
+        turnStartedAt = Date.now();
+        turnStepCount = 0;
         beginAssistant();
+        paintButtons();
         break;
       case "snapshot":
         if (!renderer && !activeStream) beginAssistant();
         renderer?.update(event.snapshot);
         break;
       case "tool-start": {
-        if (!transcript) break;
         const card = renderToolCard(event.call);
         activeTools.set(event.call.id, { card, callId: event.call.id });
-        transcript.append(card);
-        transcript.scrollTop = transcript.scrollHeight;
+        turnStepCount += 1;
+        processGroup?.addStep(card);
+        processGroup?.setRunning(`正在执行 ${event.call.name}`);
+        if (transcript) transcript.scrollTop = transcript.scrollHeight;
         break;
       }
       case "tool-end": {
         const pending = activeTools.get(event.call.id);
         const card = renderToolCard(event.call, { content: event.content, isError: event.isError });
         if (pending) pending.card.replaceWith(card);
-        else transcript?.append(card);
+        else processGroup?.addStep(card);
         activeTools.delete(event.call.id);
+        processGroup?.setRunning(activeTools.size === 0 ? `已执行 ${turnStepCount} 个动作` : `正在执行下一动作`);
         break;
       }
       case "message":
         if (event.message.role === "assistant") renderer?.update(assistantSnapshot(event.message));
         break;
       case "turn-end":
+        turnRunning = false;
+        processGroup?.settle(`已完成 ${turnStepCount} 个动作`, Date.now() - turnStartedAt);
+        processGroup = null;
         finishActive();
         paintButtons();
         break;
       case "aborted":
+        turnRunning = false;
+        approvalQueue = [];
+        activeApproval = null;
+        approvalDetail?.remove();
+        approvalDetail = null;
+        approvalToggle = null;
+        if (decideTimer) {
+          clearTimeout(decideTimer);
+          decideTimer = null;
+        }
+        if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
+        messageQueue = [];
+        renderQueue();
+        processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
+        processGroup = null;
         appendInterrupted();
         finishActive();
         paintButtons();
         break;
       case "error":
+        turnRunning = false;
+        processGroup?.settle("回合出错", Date.now() - turnStartedAt);
+        processGroup = null;
         appendError(event.message);
         finishActive();
         paintButtons();
@@ -355,6 +522,23 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     offApprovals?.();
     offSession = null;
     offApprovals = null;
+    processGroup = null;
+    turnRunning = false;
+    approvalQueue = [];
+    activeApproval = null;
+    approvalDetail?.remove();
+    approvalDetail = null;
+    approvalToggle = null;
+    if (decideTimer) {
+      clearTimeout(decideTimer);
+      decideTimer = null;
+    }
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    panel?.querySelector(".agent-toast")?.remove();
+    if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
     finishActive();
     if (abortOld) void session?.abort().catch(() => {});
     session = null;
@@ -432,16 +616,125 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     }
   };
 
-  const showApproval = (target: AgentSession, request: ApprovalRequest): void => {
-    if (!transcript || disposed) return;
-    const pending = renderApprovalCard(request, "pending", (outcome: ApprovalOutcome) => {
-      const decided = renderApprovalCard(request, { decision: outcome.decision, decider: "human", reason: outcome.reason });
-      pending.replaceWith(decided);
-      target.respond(request.id, outcome);
-    });
-    transcript.append(pending);
-    transcript.scrollTop = transcript.scrollHeight;
+  /** Queue one approval and present it by taking over the composer. */
+  const showApproval = (_target: AgentSession, request: ApprovalRequest): void => {
+    if (disposed) return;
+    approvalQueue.push(request);
+    presentNextApproval();
   };
+
+  /** Present the next queued approval: save the draft, swap the composer into
+   * approval state, and mount the detail popover on the panel. */
+  const presentNextApproval = (): void => {
+    if (
+      disposed || !composerEl || !panel ||
+      composerEl.dataset.state !== "normal" || activeLayers.size > 0
+    ) return;
+    const next = approvalQueue.shift();
+    if (!next || !input || !composerRow) return;
+    activeApproval = next;
+    savedDraft = input.value;
+    input.value = "";
+    if (approvalDetail) approvalDetail.remove();
+    const prompt = renderApprovalPrompt(next, decideApproval);
+    approvalDetail = prompt.detail;
+    approvalToggle = prompt.toggle;
+    panel.append(approvalDetail);
+    composerEl.dataset.state = "approval";
+    composerEl.dataset.approvalId = next.id;
+    composerEl.replaceChildren(prompt.root);
+    paintButtons();
+  };
+
+  /** Record the decision, collapse the composer to a one-line record, restore
+   * the draft, then present the next queued approval. */
+  const decideApproval = (outcome: ApprovalOutcome): void => {
+    const active = activeApproval;
+    if (!active || !composerEl) return;
+    session?.respond(active.id, outcome);
+    if (transcript) {
+      const label = outcome.decision === "allow"
+        ? `已批准 ${active.tool} ${active.path}${outcome.grant === "dir" ? "（所在目录）" : outcome.grant === "file" ? "（仅此文件）" : ""}`
+        : `已拒绝 ${active.tool} ${active.path}`;
+      transcript.append(renderDecisionLine(outcome.decision, label, "用户"));
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+    approvalQueue = approvalQueue.filter((item) => item.id !== active.id);
+    activeApproval = null;
+    approvalDetail?.remove();
+    approvalDetail = null;
+    approvalToggle = null;
+    composerEl.dataset.state = "decided";
+    delete composerEl.dataset.approvalId;
+    const decided = document.createElement("div");
+    decided.className = "agent-approval-decided";
+    decided.textContent = outcome.decision === "allow" ? "✓ 已批准，Agent 继续执行" : "✕ 已拒绝，Agent 可继续对话";
+    composerEl.replaceChildren(decided);
+    paintButtons();
+    if (decideTimer) clearTimeout(decideTimer);
+    decideTimer = setTimeout(() => {
+      decideTimer = null;
+      restoreComposer();
+      presentNextApproval();
+    }, 400);
+  };
+
+  /** Return the composer to normal input state and restore the saved draft. */
+  const restoreComposer = (): void => {
+    if (!composerEl || !input || !composerRow) return;
+    composerEl.dataset.state = "normal";
+    delete composerEl.dataset.approvalId;
+    composerEl.replaceChildren(input, composerRow);
+    input.value = savedDraft;
+    savedDraft = "";
+    paintButtons();
+  };
+
+  /** Global shortcuts while an approval owns the composer: Esc closes the
+   * detail popover first, otherwise denies; ⌘/Ctrl+Enter approves. Outside
+   * clicks close an open popover without deciding. */
+  const onDocKeydown = (event: KeyboardEvent): void => {
+    if (disposed) return;
+    if (activeLayers.size > 0) return;
+    if (event.key === "Escape" && [historyPop, modelPop, morePop].some((pop) => pop?.classList.contains("open"))) {
+      closePops();
+      return;
+    }
+    if (composerEl?.dataset.state !== "approval") return;
+    if (event.key === "Escape") {
+      if (approvalDetail?.classList.contains("open")) {
+        approvalDetail.classList.remove("open");
+        approvalToggle?.setAttribute("aria-expanded", "false");
+      } else {
+        event.preventDefault();
+        decideApproval({ decision: "deny" });
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      decideApproval({ decision: "allow" });
+    }
+  };
+  const onDocClick = (event: MouseEvent): void => {
+    if (disposed) return;
+    const target = event.target as Node;
+    const inPops = [historyPop, modelPop, modePop, morePop].some((pop) =>
+      pop?.classList.contains("open") && (pop.contains(target) || pop === target),
+    );
+    const inTriggers = [historyToggle, modelToggle, modeToggle].some((trigger) => trigger?.contains(target));
+    if (!inPops && !inTriggers) closePops();
+    if (!approvalDetail?.classList.contains("open")) return;
+    if (approvalDetail.contains(target) || approvalToggle?.contains(target)) return;
+    approvalDetail.classList.remove("open");
+    approvalToggle?.setAttribute("aria-expanded", "false");
+  };
+  document.addEventListener("keydown", onDocKeydown);
+  document.addEventListener("click", onDocClick);
+  const releaseLayerSubscription = activeLayers.subscribe(() => {
+    if (!disposed && composerEl?.dataset.state === "normal") presentNextApproval();
+  });
+
 
   const openSession = async (
     id: string | null,
@@ -455,6 +748,9 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       if (disposed || generation !== rootGeneration) return;
       if (title) sessionTitle = title;
       attachSession(next);
+      messageQueue = [];
+      queueCollapsed = true;
+      renderQueue();
       await refreshSessions();
     } catch (error) {
       if (!disposed && notice) {
@@ -465,50 +761,126 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
   };
 
   const sendDraft = (): void => {
-    if (disposed || !input || session?.running) return;
+    if (disposed || !input) return;
     if (!session) {
       pendingSend = true;
       return;
     }
     const text = input.value.trim();
     if (!text && attachments.length === 0) return;
-    if (modelSelect?.value) selectedModel = modelSelect.value;
     if (session && session.model !== selectedModel) session.setModel(selectedModel);
     const content = composeContent(text, attachments);
-    addUserMessage(content);
-    input.value = "";
+
+    if (turnRunning || session.running) {
+      queueSequence += 1;
+      const preview = text || attachments.map((attachment) => attachment.label).join("、");
+      messageQueue.push({
+        id: `queue-${queueSequence}`,
+        text,
+        content,
+        preview,
+      });
+      input.value = "";
+      attachments = [];
+      renderChips();
+      renderQueue();
+      paintButtons();
+      return;
+    }
+
     const outgoingContent = attachments.length > 0 ? content as ContentPart[] : undefined;
     attachments = [];
+    input.value = "";
     renderChips();
     if (notice) notice.hidden = true;
-    paintButtons();
-    const activeSession = session;
-    void activeSession.send(text, outgoingContent)
+    sendMessage(session, text, content, outgoingContent);
+  };
+
+  const sendNextQueued = (): void => {
+    if (disposed || !session || session.running || messageQueue.length === 0) return;
+    const next = messageQueue.shift()!;
+    renderQueue();
+    sendMessage(session, next.text, next.content, Array.isArray(next.content) ? next.content : undefined);
+  };
+
+  const sendMessage = (
+    target: AgentSession,
+    text: string,
+    content: string | ContentPart[],
+    outgoingContent: ContentPart[] | undefined,
+  ): void => {
+    addUserMessage(content);
+    void target.send(text, outgoingContent)
       .then(async () => {
-        sessionTitle = activeSession.title;
+        sessionTitle = target.title;
         paintTitle();
         paintSessionOptions();
         await refreshSessions();
       })
       .catch((error: unknown) => {
-        if (disposed && notice) return;
-        if (notice) {
-          notice.textContent = `${toPanelError(error).code}: ${toPanelError(error).message}`;
-          notice.hidden = false;
-        }
+        if (disposed) return;
+        showError(`${toPanelError(error).code}: ${toPanelError(error).message}`);
       })
       .finally(() => {
         paintButtons();
+        sendNextQueued();
       });
+  };
+
+  const renderQueue = (): void => {
+    if (!queueDock) return;
+    queueDock.hidden = messageQueue.length === 0;
+    queueDock.replaceChildren();
+    if (messageQueue.length === 0) return;
+
+    if (messageQueue.length > 1) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "agent-queue-toggle";
+      toggle.dataset.queueToggle = "";
+      toggle.setAttribute("aria-expanded", String(!queueCollapsed));
+      toggle.textContent = `${messageQueue.length} 条排队消息 ${queueCollapsed ? "▸" : "▾"}`;
+      toggle.addEventListener("click", () => {
+        queueCollapsed = !queueCollapsed;
+        renderQueue();
+      });
+      queueDock.append(toggle);
+    }
+
+    const list = document.createElement("ul");
+    list.className = "agent-queue-list";
+    if (messageQueue.length === 1 || !queueCollapsed) {
+      for (const item of messageQueue) {
+        const row = document.createElement("li");
+        row.className = "agent-queue-row";
+        row.dataset.queueItem = item.id;
+        const label = document.createElement("span");
+        label.className = "agent-queue-preview";
+        label.textContent = item.preview;
+        label.title = item.preview;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "agent-queue-remove";
+        remove.dataset.removeQueue = item.id;
+        remove.setAttribute("aria-label", `移除排队消息 ${item.preview}`);
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          messageQueue = messageQueue.filter((queued) => queued.id !== item.id);
+          renderQueue();
+        });
+        row.append(label, remove);
+        list.append(row);
+      }
+    }
+    queueDock.append(list);
   };
 
   const stopSession = (): void => {
     if (!session) return;
+    messageQueue = [];
+    renderQueue();
     void session.abort().catch((error: unknown) => {
-      if (!disposed && notice) {
-        notice.textContent = `停止失败：${toPanelError(error).message}`;
-        notice.hidden = false;
-      }
+      if (!disposed) showError(`停止失败：${toPanelError(error).message}`);
     });
   };
 
@@ -536,6 +908,7 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
       chip.append(label, remove);
       chipHost.append(chip);
     });
+    paintButtons();
   };
 
   const addFiles = async (files: FileList | File[]): Promise<void> => {
@@ -589,59 +962,63 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     panel.className = "agent-panel";
     const head = document.createElement("header");
     head.className = "agent-head";
-    const titleRow = document.createElement("div");
-    titleRow.className = "agent-head-row";
+    // 单行 header：标题 + 状态点 + 新建/历史/更多，不再堆配置控件。
+    const statusSpan = document.createElement("span");
+    statusSpan.className = "agent-status-dot";
+    statusDot = statusSpan;
     titleEl = document.createElement("h2");
     titleEl.className = "agent-title";
     titleEl.textContent = sessionTitle;
-    sessionSelect = document.createElement("select");
-    sessionSelect.className = "agent-session-select";
-    sessionSelect.setAttribute("aria-label", "历史会话");
-    sessionSelect.addEventListener("change", () => {
-      const id = sessionSelect?.value;
-      if (id) void openSession(id);
-    });
     const newButton = document.createElement("button");
     newButton.type = "button";
-    newButton.className = "agent-new";
-    newButton.textContent = "新建";
-    newButton.setAttribute("aria-label", "新建会话");
+    newButton.className = "btn icon-btn";
     newButton.dataset.newSession = "";
-    newButton.addEventListener("click", () => void openSession(null, "新会话"));
-    titleRow.append(titleEl, sessionSelect, newButton);
+    newButton.textContent = "＋";
+    newButton.setAttribute("aria-label", "新建会话");
+    newButton.addEventListener("click", () => {
+      closePops();
+      void openSession(null, "新会话");
+    });
+    historyToggle = document.createElement("button");
+    historyToggle.type = "button";
+    historyToggle.className = "btn icon-btn";
+    historyToggle.dataset.historyToggle = "";
+    historyToggle.textContent = "▤";
+    historyToggle.setAttribute("aria-label", "历史会话");
+    historyToggle.addEventListener("click", () => {
+      paintSessionOptions();
+      togglePop(historyPop);
+    });
+    const moreToggle = document.createElement("button");
+    moreToggle.type = "button";
+    moreToggle.className = "btn icon-btn";
+    moreToggle.dataset.moreToggle = "";
+    moreToggle.textContent = "⋯";
+    moreToggle.setAttribute("aria-label", "更多设置");
+    moreToggle.addEventListener("click", () => togglePop(morePop));
+    const titleRow = document.createElement("div");
+    titleRow.className = "agent-head-row";
+    titleRow.append(statusSpan, titleEl, newButton, historyToggle, moreToggle);
 
-    const controls = document.createElement("div");
-    controls.className = "agent-controls";
-    const modeGroup = document.createElement("div");
-    modeGroup.className = "agent-mode-group";
-    modeGroup.setAttribute("role", "group");
-    modeGroup.setAttribute("aria-label", "写操作批准模式");
-    modeAsk = document.createElement("button");
-    modeAsk.type = "button";
-    modeAsk.className = "agent-mode";
-    modeAsk.dataset.modeAsk = "";
-    modeAsk.textContent = "请求批准";
-    modeAsk.addEventListener("click", () => {
-      session?.setMode("ask");
-      paintModes();
-    });
-    modeAuto = document.createElement("button");
-    modeAuto.type = "button";
-    modeAuto.className = "agent-mode";
-    modeAuto.dataset.modeAuto = "";
-    modeAuto.textContent = "帮我批准";
-    modeAuto.addEventListener("click", () => {
-      session?.setMode("auto");
-      paintModes();
-    });
-    modeGroup.append(modeAsk, modeAuto);
-    modelSelect = document.createElement("select");
-    modelSelect.className = "agent-model-select";
-    modelSelect.setAttribute("aria-label", "Agent 模型");
-    modelSelect.addEventListener("change", () => {
-      selectedModel = modelSelect?.value || null;
-      session?.setModel(selectedModel);
-    });
+    // 历史 popover：搜索 + 会话列表 + 新建入口。
+    historyPop = document.createElement("div");
+    historyPop.className = "agent-pop agent-history-pop";
+    historySearch = document.createElement("input");
+    historySearch.type = "search";
+    historySearch.className = "agent-pop-search";
+    historySearch.dataset.historySearch = "";
+    historySearch.placeholder = "搜索会话";
+    historySearch.addEventListener("input", () => paintSessionOptions());
+    historyList = document.createElement("div");
+    historyList.className = "agent-pop-list";
+    historyPop.append(historySearch, historyList);
+
+    // 更多 popover：新会话默认审批模式（持久设置）。
+    morePop = document.createElement("div");
+    morePop.className = "agent-pop agent-more-pop";
+    const moreTitle = document.createElement("div");
+    moreTitle.className = "agent-pop-title";
+    moreTitle.textContent = "默认设置";
     defaultModeElement = document.createElement("select");
     defaultModeElement.className = "agent-default-mode";
     defaultModeElement.setAttribute("aria-label", "新会话默认审批模式");
@@ -661,7 +1038,63 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
         }
       });
     });
-    controls.append(modeGroup, defaultModeElement, modelSelect);
+    morePop.append(moreTitle, defaultModeElement);
+
+    // 模型 popover：按厂商/endpoint 分组，composer pill 打开。
+    modelPop = document.createElement("div");
+    modelPop.className = "agent-pop agent-model-pop";
+
+    // 审批模式 popover：composer 窄态只占一个图标座位。
+    modePop = document.createElement("div");
+    modePop.className = "agent-pop agent-mode-pop";
+    const modeTitle = document.createElement("div");
+    modeTitle.className = "agent-pop-title";
+    modeTitle.textContent = "写操作批准模式";
+    const makeModeOption = (mode: "ask" | "auto", label: string, detail: string): HTMLButtonElement => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "agent-mode-option";
+      button.dataset[mode === "ask" ? "modeAsk" : "modeAuto"] = "";
+      const main = document.createElement("span");
+      main.className = "agent-mode-option-main";
+      main.textContent = label;
+      const sub = document.createElement("span");
+      sub.className = "agent-mode-option-sub";
+      sub.textContent = detail;
+      button.append(main, sub);
+      button.addEventListener("click", () => {
+        session?.setMode(mode);
+        closePops();
+        paintModes(mode);
+      });
+      return button;
+    };
+    modeAsk = makeModeOption("ask", "请求批准", "写入前确认");
+    modeAuto = makeModeOption("auto", "帮我批准", "本次会话自动处理");
+    modePop.append(modeTitle, modeAsk, modeAuto);
+
+    modeGroup = document.createElement("div");
+    modeGroup.className = "agent-mode-group";
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "写操作批准模式");
+    modeGroupAsk = document.createElement("button");
+    modeGroupAsk.type = "button";
+    modeGroupAsk.className = "agent-mode";
+    modeGroupAsk.textContent = "请求批准";
+    modeGroupAsk.addEventListener("click", () => {
+      session?.setMode("ask");
+      paintModes("ask");
+    });
+    modeGroupAuto = document.createElement("button");
+    modeGroupAuto.type = "button";
+    modeGroupAuto.className = "agent-mode";
+    modeGroupAuto.dataset.modeInlineAuto = "";
+    modeGroupAuto.textContent = "帮我批准";
+    modeGroupAuto.addEventListener("click", () => {
+      session?.setMode("auto");
+      paintModes("auto");
+    });
+    modeGroup.append(modeGroupAsk, modeGroupAuto);
 
     rootNotice = document.createElement("div");
     rootNotice.className = "agent-root-mismatch";
@@ -677,15 +1110,23 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     notice = document.createElement("div");
     notice.className = "chat-notice";
     notice.hidden = true;
+
     const composer = document.createElement("div");
     composer.className = "chat-composer";
+    composer.dataset.state = "normal";
+    composerEl = composer;
+    const queue = document.createElement("div");
+    queue.className = "agent-queue-dock";
+    queue.dataset.agentQueue = "";
+    queue.hidden = true;
+    queueDock = queue;
     const attach = document.createElement("button");
     attach.type = "button";
     attach.className = "chat-attach";
     attach.textContent = "📎";
-    attach.title = "本版不支持系统文件选择；请直接粘贴或拖入图片/音频。";
+    attach.title = "请直接粘贴或拖入图片/音频";
     attach.disabled = true;
-    attach.setAttribute("aria-label", "添加附件（暂不可用）");
+    attach.setAttribute("aria-label", "添加附件（粘贴或拖入）");
     input = document.createElement("textarea");
     input.className = "chat-input";
     input.rows = 3;
@@ -704,51 +1145,116 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
     stopButton.addEventListener("click", stopSession);
     input.addEventListener("keydown", onKeyDown);
     input.addEventListener("paste", onPaste);
+    input.addEventListener("input", paintButtons);
+
+    // composer 座位：附件 · 模型 pill · 宽态分段/窄态图标 · 发送/停止。
+    modelToggle = document.createElement("button");
+    modelToggle.type = "button";
+    modelToggle.className = "chat-model-pill";
+    modelToggle.dataset.modelToggle = "";
+    modelPill = document.createElement("span");
+    modelPill.textContent = selectedModel ?? "选择模型";
+    const pillCaret = document.createElement("span");
+    pillCaret.className = "chat-pill-caret";
+    pillCaret.textContent = "▾";
+    modelToggle.append(modelPill, pillCaret);
+    modelToggle.addEventListener("click", () => togglePop(modelPop));
+
+    modeToggle = document.createElement("button");
+    modeToggle.type = "button";
+    modeToggle.className = "chat-mode-toggle";
+    modeToggle.dataset.modeToggle = "";
+    modeToggle.setAttribute("aria-haspopup", "menu");
+    modeToggle.addEventListener("click", () => {
+      togglePop(modePop);
+      paintModes();
+    });
+
     const row = document.createElement("div");
     row.className = "chat-composer-row";
-    const hint = document.createElement("span");
-    hint.className = "chat-hint";
-    hint.textContent = "Enter 发送 · Shift+Enter 换行";
-    row.append(attach, hint, sendButton, stopButton);
+    composerRow = row;
+    const spacer = document.createElement("span");
+    spacer.className = "chat-row-spacer";
+    row.append(attach, modelToggle, spacer, modeGroup, modeToggle, sendButton, stopButton);
     composer.append(input, row);
-    head.append(titleRow, controls);
-    panel.append(head, rootNotice, contextRow, transcript, chips, notice, composer);
+    statusline = document.createElement("div");
+    statusline.className = "agent-statusline";
+    const statusText = document.createElement("span");
+    statusText.className = "agent-statusline-text";
+    statusText.textContent = "Enter 发送 · Shift+Enter 换行";
+    statusline.append(statusText);
+
+    head.append(titleRow);
+    panel.append(head);
+    const pops: HTMLElement[] = [];
+    if (historyPop) pops.push(historyPop);
+    if (morePop) pops.push(morePop);
+    if (modelPop) pops.push(modelPop);
+    if (modePop) pops.push(modePop);
+    panel.append(...pops);
+    panel.append(rootNotice, contextRow, transcript, chips, notice, queueDock, composer, statusline);
     panel.addEventListener("dragover", onDragOver);
     panel.addEventListener("drop", onDrop);
     el.append(panel);
+    paintModeLayout(composerRow?.getBoundingClientRect().width ?? 0);
+    if (composerRow && typeof ResizeObserver === "function") {
+      modeLayoutObserver = new ResizeObserver((entries) => {
+        paintModeLayout(entries.at(-1)?.contentRect.width ?? 0);
+      });
+      modeLayoutObserver.observe(composerRow);
+    }
     paintModes();
     paintButtons();
+    paintSessionOptions();
     paintSessionOptions();
   });
 
   const loadModels = async (): Promise<void> => {
-    if (!llm || !modelSelect) return;
+    if (!llm || !modelPop) return;
     await llm.listEndpoints().then(async (settings: RedactedSettings) => {
-      if (disposed || !modelSelect) return;
-      const models = settings.endpoints
+      if (disposed || !modelPop) return;
+      endpointGroups = settings.endpoints
         .filter((endpoint) => endpoint.kind === "chat")
-        .flatMap((endpoint) => endpoint.models);
-      const unique = new Map(models.map((model) => [model.id, model]));
-      modelSelect.replaceChildren();
+        .map((endpoint) => ({ name: endpoint.name, models: endpoint.models }));
       endpointDefault = settings.defaultModel;
       durableApprovalMode = settings.agentApprovalMode === "auto" ? "auto" : "ask";
       if (defaultModeElement) defaultModeElement.value = durableApprovalMode;
-      const requested = session?.model ?? settings.defaultModel;
-      selectedModel = requested && unique.has(requested)
-        ? requested
-        : modelSelect.options[0]?.value ?? null;
-      for (const model of unique.values()) {
-        const option = document.createElement("option");
-        option.value = model.id;
-        option.textContent = modelLabel(model.id, model.capabilities);
-        modelSelect.append(option);
+      const unique = new Map<string, ModelEntry>();
+      for (const group of endpointGroups) {
+        for (const model of group.models) {
+          if (!unique.has(model.id)) unique.set(model.id, model);
+        }
       }
+      modelPop.replaceChildren();
+      for (const group of endpointGroups) {
+        const title = document.createElement("div");
+        title.className = "agent-pop-title";
+        title.textContent = group.name;
+        modelPop.append(title);
+        for (const model of group.models) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "agent-pop-item";
+          item.dataset.modelOption = model.id;
+          item.textContent = modelLabel(model.id, model.capabilities);
+          item.addEventListener("click", () => {
+            selectedModel = model.id;
+            session?.setModel(selectedModel);
+            paintModel();
+            closePops();
+          });
+          modelPop.append(item);
+        }
+      }
+      const requested = session?.model ?? settings.defaultModel;
+      selectedModel = requested && unique.has(requested) ? requested : unique.keys().next().value ?? null;
       paintModel();
     }).catch((error: unknown) => {
       if (disposed || !contextRow) return;
       contextRow.textContent = `模型配置不可用：${toPanelError(error).code}`;
     });
   };
+
 
   queueMicrotask(() => {
     void (async () => {
@@ -760,6 +1266,13 @@ export function apply(ctx: Context, _config: Record<string, unknown> = {}): () =
 
   return () => {
     disposed = true;
+    modeLayoutObserver?.disconnect();
+    modeLayoutObserver = null;
+    releaseLayerSubscription();
+    document.removeEventListener("keydown", onDocKeydown);
+    document.removeEventListener("click", onDocClick);
+    if (decideTimer) clearTimeout(decideTimer);
+    if (toastTimer) clearTimeout(toastTimer);
     offSession?.();
     offApprovals?.();
     finishActive();

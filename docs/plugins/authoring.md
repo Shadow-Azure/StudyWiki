@@ -35,7 +35,7 @@ npm run build      # esbuild 把 src/index.ts 打包成单文件 index.js
 npm run check      # 发布面校验：npm pack 断言恰好两文件 + 契约字段齐备
 ```
 
-生成的 `src/index.ts` 是顶栏 hello 示例（`name`/`inject`/`apply` 三段式），`src/host.d.ts` 是本地最小类型副本。
+生成 `src/index.ts` 是 Activity Rail hello 示例（`name`/`inject`/`apply`；注册 `activity.left`，API v1 兼容 `topbar.left`），`src/host.d.ts` 是最小类型副本。
 
 ## 在宿主里试装
 

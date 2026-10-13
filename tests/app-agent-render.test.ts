@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import {
-  createStreamRenderer,
-  renderApprovalCard,
-  renderToolCard,
-  renderCompactionDivider,
-} from "../src/plugins/app-agent/render";
+import { createStreamRenderer, renderApprovalPrompt, renderToolCard, renderCompactionDivider, createProcessGroup, renderDecisionLine } from "../src/plugins/app-agent/render";
 import type { PartialAssistant } from "../src/host/llm-stream";
 
 const snapshot = (patch: Partial<PartialAssistant> = {}): PartialAssistant => ({
@@ -17,59 +12,68 @@ const snapshot = (patch: Partial<PartialAssistant> = {}): PartialAssistant => ({
 const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 
 describe("app-agent render", () => {
-  it("write 审批卡 pending：批准/拒绝回传", () => {
+  it("审批 prompt：批准/拒绝回传，详情含 diff 文本", () => {
     const outcomes: string[] = [];
-    const card = renderApprovalCard(
+    const h = renderApprovalPrompt(
       {
         id: "a1", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入笔记",
         preview: { text: "# 笔记", omitted: false, totalCharacters: 4, totalLines: 1 },
       },
-      "pending",
       (o) => outcomes.push(o.decision),
     );
-    expect(card.textContent).toContain("/lib/n.md");
-    card.querySelector<HTMLButtonElement>("[data-approve]")!.click();
-    card.querySelector<HTMLButtonElement>("[data-deny]")!.click();
+    expect(h.root.textContent).toContain("/lib/n.md");
+    expect(h.detail.textContent).toContain("# 笔记");
+    h.root.querySelector<HTMLButtonElement>("[data-approve]")!.click();
+    h.root.querySelector<HTMLButtonElement>("[data-deny]")!.click();
     expect(outcomes).toEqual(["allow", "deny"]);
   });
 
-  it("read-outside 卡带粒度选择", () => {
+  it("read-outside prompt 带粒度选择", () => {
     const outcomes: { grant?: string }[] = [];
-    const card = renderApprovalCard(
+    const h = renderApprovalPrompt(
       { id: "a2", kind: "read-outside", tool: "read", path: "/out/a.md", summary: "读取库外文件" },
-      "pending",
       (o) => outcomes.push(o),
     );
-    card.querySelector<HTMLButtonElement>("[data-grant-dir]")!.click();
+    h.root.querySelector<HTMLButtonElement>("[data-grant-dir]")!.click();
     expect(outcomes[0]).toMatchObject({ decision: "allow", grant: "dir" });
   });
 
-  it("decided 卡只读且 guardian 标注", () => {
-    const card = renderApprovalCard(
+  it("详情浮层 toggle 状态由 handle 暴露", () => {
+    const h = renderApprovalPrompt(
       {
-        id: "a3", kind: "edit", tool: "edit", path: "/lib/a.md", summary: "替换",
-        preview: { text: "-甲\n+乙", omitted: false, totalCharacters: 2, totalLines: 2 },
+        id: "a4", kind: "write", tool: "write", path: "/lib/b.md", summary: "写",
+        preview: { text: "x", omitted: false, totalCharacters: 1, totalLines: 1 },
       },
-      { decision: "deny", decider: "guardian", reason: "可疑" },
+      () => {},
     );
-    expect(card.textContent).toContain("审查模型");
-    expect(card.textContent).toContain("可疑");
-    expect(card.querySelector("button")).toBeNull();
-    expect(card.textContent).toContain("甲").and.toContain("乙");
+    expect(h.detail.classList.contains("open")).toBe(false);
+    h.toggle.click();
+    expect(h.detail.classList.contains("open")).toBe(true);
+    h.toggle.click();
+    expect(h.detail.classList.contains("open")).toBe(false);
   });
 
-  it("审批卡只渲染有界 preview，不泄漏完整载荷", () => {
+  it("审批详情指向 Agent 默认设置而非模型设置", () => {
+    const h = renderApprovalPrompt(
+      { id: "a6", kind: "write", tool: "write", path: "/lib/n.md", summary: "写" },
+      () => {},
+    );
+    expect(h.detail.textContent).toContain("Agent 面板 ⋯ → 默认设置");
+    expect(h.detail.textContent).not.toContain("模型设置");
+  });
+
+  it("审批详情只渲染有界 preview，不泄漏完整载荷", () => {
     const fullTail = "机密尾部".repeat(100);
-    const card = renderApprovalCard(
+    const h = renderApprovalPrompt(
       {
-        id: "a4", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入超长笔记",
+        id: "a5", kind: "write", tool: "write", path: "/lib/n.md", summary: "写入超长笔记",
         preview: { text: "机密头部…（已省略 100 字符）…", omitted: true, totalCharacters: 400, totalLines: 1 },
       },
-      "pending",
+      () => {},
     );
-    expect(card.textContent).toContain("机密头部");
-    expect(card.textContent).toContain("已省略");
-    expect(card.textContent).not.toContain(fullTail);
+    expect(h.detail.textContent).toContain("机密头部");
+    expect(h.detail.textContent).toContain("已省略");
+    expect(h.detail.textContent).not.toContain(fullTail);
   });
 
   it("工具卡结果折叠与错误样式", () => {
@@ -83,6 +87,45 @@ describe("app-agent render", () => {
     const el = renderCompactionDivider("早前讨论了线代");
     expect(el.textContent).toContain("压缩");
     expect(el.querySelector("details")?.textContent).toContain("线代");
+  });
+});
+
+describe("agent-ui v2 过程组", () => {
+  it("运行中显示当前动作，settle 后折叠并可展开", () => {
+    const g = createProcessGroup();
+    g.setRunning("正在读取 01.md");
+    expect(g.root.className).toContain("agent-process");
+    expect(g.root.textContent).toContain("正在读取 01.md");
+    g.addStep(renderToolCard({ id: "c1", name: "read", argumentsText: "{}" }));
+    g.settle("已读取 1 个文件", 1200);
+    expect(g.root.classList.contains("open")).toBe(false);
+    expect(g.root.textContent).toContain("已读取 1 个文件");
+    expect(g.root.textContent).toContain("1.2s");
+    g.root.querySelector<HTMLElement>(".agent-process-summary")!.click();
+    expect(g.root.classList.contains("open")).toBe(true);
+    expect(g.body.children.length).toBe(1);
+  });
+
+  it("焦点在组内时 settle 不收起", () => {
+    document.body.append(document.createElement("div")); // jsdom host
+    const host = document.body.lastElementChild!;
+    const g = createProcessGroup();
+    host.append(g.root);
+    const summaryEl = g.root.querySelector<HTMLElement>(".agent-process-summary")!;
+    summaryEl.click(); // 手动展开
+    summaryEl.focus();
+    expect(document.activeElement).toBe(summaryEl);
+    g.settle("已完成 2 个动作", 300);
+    expect(g.root.classList.contains("open")).toBe(true);
+    host.remove();
+  });
+
+  it("决策行只读且带决策者", () => {
+    const el = renderDecisionLine("allow", "已批准写入 summary.md", "用户");
+    expect(el.className).toBe("agent-decision-line");
+    expect(el.textContent).toContain("已批准写入 summary.md");
+    expect(el.textContent).toContain("用户");
+    expect(el.querySelector("button")).toBeNull();
   });
 
   it("流式渲染：reasoning 流式展开、finish 折叠、代码围栏包装、usage 落行", async () => {

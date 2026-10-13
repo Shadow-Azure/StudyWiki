@@ -1,5 +1,6 @@
 import type { Context } from "cordis";
 import { labelButton } from "../../ui/dom";
+import { activeLayers } from "../../ui/active-layer";
 import type { EndpointInput, LlmPreset, RedactedEndpoint } from "../../host/llm";
 import { blankDraft, CUSTOM_VENDOR, instantiatePreset, validateDraft, type EndpointDraft } from "./model";
 
@@ -30,14 +31,14 @@ function keyPreview(key: string): string {
   return `${chars.slice(0, 4).join("")}…${chars.slice(-2).join("")}`;
 }
 
-/** 模型配置面板（第七内置插件）：顶栏入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
+/** 模型配置面板（第七内置插件）：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
  * 预设表来自 Rust llm_list_presets（baseUrl 不进前端源码）；key 明文仅内存持有，
  * 保存经 ctx.llm（写面仅内置插件可用）；探测/错误归一码原样内联展示。
  * @param ctx Host context（llm/slots injected）。
- * @returns Teardown removing the topbar button. */
+ * @returns Teardown removing the Activity Rail button. */
 export function apply(ctx: Context): () => void {
-  return ctx.slots.register("topbar.left", (el) => {
-    const btn = labelButton("sparkle", "", { className: "btn btn-ghost icon-btn", ariaLabel: "模型" });
+  return ctx.slots.register("activity.left", (el) => {
+    const btn = labelButton("sparkle", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "模型" });
     btn.title = "模型";
     btn.addEventListener("click", () => void openPanel(ctx));
     el.append(btn);
@@ -64,13 +65,19 @@ async function openPanel(ctx: Context): Promise<void> {
   box.className = "plugin-panel-box llm-box";
   overlay.append(box);
   document.body.append(overlay);
+  let closed = false;
+  let releaseLayer: (() => void) | null = null;
   const close = (): void => {
+    if (closed) return;
+    closed = true;
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    releaseLayer?.();
   };
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") close();
   };
+  releaseLayer = activeLayers.push(overlay, { close });
   document.addEventListener("keydown", onKey);
 
   let vendorFilter: string | null = null;
