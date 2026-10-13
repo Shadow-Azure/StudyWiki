@@ -2,7 +2,7 @@
 
 English | [中文](release-checklist.md)
 
-> Type: reference | Tier: release process. release.yml mechanically executes 1–6; 7–9 are manual for now, to be mechanized step by step.
+> Type: reference | Tier: release process. release.yml mechanically executes 1–6; macOS DMG install, signing, and standard launch are checked mechanically; other platform smoke tests are being mechanized step by step.
 
 ## Mechanical gates (CI automated)
 
@@ -11,7 +11,7 @@ English | [中文](release-checklist.md)
 3. **Environment independence**: `pnpm verify:env-independence` passes on the artifacts (webview offline installer, no external URLs, no network references in source).
 4. **Three-platform artifacts**: dmg (aarch64/x86_64), nsis (x64), appimage (x64) all produced and non-empty.
 5. **Pinned sidecar**: run `pnpm ripgrep:provision` for the target matrix before release builds; macOS universal explicitly provisions aarch64/x86_64, and SHA-256 verification failure aborts.
-6. **Artifact smoke test**: each artifact launches and loads the empty state (currently build success + bundle validation; launch automation is a known debt).
+6. **Artifact smoke test**: each artifact launches and loads the empty state (the macOS DMG is mounted, installed, codesign-checked, and launched via `open`; other platforms are a known debt).
 
 ## Manual checklist (before publishing the draft release)
 
@@ -21,5 +21,5 @@ English | [中文](release-checklist.md)
 
 ## Known debts
 
-- Artifact launch smoke test not automated (candidate: CI matrix + virtual display).
+- Launch smoke tests for non-macOS artifacts are not automated (candidate: CI matrix + virtual display).
 - Rust-side dynamic-linking scan (otool/ldd) not yet in the gates.

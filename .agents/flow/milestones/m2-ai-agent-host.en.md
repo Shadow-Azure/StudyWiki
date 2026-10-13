@@ -32,3 +32,4 @@ Model supply = a user-configured remote endpoint (including a self-hosted closed
 - [Agent host capabilities](../issues/m2-02-agent-host.en.md)
 - [Basic agent plugin](../issues/m2-03-basic-agent.en.md)
 - [llm-wiki knowledge layer](../issues/m2-04-llm-wiki.en.md)
+- [macOS DMG install launch gate and bundle identity fix](../issues/m2-macos-package-gate.en.md)

@@ -2,7 +2,7 @@
 
 [English](release-checklist.en.md) | 中文
 
-> 类型：参考 | 层级：发布流程。release.yml 机械执行 1–6；7–9 目前人工，逐步机械化。
+> 类型：参考 | 层级：发布流程。release.yml 机械执行 1–6；macOS DMG 的安装、签名和标准启动已机械校验，其余平台冒烟逐步机械化。
 
 ## 机械门禁（CI 自动）
 
@@ -11,7 +11,7 @@
 3. **环境无关性**：`pnpm verify:env-independence` 在产物上通过（webview 离线安装器、无外部 URL、源无网络引用）。
 4. **三平台产物**：dmg（aarch64/x86_64）、nsis（x64）、appimage（x64）全部产出且非空。
 5. **Pinned sidecar**：release 构建前按目标矩阵执行 `pnpm ripgrep:provision`；macOS universal 显式供给 aarch64/x86_64，SHA-256 校验失败即中止。
-6. **产物冒烟**：每个产物能启动并加载空状态（当前为构建成功 + bundle 校验；启动自动化为已知欠账）。
+6. **产物冒烟**：每个产物能启动并加载空状态（macOS DMG 执行挂载、安装、codesign 和 `open` 启动校验；其他平台为已知欠账）。
 
 ## 人工清单（出 draft release 前过一遍）
 
@@ -21,5 +21,5 @@
 
 ## 已知欠账
 
-- 产物启动冒烟未自动化（候选：CI 矩阵 + 虚拟显示）。
+- 非 macOS 产物启动冒烟未自动化（候选：CI 矩阵 + 虚拟显示）。
 - Rust 侧动态链接扫描（otool/ldd）未进门禁。

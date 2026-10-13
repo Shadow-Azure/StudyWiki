@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m2-macos-package-gate.md
+m2-macos-package-gate.md: d4927811bd0d76a90ed3e798f0e73e5706cf416c
+m2-macos-package-gate.en.md: e0b76f6d48efa8ccaf4db7fdcbc3e7c5589f6c5c

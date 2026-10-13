@@ -15,7 +15,8 @@ pnpm tauri dev           # 开发
 pnpm tauri build         # 发布构建
 pnpm lint:docs           # 快速文档门禁
 pnpm verify:docs         # 全量文档门禁
-pnpm verify:env-independence  # 环境无关性单项
+pnpm verify:env-independence
+pnpm verify:macos-package           # DMG 安装与启动冒烟
 pnpm verify:dep-audit    # 依赖白名单 diff + node: 扫描
 pnpm verify:flow         # 开发流程门禁（roadmap/milestone/issue 状态机）
 pnpm verify:flow-online  # 与 GitHub 双侧一致（需 gh，CI 在线 lane）

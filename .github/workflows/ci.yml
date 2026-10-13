@@ -62,6 +62,36 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/verify-flow-online.mjs
 
+  macos-package:
+    # 拦截“构建成功但安装后 Finder/Launch Services 无法启动”的 macOS bundle 回归。
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: 供给 pinned ripgrep sidecar
+        run: pnpm ripgrep:provision
+      - name: 构建 macOS DMG
+        run: pnpm exec tauri build --bundles dmg
+      - name: 校验安装后的签名与标准启动链路
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmgs=$(find src-tauri/target -type f -name '*.dmg')
+          if [ "$(printf '%s\n' "$dmgs" | wc -l)" -ne 1 ]; then
+            echo "应只产出一个 DMG：$dmgs"
+            exit 1
+          fi
+          pnpm verify:macos-package "$dmgs"
+
   rust:
     runs-on: ${{ matrix.os }}
     strategy:

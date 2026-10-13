@@ -56,6 +56,17 @@ jobs:
         run: node scripts/run-gates.mjs --mode release --tag ${{ github.ref_name }}
       - name: 构建
         run: pnpm exec tauri build ${{ matrix.args }}
+      - name: macOS 安装启动冒烟
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmgs=$(find src-tauri/target -type f -name '*.dmg')
+          if [ "$(printf '%s\n' "$dmgs" | wc -l)" -ne 1 ]; then
+            echo "应只产出一个 DMG：$dmgs"
+            exit 1
+          fi
+          pnpm verify:macos-package "$dmgs"
       - name: 发布门禁（环境无关 · 产物扫描）
         run: node scripts/verify-env-independence.mjs
       - name: 产物非空校验

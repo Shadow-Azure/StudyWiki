@@ -38,11 +38,21 @@ function isAllowedUrl(url) {
   return ALLOWED_EXACT_URL.has(url) || ALLOWED_URL_PREFIX.some((prefix) => url.startsWith(prefix));
 }
 
+/** A bundle id must be reverse-DNS and must not collide with macOS's .app extension. */
+export function isStableBundleIdentifier(identifier) {
+  return typeof identifier === "string"
+    && /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/i.test(identifier)
+    && !identifier.toLowerCase().endsWith(".app");
+}
+
 export default async function verifyEnvIndependence() {
   const errors = [];
 
   // 1) Windows 安装器必须内嵌 WebView2 离线安装器（不联网补装）。
   const conf = JSON.parse(await readFile("src-tauri/tauri.conf.json", "utf8"));
+  if (!isStableBundleIdentifier(conf?.identifier)) {
+    errors.push(`tauri.conf.json: bundle identifier 不能以 .app 结尾，且须为 reverse-DNS，当前 "${conf?.identifier ?? ""}"`);
+  }
   const mode = conf?.bundle?.windows?.webviewInstallMode?.type;
   if (mode !== "offlineInstaller")
     errors.push(`tauri.conf.json: bundle.windows.webviewInstallMode.type 须为 "offlineInstaller"，当前 "${mode}"`);

@@ -32,3 +32,4 @@ github:
 - [agent 宿主能力](../issues/m2-02-agent-host.md)
 - [基础 agent 插件](../issues/m2-03-basic-agent.md)
 - [llm-wiki 知识层](../issues/m2-04-llm-wiki.md)
+- [macOS DMG 安装启动门禁与 bundle 身份修复](../issues/m2-macos-package-gate.md)
