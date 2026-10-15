@@ -300,7 +300,7 @@ pnpm test && pnpm build && pnpm verify:docs && pnpm verify:flow
 
 Expected: 全绿。
 
-- [ ] **Step 2: 人工走查**——`pnpm walkthrough` 打开产物，走"总览 → 架构 → 导航"回路，确认 file:// 下互链可用。
+- [ ] **Step 2: 人工走查**——`pnpm walkthrough` 构建并输出产物路径，人工打开由维护者执行，走"总览 → 架构 → 导航"回路，确认 file:// 下互链可用。
 
 - [ ] **Step 3: Agent Note 移 implemented**——`git mv` 三件套到 `.agents/notes/implemented/process/`，Status 改 implemented，`pnpm record:i18n` 重录，`pnpm lint:docs` 绿。
 

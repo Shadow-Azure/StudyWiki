@@ -129,7 +129,7 @@ diff 门禁（`verify:walkthrough --diff <base>`，CI on PR，与 verify-flow --
 
 ## 渲染管线与产物形态
 
-`scripts/walkthrough-lib.mjs`（schema/锚点/对账，verify 与 build 共用单一事实源）、`scripts/verify-walkthrough.mjs`、`scripts/build-walkthrough.mjs`，各带 spec 自测试（仓规）。产物：`walkthrough/dist/` 多页静态站点——每页一个 HTML，左侧导航 + 面包屑，页间相对链接互跳，file:// 直开；手写模板，内联 CSS，无框架无外链；代码高亮 v1 用简单关键字着色或不着色，不引入依赖。命令：`pnpm walkthrough`（build + open）、`pnpm verify:walkthrough`；同步更新根 AGENTS.md 命令清单。
+`scripts/walkthrough-lib.mjs`（schema/锚点/对账，verify 与 build 共用单一事实源）、`scripts/verify-walkthrough.mjs`、`scripts/build-walkthrough.mjs`，各带 spec 自测试（仓规）。产物：`walkthrough/dist/` 多页静态站点——每页一个 HTML，左侧导航 + 面包屑，页间相对链接互跳，file:// 直开；手写模板，内联 CSS，无框架无外链；代码高亮 v1 用简单关键字着色或不着色，不引入依赖。命令：`pnpm walkthrough` 构建并输出产物路径，人工打开由维护者执行；`pnpm verify:walkthrough` 同步登记在根 AGENTS.md 命令清单。
 
 ## Bootstrap 计划
 
