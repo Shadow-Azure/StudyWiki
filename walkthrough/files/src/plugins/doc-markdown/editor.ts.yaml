@@ -1,0 +1,196 @@
+kind: file-page
+source: src/plugins/doc-markdown/editor.ts
+summary: doc-markdown CodeMirror 6 工厂：唯一 CodeMirror import 点（minimalSetup + 文档主题/语法 + 换行 + Mod-s 键位），测试注入假工厂
+segments:
+  - snippet: |
+      import { EditorState, Prec } from "@codemirror/state";
+      import { EditorView, keymap } from "@codemirror/view";
+      import { minimalSetup } from "codemirror";
+      import { markdown } from "@codemirror/lang-markdown";
+      import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+      import { tags } from "@lezer/highlight";
+
+      /** Handle over a live editor instance. */
+      export interface EditorHandle {
+        /** Mounted editor element (inside the parent given to the factory). */
+        dom: HTMLElement;
+        /** Full document text right now. */
+        getText(): string;
+        /** Tear down the editor and release its DOM. */
+        destroy(): void;
+      }
+
+      /** Editor factory seam: the real one wraps CodeMirror; tests inject a stub. */
+      export type EditorFactory = (
+        parent: HTMLElement,
+        initial: string,
+        onChange: (text: string) => void,
+        onSave: () => void,
+      ) => EditorHandle;
+
+      const documentEditorTheme = EditorView.theme({
+        "&": { backgroundColor: "transparent", color: "var(--ink)" },
+        ".cm-scroller": {
+          overflowX: "hidden",
+          fontFamily: "var(--font-read)",
+          fontSize: "17px",
+          lineHeight: "1.9",
+        },
+        ".cm-content": { padding: "0 0 120px", caretColor: "var(--azurite)" },
+        ".cm-line": { padding: "0" },
+        ".cm-activeLine": { backgroundColor: "transparent" },
+      }, { dark: false });
+
+      const documentHighlightStyle = HighlightStyle.define([
+        { tag: tags.heading, color: "var(--ink)", fontWeight: "650" },
+        { tag: tags.heading1, fontSize: "1.28em", lineHeight: "1.55em" },
+        { tag: tags.heading2, fontSize: "1.16em", lineHeight: "1.62em" },
+        { tag: tags.heading3, fontSize: "1.06em" },
+        { tag: tags.heading4, fontSize: "1.06em" },
+        { tag: tags.heading5, fontSize: "1.06em" },
+        { tag: tags.heading6, fontSize: "1.06em" },
+        { tag: tags.strong, fontWeight: "650" },
+        { tag: tags.emphasis, fontStyle: "italic" },
+        { tag: tags.link, color: "var(--azurite)" },
+        { tag: tags.url, color: "var(--ink-3)" },
+        { tag: tags.monospace, fontFamily: "var(--font-mono)", fontSize: "0.82em" },
+        { tag: tags.processingInstruction, color: "var(--ink-3)" },
+        { tag: tags.meta, color: "var(--ink-3)" },
+      ]);
+
+      /** Create the CodeMirror 6 editor (the only CodeMirror import site in this plugin).
+       * @param parent Element the editor mounts into.
+       * @param initial Document text at mount time.
+       * @param onChange Called with the full text on every document change.
+       * @param onSave Called for Mod-s (Ctrl/Cmd+S); the keymap swallows the event.
+       * @returns Handle over the live view: mounted dom, current text, teardown. */
+      export function createCodeMirror(
+        parent: HTMLElement,
+        initial: string,
+        onChange: (text: string) => void,
+        onSave: () => void,
+      ): EditorHandle {
+        const view = new EditorView({
+          parent,
+          state: EditorState.create({
+            doc: initial,
+            extensions: [
+              minimalSetup,
+              markdown(),
+              EditorView.lineWrapping,
+              documentEditorTheme,
+              syntaxHighlighting(documentHighlightStyle),
+              Prec.highest(keymap.of([{ key: "Mod-s", run: () => { onSave(); return true; } }])),
+              EditorView.updateListener.of((u) => {
+                if (u.docChanged) onChange(u.state.doc.toString());
+              }),
+            ],
+          }),
+        });
+        return {
+          dom: view.dom,
+          getText: () => view.state.doc.toString(),
+          destroy: () => view.destroy(),
+        };
+      }
+    note: |
+      整份文件视窗显示这个插件唯一允许触碰 CodeMirror 的边界：工厂负责实例、扩展、主题与句柄，外层只拿到可替换的抽象缝。阅读时可沿接口、样式、高亮和 createCodeMirror 四层看，测试因此不需要真实编辑器也能验证插件行为。
+  - snippet: |
+      import { EditorState, Prec } from "@codemirror/state";
+      import { EditorView, keymap } from "@codemirror/view";
+      import { minimalSetup } from "codemirror";
+      import { markdown } from "@codemirror/lang-markdown";
+      import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+      import { tags } from "@lezer/highlight";
+    note: |
+      依赖导入集中在本文件顶部，CodeMirror 相关包不会散播到插件其他模块。这个物理边界让渲染层只依赖 EditorFactory 契约，也让环境门禁能一眼检查编辑器技术栈的位置。
+  - snippet: |
+      /** Handle over a live editor instance. */
+      export interface EditorHandle {
+        /** Mounted editor element (inside the parent given to the factory). */
+        dom: HTMLElement;
+        /** Full document text right now. */
+        getText(): string;
+        /** Tear down the editor and release its DOM. */
+        destroy(): void;
+      }
+
+      /** Editor factory seam: the real one wraps CodeMirror; tests inject a stub. */
+      export type EditorFactory = (
+        parent: HTMLElement,
+        initial: string,
+        onChange: (text: string) => void,
+        onSave: () => void,
+      ) => EditorHandle;
+    note: |
+      EditorHandle 与 EditorFactory 是宿主和真实编辑器之间的最小契约。工厂输入挂载点、初始正文和两个回调，输出读文本与销毁能力，插件其余代码因此可以保持框架无关。
+  - snippet: |
+      const documentEditorTheme = EditorView.theme({
+        "&": { backgroundColor: "transparent", color: "var(--ink)" },
+        ".cm-scroller": {
+          overflowX: "hidden",
+          fontFamily: "var(--font-read)",
+          fontSize: "17px",
+          lineHeight: "1.9",
+        },
+        ".cm-content": { padding: "0 0 120px", caretColor: "var(--azurite)" },
+        ".cm-line": { padding: "0" },
+        ".cm-activeLine": { backgroundColor: "transparent" },
+      }, { dark: false });
+
+      const documentHighlightStyle = HighlightStyle.define([
+        { tag: tags.heading, color: "var(--ink)", fontWeight: "650" },
+        { tag: tags.heading1, fontSize: "1.28em", lineHeight: "1.55em" },
+        { tag: tags.heading2, fontSize: "1.16em", lineHeight: "1.62em" },
+        { tag: tags.heading3, fontSize: "1.06em" },
+        { tag: tags.heading4, fontSize: "1.06em" },
+        { tag: tags.heading5, fontSize: "1.06em" },
+        { tag: tags.heading6, fontSize: "1.06em" },
+        { tag: tags.strong, fontWeight: "650" },
+        { tag: tags.emphasis, fontStyle: "italic" },
+        { tag: tags.link, color: "var(--azurite)" },
+        { tag: tags.url, color: "var(--ink-3)" },
+        { tag: tags.monospace, fontFamily: "var(--font-mono)", fontSize: "0.82em" },
+        { tag: tags.processingInstruction, color: "var(--ink-3)" },
+        { tag: tags.meta, color: "var(--ink-3)" },
+      ]);
+    note: |
+      主题和高亮配置把编辑面接进工作台的设计令牌，而不是让 CodeMirror 建立另一套视觉语言。标题、强调、链接和代码有层级，但背景保持透明，避免阅读与编辑模式切换时突兀。
+  - snippet: |
+      /** Create the CodeMirror 6 editor (the only CodeMirror import site in this plugin).
+       * @param parent Element the editor mounts into.
+       * @param initial Document text at mount time.
+       * @param onChange Called with the full text on every document change.
+       * @param onSave Called for Mod-s (Ctrl/Cmd+S); the keymap swallows the event.
+       * @returns Handle over the live view: mounted dom, current text, teardown. */
+      export function createCodeMirror(
+        parent: HTMLElement,
+        initial: string,
+        onChange: (text: string) => void,
+        onSave: () => void,
+      ): EditorHandle {
+        const view = new EditorView({
+          parent,
+          state: EditorState.create({
+            doc: initial,
+            extensions: [
+              minimalSetup,
+              markdown(),
+              EditorView.lineWrapping,
+              documentEditorTheme,
+              syntaxHighlighting(documentHighlightStyle),
+              Prec.highest(keymap.of([{ key: "Mod-s", run: () => { onSave(); return true; } }])),
+              EditorView.updateListener.of((u) => {
+                if (u.docChanged) onChange(u.state.doc.toString());
+              }),
+            ],
+          }),
+        });
+        return {
+          dom: view.dom,
+          getText: () => view.state.doc.toString(),
+          destroy: () => view.destroy(),
+        };
+      }
+    note: |
+      createCodeMirror 是唯一的真实实现入口。minimalSetup 和 markdown 提供基础能力，换行、令牌主题与 Mod-s 键位组成文档编辑所需的小闭包；updateListener 只在文档变化时回传全文。

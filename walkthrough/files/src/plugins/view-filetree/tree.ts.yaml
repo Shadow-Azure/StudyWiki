@@ -1,0 +1,86 @@
+kind: file-page
+source: src/plugins/view-filetree/tree.ts
+summary: view-filetree 纯函数：点文件递归过滤 + 可见行铺平（深度优先、携带深度）
+segments:
+  - snippet: |
+      import type { FileNode } from "../../types";
+
+      /** Config for the file tree plugin. */
+      export interface TreeConfig {
+        /** Hide dotfiles and dot-directories when true. */
+        ignoreDotfiles: boolean;
+      }
+
+      /** Drop dotfiles/dot-directories recursively when configured.
+       * @param nodes Tree to filter (never mutated).
+       * @param config Only `ignoreDotfiles` is consulted here.
+       * @returns Filtered copy; the input itself when the flag is off. */
+      export function filterTree(nodes: FileNode[], config: TreeConfig): FileNode[] {
+        if (!config.ignoreDotfiles) return nodes;
+        return nodes
+          .filter((n) => !n.name.startsWith("."))
+          .map((n) => (n.children ? { ...n, children: filterTree(n.children, config) } : n));
+      }
+
+      /** Flatten to visible rows (depth-first, only inside expanded directories).
+       * @param nodes (Already filtered) tree to lay out.
+       * @param expanded Paths of directories currently expanded.
+       * @returns Rows in display order, each carrying its nesting depth. */
+      export function visibleRows(nodes: FileNode[], expanded: ReadonlySet<string>): Array<{ node: FileNode; depth: number }> {
+        const out: Array<{ node: FileNode; depth: number }> = [];
+        const walk = (list: FileNode[], depth: number): void => {
+          for (const node of list) {
+            out.push({ node, depth });
+            if (node.children && expanded.has(node.path)) walk(node.children, depth + 1);
+          }
+        };
+        walk(nodes, 0);
+        return out;
+      }
+    note: |
+      整份文件是文件树的两个纯投影：先按配置递归剔除点文件，再把结果按深度优先展开状态铺平成可见行。没有 DOM、事件或服务依赖，规则可以直接单测，UI 只负责绘制投影结果。
+  - snippet: |
+      import type { FileNode } from "../../types";
+
+      /** Config for the file tree plugin. */
+      export interface TreeConfig {
+        /** Hide dotfiles and dot-directories when true. */
+        ignoreDotfiles: boolean;
+      }
+    note: |
+      TreeConfig 只暴露 ignoreDotfiles 一个开关。这个配置来自插件装配层，树算法不需要知道它来自 CLI、宿主还是用户设置。
+  - snippet: |
+      /** Drop dotfiles/dot-directories recursively when configured.
+       * @param nodes Tree to filter (never mutated).
+       * @param config Only `ignoreDotfiles` is consulted here.
+       * @returns Filtered copy; the input itself when the flag is off. */
+      export function filterTree(nodes: FileNode[], config: TreeConfig): FileNode[] {
+        if (!config.ignoreDotfiles) return nodes;
+        return nodes
+          .filter((n) => !n.name.startsWith("."))
+          .map((n) => (n.children ? { ...n, children: filterTree(n.children, config) } : n));
+      }
+    note: |
+      filterTree 在开启时逐层过滤点名称并重建子节点，输入树不会被修改；关闭时直接返回原数组。递归边界停在 children 不存在的文件上，因此隐藏目录会连同其内容整体消失。
+  - snippet: |
+      /** Flatten to visible rows (depth-first, only inside expanded directories).
+       * @param nodes (Already filtered) tree to lay out.
+       * @param expanded Paths of directories currently expanded.
+       * @returns Rows in display order, each carrying its nesting depth. */
+      export function visibleRows(nodes: FileNode[], expanded: ReadonlySet<string>): Array<{ node: FileNode; depth: number }> {
+        const out: Array<{ node: FileNode; depth: number }> = [];
+        const walk = (list: FileNode[], depth: number): void => {
+          for (const node of list) {
+            out.push({ node, depth });
+            if (node.children && expanded.has(node.path)) walk(node.children, depth + 1);
+          }
+        };
+        walk(nodes, 0);
+        return out;
+      }
+    note: |
+      visibleRows 用闭包 walk 做深度优先遍历：先输出节点，再仅在目录路径已展开时进入 children。每行携带 depth，UI 可直接计算缩进，不必自己维护栈。
+  - snippet: |
+      import type { FileNode } from "../../types";
+    note: |
+      文件唯一的导入是共享 FileNode 类型。这说明树算法不构造前后端数据，只消费宿主和 Rust 侧共同承认的树形状。
