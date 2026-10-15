@@ -26,19 +26,28 @@ steps:
   - ref:
       file: src/plugins/app-agent/index.ts
       snippet: |
-        ;
-
-          const refreshSessions = async (): Promise<void> => {
+        const addFiles = async (files: FileList | File[]): Promise<void> => {
+            const results = await Promise.all([...files].map(fileToAttachment));
             if (disposed) return;
-            try {
-              sessions = await ctx.agent.listSessions();
-              paintSessionOptions();
-            } catch {
-              // Listing is auxiliary; the open session and composer remain usable.
+            const accepted: PendingAttachment[] = [];
+            const failures: string[] = [];
+            for (const result of results) {
+              if (result.ok) accepted.push(result.attachment);
+              else failures.push(result.message);
             }
-
+            attachments.push(...accepted);
+            renderChips();
+            if (notice) {
+              if (failures.length > 0) {
+                notice.textContent = failures.join("；");
+                notice.hidden = false;
+              } else {
+                notice.hidden = true;
+              }
+            }
+          };
     note: |
-        一次多文件输入会分别接受或拒绝；面板只保留可发送附件，失败原因集中在通知区显示。
+        一次多文件输入并发转换后分别接受或拒绝；面板只保留可发送附件，失败原因集中在通知区显示。
 
   - ref:
       file: src/plugins/app-agent/index.ts
@@ -50,7 +59,6 @@ steps:
           parts.push(...attachments.map((attachment) => attachment.part));
           return parts;
         }
-
     note: |
         有媒体时文本与附件组合成 ContentPart 数组，无媒体仍保持普通字符串 wire，避免无意义多模态包装。
 

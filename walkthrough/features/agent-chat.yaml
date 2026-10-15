@@ -9,15 +9,43 @@ steps:
   - ref:
       file: src/plugins/app-agent/index.ts
       snippet: |
-        ;
+        const sendDraft = (): void => {
+            if (disposed || !input) return;
+            if (!session) {
+              pendingSend = true;
+              return;
+            }
+            const text = input.value.trim();
+            if (!text && attachments.length === 0) return;
+            if (session && session.model !== selectedModel) session.setModel(selectedModel);
+            const content = composeContent(text, attachments);
 
-          const refreshSessions = async (): Promise<void> => {
-            if (disposed) return;
-            try {
-              sessions = await ctx.agent.listSessions();
+            if (turnRunning || session.running) {
+              queueSequence += 1;
+              const preview = text || attachments.map((attachment) => attachment.label).join("、");
+              messageQueue.push({
+                id: `queue-${queueSequence}`,
+                text,
+                content,
+                preview,
+              });
+              input.value = "";
+              attachments = [];
+              renderChips();
+              renderQueue();
+              paintButtons();
+              return;
+            }
 
+            const outgoingContent = attachments.length > 0 ? content as ContentPart[] : undefined;
+            attachments = [];
+            input.value = "";
+            renderChips();
+            if (notice) notice.hidden = true;
+            sendMessage(session, text, content, outgoingContent);
+          };
     note: |
-        UI 发送即清空 composer 并渲染本地用户消息；回合仍在跑时 sendDraft 会先进入队列分支。
+        sendDraft 先同步清空 composer 和附件 chips；运行中入队并刷新队列，空闲时交给 sendMessage 发起并渲染回合。
 
   - ref:
       file: src/plugins/agent-core/service.ts

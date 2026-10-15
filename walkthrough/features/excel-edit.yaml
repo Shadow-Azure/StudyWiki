@@ -40,24 +40,40 @@ steps:
   - ref:
       file: src/plugins/doc-excel/index.ts
       snippet: |
-        export function apply(ctx: Context, _config: Record<string, never>): () => void {
-          let host: HTMLElement | null = null;
-          let current: FileNode | null = null;
-          let workbook: Workbook | null = null;
-          let sheetIndex = -1;
-
+        const commitEdit = (text: string): void => {
+            const ws = worksheet();
+            if (!editing || !ws) {
+              editing = null;
+              return;
+            }
+            setCellValue(ws, editing.row, editing.column, text);
+            editing = null;
+            markDirty();
+            rebuildModel();
+            render();
     note: |
         提交先写 worksheet，再递增编辑序号、重建渲染模型并重绘；输入结果立即反映且脏态可见。
 
   - ref:
       file: src/plugins/doc-excel/index.ts
       snippet: |
-        export function apply(ctx: Context, _config: Record<string, never>): () => void {
-          let host: HTMLElement | null = null;
-          let current: FileNode | null = null;
-          let workbook: Workbook | null = null;
-          let sheetIndex = -1;
-
+        const save = async (): Promise<void> => {
+            if (saving || !current || current.kind !== "excel" || !workbook || !dirtyState) return;
+            saving = true;
+            const savedOpenSeq = openSeq;
+            const savedEditSeq = editSeq;
+            try {
+              await ctx.excel.write(current.path, workbook);
+              host?.querySelector(".doc-error")?.remove();
+              error = null;
+              if (openSeq === savedOpenSeq && editSeq === savedEditSeq) dirtyState = false;
+              paintChrome();
+            } catch (e) {
+              error = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+              if (host) errorBanner(host, error, () => { error = null; });
+            } finally {
+              saving = false;
+            }
     note: |
         保存序列化整个 workbook 并写回二进制文件；保存期间又有编辑时不误清脏标记。
 

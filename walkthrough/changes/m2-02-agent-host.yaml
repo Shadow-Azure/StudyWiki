@@ -4,12 +4,12 @@ title: agent 宿主能力
 functional: |
   内置与外置插件可以在右栏发起流式对话，逐步看到回答与 reasoning，能停止或重试；用户可粘贴或拖入图片、音频组合进多模态请求，超限或模型能力不足会得到明确错误。
 architectural: |
-  推理仍从 Rust 唯一联网出口发出；流式 chunk 经每次 invoke 独立的 IPC Channel 隔离到窗口，宿主 `llm-stream` 负责唯一 chunk 到消息快照的组装。外置插件只能经 guard 白名单访问 `ctx.llm.chatStream` 与窄化 workspace facade，不能直接触达 Tauri。
+  推理仍从 Rust 唯一联网出口发出；流式 chunk 经每次 invoke 独立的 IPC Channel 隔离到窗口，宿主 `llm-stream` 负责唯一 chunk 到消息快照的组装。外置插件只能经 guard 收窄的 `chatStream`/workspace 服务面访问宿主能力，不能直接触达 Tauri。
 code: |
   - `src-tauri/src/llm_stream.rs` 手写 SSE 行解析，区分传输 `[DONE]` 与 finish_reason，处理 usage、错误和显式中止。
   - `src/host/llm-stream.ts` 定义 chunk 词表、FIFO 队列和 `ChatStreamHandle.snapshot()`，半截正文只保留界面不入后续上下文。
-  - `src/host/slots.ts` 注册 `sidebar.right` 槽位，供对话 UI 与后续 agent 面板共用。
-  - `src/loader/guard.ts` 把 chatStream、workspace facade 与媒体能力纳入外置插件白名单。
+  - `src/host/slots.ts` 定义 slot 类型与注册 API，`sidebar.right` 由 shell mount、app-agent register。
+  - `src/host/llm.ts` 在 `chatStream` 入口按模型能力门禁 tools 与 vision/audio，不满足时返回 `UNSUPPORTED_CONTENT`。
 touches:
   - feature:plugin-load
   - feature:plugin-manage

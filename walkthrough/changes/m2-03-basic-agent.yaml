@@ -18,3 +18,6 @@ touches:
   - feature:attachments
   - file:src/plugins/agent-core/loop.ts
   - file:src/plugins/agent-core/tools.ts
+  - file:src/plugins/agent-core/approval.ts
+  - file:src/plugins/agent-core/service.ts
+  - file:src/plugins/agent-core/session.ts
