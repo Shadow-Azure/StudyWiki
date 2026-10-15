@@ -1,10 +1,10 @@
 # AGENTS.md
 
-StudyWiki 是一个本地 Markdown + 视频学习客户端（Tauri 2 桌面应用）。改代码前先读 [docs/architecture.md](docs/architecture.md)；写文档前先读 [docs/AGENTS.md](docs/AGENTS.md)。
+StudyWiki 是本地 Markdown + 视频学习客户端（Tauri 2 桌面应用）。改代码读 [docs/architecture.md](docs/architecture.md)；写文档读 [docs/AGENTS.md](docs/AGENTS.md)。
 
 ## 环境无关性（硬约束）
 
-**发布的客户端必须完全不依赖运行环境**：用户机器上不需要预装 Node、Python、浏览器、解码器或运行时；产物完全离线可用，不访问网络；同一版本 + 同一插件集行为一致。细则与豁免见 [docs/environment-independence.md](docs/environment-independence.md)（唯一 home）。发布门禁机械校验此约束；违反它的改动（CDN、外置运行时、运行时下载、环境变量分支）直接拒绝，除非先在该文档登记豁免并说明理由。
+**发布客户端必须完全不依赖运行环境**：用户机无需预装 Node、Python、浏览器、解码器或运行时；产物完全离线，不访问网络；同版本 + 同插件集行为一致。细则与豁免见 [docs/environment-independence.md](docs/environment-independence.md)（唯一 home）。发布门禁机械校验；违反改动（CDN、外置运行时、运行时下载、环境变量分支）直接拒绝，除非先登记豁免并说明理由。
 
 ## 命令
 
@@ -13,6 +13,8 @@ pnpm install             # 依赖
 pnpm ripgrep:provision   # 按 Rust target 供给 pinned ripgrep sidecar（-- --target <triple>）
 pnpm tauri dev           # 开发
 pnpm tauri build         # 发布构建
+pnpm walkthrough         # 工程讲解站：构建并输出产物路径
+pnpm verify:walkthrough  # 工程讲解站门禁
 pnpm lint:docs           # 快速文档门禁
 pnpm verify:docs         # 全量文档门禁
 pnpm verify:env-independence
@@ -38,14 +40,14 @@ pnpm install:hooks       # 装 git 钩子并注册 i18n merge driver
 
 ## 惯例
 
-- 每个非平凡变更在同一 PR 内新增或更新至少一条 Agent Note（[规则](.agents/notes/README.md)）。
+- 每个非平凡变更在同一 PR 新增或更新至少一条 Agent Note（[规则](.agents/notes/README.md)）。
 - 代码改动必须挂 `.agents/flow/` 的 issue（流程契约见 [.agents/flow/README.md](.agents/flow/README.md)），提交与 PR 标题含 `(#N)`，无豁免通道。
-- 前端不加 UI 框架；依赖只进 `dependencies` 且须是构建期可打包的库，禁止任何 CDN/运行时加载。
+- 前端不加 UI 框架；依赖只进 `dependencies` 且须构建期可打包，禁止任何 CDN/运行时加载。
 - 插件只经宿主服务触达系统能力（`src/plugins/` 禁 import `@tauri-apps/*`，`pnpm verify:layering` 机械校验）。
 - 本地文件访问只走 `src-tauri/src/lib.rs` 的命令 + asset protocol，扩展名分派在 Rust 侧。
-- 文档现状优先：写"现在是什么"，不写"以前是什么"；变更史进 Agent Note 或 commit。
+- 文档现状优先：写"现在是什么"，不写"以前是什么"；变更史进 Note 或 commit。
 - TS 导出与 Tauri 命令必须带文档注释（契约语义，命令目录原料）；门禁校验。
-- 常驻文档中英成对（三件套）：改任一侧须最小修补另一侧并重录，围栏与生成区逐字复制不翻译；契约见 [docs/i18n/README.md](docs/i18n/README.md)。
+- 常驻文档中英成对（三件套）：改任一侧最小修补另一侧并重录，围栏与生成区逐字复制；契约见 [docs/i18n/README.md](docs/i18n/README.md)。
 - 提交信息用中文，正文说明动机；门禁脚本改动同步更新本文件命令清单。
 
 ## 密钥

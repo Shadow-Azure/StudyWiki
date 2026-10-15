@@ -32,3 +32,5 @@ plugins-dev/
 plans/review/
 plans/smoke-test/
 plans/preview-html/
+
+walkthrough/dist/

@@ -1,0 +1,14 @@
+kind: architecture
+sections:
+  - heading: 软件分层
+    body: |
+      Tauri 壳是薄能力层：Rust 负责窗口与文件边界、配置持久化、LLM HTTPS 出口、外置插件安装和原生关窗拦截；前端是产品编排层：bootstrap 装配七个宿主服务，cordis Context 承载服务生命周期，装载器串行激活内置与外置插件；插件是功能层：shell、阅读三格式、文件树、LLM 设置、插件管理和 Agent UI 各自只消费宿主服务，不直接触达 Tauri API；vendored cordis 提供服务组合原语，但不承担动态模块装载。
+  - heading: 关键决策链
+    body: |
+      - 插件架构走宿主服务与 Context 组合，功能能力通过服务缝注入而非让插件直连壳层：[插件架构决策](../../.agents/notes/implemented/architecture/2026-09-10-plugin-architecture.md)。
+      - 外置插件装载收敛到唯一 `ext:` 缝和单文件零依赖契约，安装与运行边界分离：[外置插件决策](../../.agents/notes/implemented/architecture/2026-09-16-phase4-dynamic-plugins.md)。
+      - Agent 回合住 agent-core 服务，UI 只做审批与呈现，工具和流式生命周期不散在视图层：[Agent 决策](../../.agents/notes/implemented/architecture/2026-10-04-basic-agent.md)。
+  - heading: 架构组成树
+    body: |
+      下树由 `scripts/code-map.manifest.json` 构建期渲染，只作同源快照；每个源文件的权威 summary 与文件页对账仍在门禁中执行。
+    generated: code-map

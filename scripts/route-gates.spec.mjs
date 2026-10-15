@@ -12,6 +12,11 @@ describe("分类与并集", () => {
     expect(recommend(["src-tauri/src/lib.rs"]).commands).toEqual(["verify:docs"]);
     expect(recommend(["scripts/verify-x.mjs"]).commands).toEqual(["test", "verify:docs"]);
     expect(recommend(["docs/AGENTS.md"]).commands).toEqual(["verify:docs"]);
+    expect(recommend(["walkthrough/manifest.yaml"]).commands).toEqual([
+      "walkthrough",
+      "verify:walkthrough",
+      "verify:docs",
+    ]);
     expect(recommend(["AGENTS.md", "README.md", ".agents/notes/x.md"]).commands).toEqual(["verify:docs"]);
     expect(recommend(["package.json", ".github/workflows/ci.yml"]).commands).toEqual([
       "test",
