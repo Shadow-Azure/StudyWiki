@@ -1,0 +1,11 @@
+kind: overview
+sections:
+  - heading: 产品定位
+    body: |
+      StudyWiki 是本地优先的 Markdown、Excel 与视频学习工作台：用户选择一个本机库根后，前端宿主服务装载插件，Rust 壳只提供文件、窗口、配置和受控联网等能力边界。产品坚持零运行时环境依赖，阅读/编辑/播放等本地能力离线可用；Agent/LLM 推理经用户配置的受控网络出口（见 [docs/environment-independence.md](../../docs/environment-independence.md)）。
+  - heading: 站点阅读指引
+    body: |
+      建议先读本页确认产品边界，再进入「架构」看分层与组成树；随后按功能页从用户行为进入模块地图和代码步骤，用文件页读取当前源码注解；检视一次改动时优先从变更史的三层叙事进入，再经 touches 回到主站页面。
+  - heading: 回填状态
+    body: |
+      内容回填进行中：骨架期已有总览与架构叙事，`features/`、`files/` 和 `changes/` 仍为空。`manifest.json` 的 bootstrap 降级允许这些欠账以 WARN 呈现，回填验收后移除标志。
