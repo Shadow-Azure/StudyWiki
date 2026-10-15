@@ -33,6 +33,11 @@ export const ROUTES = [
     reason: "流程树：状态机校验 + 配对/预算全量档",
   },
   {
+    match: (p) => p.startsWith("walkthrough/"),
+    commands: ["walkthrough", "verify:walkthrough", "verify:docs"],
+    reason: "工程讲解站：源码改后重建产物，schema/锚点/登记对账 + 全量文档档",
+  },
+  {
     match: (p) => p.startsWith("docs/") || p.startsWith(".agents/") || p.endsWith(".md") || p === "AGENTS.md",
     commands: ["verify:docs"],
     reason: "文档语料：配对、预算、type-equiv、生成区、索引全量档",
@@ -74,8 +79,10 @@ export function classify(paths) {
   return ROUTES.filter((route) => paths.some((p) => route.match(p)));
 }
 
-/** 建议命令的固定先后（构建 → 测试 → 专项审计 → 全量文档档）。 */
+/** 建议命令的固定先后（walkthrough 构建/校验 → 常规构建 → 测试 → 专项审计 → 全量文档档）。 */
 const COMMAND_ORDER = [
+  "walkthrough",
+  "verify:walkthrough",
   "build",
   "test",
   "verify:flow",

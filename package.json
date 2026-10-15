@@ -10,6 +10,8 @@
     "ripgrep:provision": "node scripts/provision-ripgrep.mjs",
     "preview": "vite preview",
     "tauri": "pnpm ripgrep:provision && tauri",
+    "walkthrough": "node scripts/build-walkthrough.mjs && echo walkthrough/dist",
+    "verify:walkthrough": "node scripts/verify-walkthrough.mjs",
     "lint:docs": "node scripts/run-gates.mjs --mode doc-quick",
     "verify:docs": "node scripts/run-gates.mjs --mode doc-sync",
     "verify:release": "node scripts/run-gates.mjs --mode release",

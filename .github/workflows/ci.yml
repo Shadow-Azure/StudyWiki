@@ -32,6 +32,12 @@ jobs:
         run: pnpm build
       - name: 文档门禁（doc-sync，含产物扫描）
         run: pnpm verify:docs
+      - run: pnpm walkthrough
+      - name: 工程讲解站门禁
+        run: pnpm verify:walkthrough
+      - name: 工程讲解站 PR diff 对账
+        if: github.event_name == 'pull_request'
+        run: node scripts/verify-walkthrough.mjs --diff origin/${{ github.base_ref }}
       - name: 开发流程门禁（PR diff：commit/PR 标题引用 + scope 覆盖）
         if: github.event_name == 'pull_request'
         env:

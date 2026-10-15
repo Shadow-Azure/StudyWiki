@@ -29,6 +29,7 @@ describe("run-gates 模式组合", () => {
     for (const leaf of [
       "verify-agent-notes",
       "verify-flow",
+      "verify-walkthrough",
       "verify-archived-agent-notes",
       "verify-doc-index",
       "verify-postmortem",
@@ -63,6 +64,17 @@ describe("CI 接线", () => {
     expect(ci).toContain("pnpm test");
     expect(ci).toContain("pnpm build");
     expect(ci).toContain("pnpm verify:docs");
+    expect(ci).toContain("run: pnpm walkthrough");
+    expect(ci).toContain("pnpm verify:walkthrough");
+    expect(ci.indexOf("pnpm verify:docs")).toBeLessThan(ci.indexOf("run: pnpm walkthrough"));
+  });
+
+  it("walkthrough PR diff 对账在静态 lane 内（改码必改讲解页由 CI 背书）", async () => {
+    const ci = await readFile(".github/workflows/ci.yml", "utf8");
+    expect(ci).toContain("if: github.event_name == 'pull_request'");
+    expect(ci).toContain(
+      "node scripts/verify-walkthrough.mjs --diff origin/${{ github.base_ref }}",
+    );
   });
 
   it("release 流程：产物前过 release 档门禁，产物后再扫环境无关", async () => {

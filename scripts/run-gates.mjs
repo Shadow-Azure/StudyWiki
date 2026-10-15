@@ -17,6 +17,7 @@ import verifyTypeEquiv from "./verify-type-equiv.mjs";
 import verifyExportDocs from "./verify-export-docs.mjs";
 import verifyDocRefs from "./verify-doc-refs.mjs";
 import verifyArchivedAgentNotes from "./verify-archived-agent-notes.mjs";
+import verifyWalkthrough from "./verify-walkthrough.mjs";
 import docTypecheck from "./doc-typecheck.mjs";
 
 const args = process.argv.slice(2);
@@ -25,6 +26,7 @@ const tag = args.includes("--tag") ? args[args.indexOf("--tag") + 1] : undefined
 export const LEAVES = {
   "verify-agent-notes": verifyAgentNotes,
   "verify-flow": verifyFlow,
+  "verify-walkthrough": verifyWalkthrough,
   "verify-archived-agent-notes": verifyArchivedAgentNotes,
   "verify-doc-index": verifyDocIndex,
   "verify-postmortem": verifyPostmortem,
@@ -117,6 +119,7 @@ export const MODES = {
   "doc-quick": [
     "verify-agent-notes",
     "verify-flow",
+    "verify-walkthrough",
     "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-postmortem",
@@ -133,6 +136,7 @@ export const MODES = {
   "doc-sync": [
     "verify-agent-notes",
     "verify-flow",
+    "verify-walkthrough",
     "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-postmortem",
@@ -157,6 +161,7 @@ export const MODES = {
   release: [
     "verify-agent-notes",
     "verify-flow",
+    "verify-walkthrough",
     "verify-archived-agent-notes",
     "verify-doc-index",
     "verify-postmortem",
