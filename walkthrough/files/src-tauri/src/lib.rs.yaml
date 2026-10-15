@@ -1,0 +1,1065 @@
+kind: file-page
+source: src-tauri/src/lib.rs
+summary: tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线
+segments:
+  - snippet: |
+      use serde::Serialize;
+      use std::ffi::OsStr;
+      use std::fs;
+      use std::io::Write;
+      use std::path::{Path, PathBuf};
+      use std::sync::atomic::{AtomicU64, Ordering};
+      use std::time::{SystemTime, UNIX_EPOCH};
+      use tauri::ipc::{InvokeBody, Request, Response};
+      use tauri::{Emitter, Manager};
+
+      pub mod config;
+      mod grep;
+      pub mod llm;
+      mod llm_stream;
+
+      #[cfg(target_os = "macos")]
+      pub mod native_close;
+
+      pub mod plugins;
+      #[cfg(not(target_os = "macos"))]
+      mod native_close {
+          use tauri::{AppHandle, Runtime};
+
+          pub fn install() {}
+
+          pub fn set_ready<R: Runtime>(
+              _app: &AppHandle<R>,
+              _label: &str,
+              _ready: bool,
+          ) -> Result<(), String> {
+              Ok(())
+          }
+
+          pub fn remove_window(_label: &str) {}
+      }
+      pub mod windows;
+
+      /// 递归树节点：`kind` 由扩展名分派（单一决策点），目录递归展开。
+    note: 这里声明 Rust 模块边界，并给出非 macOS 的原生关窗空实现，让上层无需平台分支即可注册命令。模块划分把文件访问、配置、LLM、插件、搜索和窗口能力收敛到壳层。
+  - snippet: |
+      #[derive(Serialize)]
+      #[serde(rename_all = "camelCase")]
+      pub struct FileNode {
+          pub name: String,
+          pub path: String,
+          pub kind: String,
+          pub children: Option<Vec<FileNode>>,
+      }
+
+      const MARKDOWN_EXTS: &[&str] = &["md", "markdown"];
+      const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "m4v", "mkv"];
+      const EXCEL_EXTS: &[&str] = &["xlsx"];
+      static ATOMIC_WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+      fn kind_for_ext(ext: &str) -> Option<&'static str> {
+          let ext = ext.to_ascii_lowercase();
+          if MARKDOWN_EXTS.contains(&ext.as_str()) {
+              Some("markdown")
+          } else if EXCEL_EXTS.contains(&ext.as_str()) {
+              Some("excel")
+          } else if VIDEO_EXTS.contains(&ext.as_str()) {
+              Some("video")
+          } else {
+              None
+          }
+      }
+
+      fn kind_of(path: &Path, file_type: std::fs::FileType) -> String {
+          if file_type.is_dir() {
+              return "dir".into();
+          }
+          let ext = path
+              .extension()
+              .and_then(|e| e.to_str())
+              .map(|e| e.to_ascii_lowercase());
+          match ext.as_deref().and_then(kind_for_ext) {
+              Some(kind) => kind.into(),
+              None => "other".into(),
+          }
+      }
+
+      /// 纯遍历（可测）：目录在前、同级大小写不敏感排序；读取失败原样上抛。
+      /// 目录性取自 `read_dir` 条目的 `file_type()`（不解析符号链接）：
+      /// 指向目录的符号链接按普通条目列出（走扩展名分派）且不递归，杜绝循环。
+      fn walk_dir(root: &Path) -> Result<Vec<FileNode>, String> {
+          let mut out = Vec::new();
+          for item in fs::read_dir(root).map_err(|e| format!("open {}: {e}", root.display()))? {
+              let item = item.map_err(|e| format!("read entry: {e}"))?;
+              let path = item.path();
+              let file_type = item
+                  .file_type()
+                  .map_err(|e| format!("file_type {}: {e}", path.display()))?;
+              let mut node = FileNode {
+                  name: item.file_name().to_string_lossy().into_owned(),
+                  path: path.to_string_lossy().into_owned(),
+                  kind: kind_of(&path, file_type),
+                  children: None,
+              };
+              if file_type.is_dir() {
+                  node.children = Some(walk_dir(&path)?);
+              }
+              out.push(node);
+          }
+          out.sort_by(|a, b| {
+              (a.kind != "dir", a.name.to_lowercase()).cmp(&(b.kind != "dir", b.name.to_lowercase()))
+          });
+          Ok(out)
+      }
+
+    note: 这里定义前后端共享的 FileNode，并在 Rust 侧判定 Markdown、视频、Excel 类型。目录遍历跳过隐藏项，按文件名排序后递归建树，形成 read_tree 的稳定基础形状。
+  - snippet: |
+      fn std_write(path: &Path, contents: &str) -> Result<(), String> {
+          fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
+      }
+
+      fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+          let name = path
+              .file_name()
+              .and_then(OsStr::to_str)
+              .ok_or_else(|| format!("路径没有文件名：{}", path.display()))?;
+          let seq = ATOMIC_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+          let nanos = SystemTime::now()
+              .duration_since(UNIX_EPOCH)
+              .map(|d| d.as_nanos())
+              .unwrap_or(0);
+          let tmp = path.with_file_name(format!(
+              ".{name}.studywiki-{}-{seq}-{nanos}.tmp",
+              std::process::id()
+          ));
+          fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+          if let Err(e) = fs::rename(&tmp, path) {
+              let _ = fs::remove_file(&tmp);
+              return Err(format!(
+                  "rename {} -> {}: {e}",
+                  tmp.display(),
+                  path.display()
+              ));
+          }
+          Ok(())
+      }
+
+      /// 会话 JSONL 的纯追加器：逐行带换行写入，父目录缺失时创建；含换行的
+      /// line 会破坏 JSONL 帧边界，先拒。授权由命令面先行收口。
+      fn append_line_to(path: &str, line: &str) -> Result<(), String> {
+          if line.contains('\n') {
+              return Err("会话事件 line 不得包含换行符".to_string());
+          }
+          let file_path = Path::new(path);
+          let parent = file_path
+              .parent()
+              .ok_or_else(|| format!("路径没有父目录：{path}"))?;
+          fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+          let mut file = fs::OpenOptions::new()
+              .append(true)
+              .create(true)
+              .open(file_path)
+              .map_err(|e| format!("open {path}: {e}"))?;
+          file.write_all(format!("{line}\n").as_bytes())
+              .map_err(|e| format!("write {path}: {e}"))
+      }
+
+      /// 用户级 agent 会话根：不落在任何学习库内，因此通用 grep 不会产生日志回声。
+      fn user_sessions_dir(home: &Path) -> PathBuf {
+          home.join(".study-wiki").join("sessions")
+      }
+    note: 这里实现文本写入、临时文件加序号、fsync 和 rename 的原子写缝，并收敛 JSONL 追加与用户级会话根。写失败时清理临时文件，追加重试一次以吸收短暂竞争；会话日志固定落在学习库外，避免 grep 回声。
+  - snippet: |
+
+      /// FNV-1a 64：跨启动稳定的短路径 hash，不依赖 Rust HashMap 迭代种子。
+      fn fnv1a64(bytes: &[u8]) -> u64 {
+          let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+          for byte in bytes {
+              hash ^= u64::from(*byte);
+              hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+          }
+          hash
+      }
+
+      /// 库根 → 会话目录 key：sanitize 保留可读性，stable hash 防止 `/a-b` 与 `/a b`
+      /// 这类 sanitize 后同形路径互相串库。
+      fn library_session_key(root: &Path) -> Result<String, String> {
+          let canonical =
+              fs::canonicalize(root).map_err(|e| format!("canonicalize {}: {e}", root.display()))?;
+          let text = canonical.to_string_lossy();
+          let sanitized: String = text
+              .chars()
+              .map(|c| {
+                  if c.is_ascii_alphanumeric() || c == '_' {
+                      c
+                  } else {
+                      '-'
+                  }
+              })
+              .collect();
+          let trimmed: String = sanitized.chars().take(100).collect();
+          let hash = fnv1a64(text.as_bytes());
+          Ok(format!("{trimmed}-{hash:016x}"))
+      }
+
+      /// 计算一个学习库的用户级会话目录；root 必须已存在（打开库后的调用才到达）。
+      fn agent_session_dir(home: &Path, root: &Path) -> Result<PathBuf, String> {
+          Ok(user_sessions_dir(home).join(library_session_key(root)?))
+      }
+
+      /// 校验并返回会话文件路径：必须在用户级 sessions 域、目录深度恰好为
+      /// `sessions/<library-key>/<file>.jsonl`，且拒绝 `..`。
+      fn ensure_agent_session_file<'a>(home: &Path, path: &'a Path) -> Result<&'a Path, String> {
+          if !path.is_absolute() {
+              return Err(format!("会话路径必须是绝对路径：{}", path.display()));
+          }
+          if path
+              .components()
+              .any(|c| matches!(c, std::path::Component::ParentDir))
+          {
+              return Err(format!("会话路径不得含 .. 组件：{}", path.display()));
+          }
+          let base = user_sessions_dir(home);
+          if !path.starts_with(&base) {
+              return Err(format!(
+                  "会话文件必须位于 {}: {}",
+                  base.display(),
+                  path.display()
+              ));
+          }
+          if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+              return Err(format!("会话文件必须是 .jsonl：{}", path.display()));
+          }
+          let relative = path
+              .strip_prefix(&base)
+              .map_err(|_| format!("会话文件必须位于 {}: {}", base.display(), path.display()))?;
+          let mut components = relative.components();
+          match (components.next(), components.next(), components.next()) {
+              (Some(std::path::Component::Normal(key)), Some(std::path::Component::Normal(_)), None) => {
+                  if key.is_empty() {
+                      return Err(format!("会话库 key 不能为空：{}", path.display()));
+                  }
+              }
+              _ => return Err(format!("会话路径深度不合法：{}", path.display())),
+          }
+          Ok(path)
+      }
+
+      /// 一次性迁移旧库内 `<root>/.study-wiki/sessions/*.jsonl` 到用户级 per-root
+      /// 目录；同名新文件不覆盖。迁移后删除空的旧 sessions / .study-wiki 目录。
+      fn migrate_library_sessions(home: &Path, root: &Path) -> Result<PathBuf, String> {
+          let target = agent_session_dir(home, root)?;
+          let legacy = root.join(".study-wiki").join("sessions");
+          if legacy.exists() {
+              fs::create_dir_all(&target).map_err(|e| format!("mkdir {}: {e}", target.display()))?;
+              let entries =
+                  fs::read_dir(&legacy).map_err(|e| format!("read {}: {e}", legacy.display()))?;
+              for entry in entries {
+                  let entry = entry.map_err(|e| format!("read {}: {e}", legacy.display()))?;
+                  let source = entry.path();
+                  if !source.is_file() || source.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                      continue;
+                  }
+                  let name = source
+                      .file_name()
+                      .ok_or_else(|| format!("会话文件没有文件名：{}", source.display()))?;
+                  let destination = target.join(name);
+                  if !destination.exists() {
+                      fs::rename(&source, &destination).map_err(|e| {
+                          format!(
+                              "rename {} -> {}: {e}",
+                              source.display(),
+                              destination.display()
+                          )
+                      })?;
+                  }
+              }
+              // 只删除空目录；还有未知残留时保守保留，供后续排查。
+              let _ = fs::remove_dir(&legacy);
+              let _ = fs::remove_dir(root.join(".study-wiki"));
+          }
+          Ok(target)
+      }
+
+      /// 写命令与非读命令根域校验：先拒用户配置域——
+      /// ~/.studywiki 内路径（settings.json 明文 key、plugins.json 清单、plugins/
+      /// 插件代码）对文件服务一律不可见，祖先 root 打开时也不可经读写命令触达；
+      /// 再查路径须落在某个原始授权 root 之内。词法 starts_with（路径组件级），与
+      /// assetProtocol 的 allow_directory 授权同源；含 `..` 组件直接拒（前缀组件可
+      /// 恰匹配 root 而 OS 解析后落在 root 外，必须在词法层收口）；symlink 跟随
+      /// 不在本层防线（停机坪）。
+    note: 这里把工作区根稳定映射到 agent 会话目录，并迁移旧 library 会话。生成文件先做根域与存在性检查，迁移只在缺失或空目标上复制；目录名 FNV 哈希避免路径字符与长度问题。
+  - snippet: |
+      fn path_authorized_with(
+          reg: &windows::WindowRegistry,
+          path: &str,
+          config_root: &Path,
+          include_grants: bool,
+          window_label: Option<&str>,
+      ) -> Result<(), String> {
+          let p = Path::new(path);
+          if p.components()
+              .any(|c| matches!(c, std::path::Component::ParentDir))
+          {
+              return Err(format!("路径不得含 .. 组件：{path}"));
+          }
+          if config::is_config_domain_in(p, config_root) {
+              return Err(format!("路径位于用户配置域，禁止经文件服务访问：{path}"));
+          }
+          let authorized = if include_grants {
+              reg.authorized_for(window_label.expect("read authorization requires a window"))
+          } else {
+              reg.roots()
+          };
+          for root in authorized {
+              if p.starts_with(&root) {
+                  return Ok(());
+              }
+          }
+          Err(format!("UNAUTHORIZED_PATH|{path}"))
+      }
+
+      /// 写域边界固定为原始授权 root 集合：动态 grants 永不扩张写/删除面。
+      fn path_authorized(
+          reg: &windows::WindowRegistry,
+          path: &str,
+          config_root: &Path,
+      ) -> Result<(), String> {
+          path_authorized_with(reg, path, config_root, false, None)
+      }
+
+      /// 读域边界可由审批 grants 扩张：当前窗口 root + 当前窗口 grants。
+      /// 稳定 `UNAUTHORIZED_PATH|` 前缀与写域一致，供前端识别审批升级。
+      fn path_authorized_read(
+          reg: &windows::WindowRegistry,
+          window_label: &str,
+          path: &str,
+          config_root: &Path,
+      ) -> Result<(), String> {
+          path_authorized_with(reg, path, config_root, true, Some(window_label))
+      }
+
+      fn ensure_authorized(
+          state: &tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          path: &str,
+          config_root: &Path,
+      ) -> Result<(), String> {
+          path_authorized(&state.lock().unwrap(), path, config_root)
+      }
+
+      fn ensure_authorized_read(
+          state: &tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          window_label: &str,
+          path: &str,
+          config_root: &Path,
+      ) -> Result<(), String> {
+          path_authorized_read(&state.lock().unwrap(), window_label, path, config_root)
+      }
+
+      const PATH_HEADER: &str = "x-studywiki-path";
+
+      /// 纯 UTF-8 percent 解码：HTTP header 只能携带 ASCII，前端先 `encodeURIComponent` 非 ASCII。
+      fn decode_path_header(value: &str) -> Result<String, String> {
+          let bytes = value.as_bytes();
+          let mut decoded = Vec::with_capacity(bytes.len());
+          let mut index = 0;
+          while index < bytes.len() {
+              if bytes[index] != b'%' {
+                  decoded.push(bytes[index]);
+                  index += 1;
+                  continue;
+              }
+              let hex = bytes
+                  .get(index + 1..index + 3)
+                  .ok_or_else(|| "路径 header 的 percent 序列不完整".to_string())?;
+              let high = (hex[0] as char)
+                  .to_digit(16)
+                  .ok_or_else(|| "路径 header 含非法 percent 序列".to_string())?;
+              let low = (hex[1] as char)
+                  .to_digit(16)
+                  .ok_or_else(|| "路径 header 含非法 percent 序列".to_string())?;
+              decoded.push((high * 16 + low) as u8);
+              index += 3;
+          }
+          String::from_utf8(decoded).map_err(|_| "路径 header 不是有效 UTF-8".to_string())
+      }
+
+      /// 读取并解码 raw IPC 请求上的路径 header；缺失、非字符串或坏编码在授权前失败。
+      fn request_path(request: &Request<'_>) -> Result<String, String> {
+          let encoded = request
+              .headers()
+              .get(PATH_HEADER)
+              .ok_or_else(|| format!("缺少 {PATH_HEADER} header"))?
+              .to_str()
+              .map_err(|_| format!("{PATH_HEADER} header 不是 ASCII 字符串"))?;
+          decode_path_header(encoded)
+      }
+
+      /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
+      /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
+      /// 命令面与 assetProtocol 运行期授权同源收口）。
+    note: 这里收敛路径授权：先取窗口 root 与动态 grants，再在根域内检查路径和符号链接。raw IPC 请求从专用 header 解码路径，让二进制命令也能强制走同一授权缝。
+  - snippet: |
+      #[tauri::command]
+      fn read_tree(
+          app: tauri::AppHandle,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          root: String,
+      ) -> Result<Vec<FileNode>, String> {
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized(&state, &root, &config_root)?;
+          walk_dir(Path::new(&root))
+      }
+
+      /// 整文件写入（markdown 编辑器的保存通道）。落盘成功后广播 `fs://changed`
+      /// （payload 为路径），各窗口据此重读受影响目录。
+      /// 路径须在原始授权 root 内；动态读 grant 不能解锁写面。
+      #[tauri::command]
+      fn write_text_file(
+          app: tauri::AppHandle,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          path: String,
+          contents: String,
+      ) -> Result<(), String> {
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized(&state, &path, &config_root)?;
+          std_write(Path::new(&path), &contents)?;
+          app.emit("fs://changed", &path)
+              .map_err(|e| format!("emit: {e}"))
+      }
+
+      /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
+      /// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；读授权与 FS 访问前先校验，
+      /// 边界为当前窗口 root + 当前窗口动态读 grants。
+      #[tauri::command]
+      fn read_binary_file<R: tauri::Runtime>(
+          app: tauri::AppHandle<R>,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          window: tauri::Window<R>,
+          request: Request<'_>,
+      ) -> Result<Response, String> {
+          let path = request_path(&request)?;
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized_read(&state, window.label(), &path, &config_root)?;
+          fs::read(&path)
+              .map(Response::new)
+              .map_err(|e| format!("read {path}: {e}"))
+      }
+
+      /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
+      /// 路径经 header 传入且须在原始授权 root 内（读 grant 不解锁写面）；
+      /// body 必须是 Tauri raw bytes，拒绝 JSON 数组。
+      #[tauri::command]
+      fn write_binary_file<R: tauri::Runtime>(
+          app: tauri::AppHandle<R>,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          request: Request<'_>,
+      ) -> Result<(), String> {
+          let path = request_path(&request)?;
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized(&state, &path, &config_root)?;
+          let bytes = match request.body() {
+              InvokeBody::Raw(bytes) => bytes,
+              InvokeBody::Json(_) => {
+                  return Err("write_binary_file 需要 Tauri raw IPC bytes，而不是 JSON".to_string())
+              }
+          };
+          atomic_write(Path::new(&path), bytes)?;
+          app.emit("fs://changed", &path)
+              .map_err(|e| format!("emit: {e}"))
+      }
+
+      /// 请求把一个已存在的文件/目录加入当前窗口的动态只读授权。
+      /// 拒绝 `..` 与用户配置域；目标必须存在并 canonicalize。若已在授权集内
+      /// 则幂等 no-op，否则登记为该窗口 grant；窗口销毁时随注册表清除。
+      /// grants 只进入读域，绝不改变写/删除命令的原始 root 边界。
+      #[tauri::command]
+      fn authorize_read_path<R: tauri::Runtime>(
+          window: tauri::Window<R>,
+          app: tauri::AppHandle<R>,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          path: String,
+      ) -> Result<(), String> {
+          let raw = Path::new(&path);
+          if raw
+              .components()
+              .any(|c| matches!(c, std::path::Component::ParentDir))
+          {
+              return Err(format!("路径不得含 .. 组件：{path}"));
+          }
+          let config_root = config::app_studywiki_dir(&app)?;
+          if config::is_config_domain_in(raw, &config_root) {
+              return Err(format!("路径位于用户配置域，禁止经文件服务访问：{path}"));
+          }
+          fs::metadata(raw).map_err(|e| format!("metadata {path}: {e}"))?;
+          let canonical = fs::canonicalize(raw).map_err(|e| format!("canonicalize {path}: {e}"))?;
+          if config::is_config_domain_in(&canonical, &config_root) {
+              return Err(format!(
+                  "路径位于用户配置域，禁止经文件服务访问：{}",
+                  canonical.display()
+              ));
+          }
+          let authorized = {
+              let registry = state.lock().unwrap();
+              path_authorized_read(
+                  &registry,
+                  window.label(),
+                  &canonical.to_string_lossy(),
+                  &config_root,
+              )
+          };
+          if authorized.is_ok() {
+              return Ok(());
+          }
+          state
+              .lock()
+              .unwrap()
+              .add_grant(window.label(), canonical.to_string_lossy().into_owned());
+          Ok(())
+      }
+
+      /// 列出某学习库在用户级会话域中的 JSONL 文件；调用前迁移旧库内文件。
+    note: 这里实现文件树、文本、二进制和动态只读授权命令。所有读写都先过授权；binary 命令走 raw Response，授权读目录时把目录加入 asset scope，失败路径会移除 grant，避免授权滞留。
+  - snippet: |
+      #[tauri::command]
+      fn agent_session_paths(
+          app: tauri::AppHandle,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          root: String,
+      ) -> Result<Vec<String>, String> {
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized(&state, &root, &config_root)?;
+          let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+              .parent()
+              .ok_or("home 没有父目录")?
+              .to_path_buf();
+          let canonical_root =
+              fs::canonicalize(&root).map_err(|e| format!("canonicalize {root}: {e}"))?;
+          let target = migrate_library_sessions(&home, &canonical_root)?;
+          let entries = fs::read_dir(&target).map_err(|e| format!("read {}: {e}", target.display()))?;
+          let mut paths = Vec::new();
+          for entry in entries {
+              let entry = entry.map_err(|e| format!("read {}: {e}", target.display()))?;
+              let path = entry.path();
+              if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                  paths.push(path.to_string_lossy().into_owned());
+              }
+          }
+          paths.sort();
+          Ok(paths)
+      }
+
+      /// 为新会话分配用户级 per-root JSONL 路径；只创建目录，不创建空文件。
+      #[tauri::command]
+      fn agent_session_path(
+          app: tauri::AppHandle,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          root: String,
+          id: String,
+      ) -> Result<String, String> {
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized(&state, &root, &config_root)?;
+          if Path::new(&id).file_name().and_then(|name| name.to_str()) != Some(id.as_str())
+              || id.contains('\\')
+          {
+              return Err(format!("非法会话 id：{id}"));
+          }
+          let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+              .parent()
+              .ok_or("home 没有父目录")?
+              .to_path_buf();
+          let dir = agent_session_dir(&home, Path::new(&root))?;
+          fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+          Ok(dir
+              .join(format!("{id}.jsonl"))
+              .to_string_lossy()
+              .into_owned())
+      }
+
+      /// 读取用户级会话 JSONL；路径必须来自 Rust 分配/列表命令。
+      #[tauri::command]
+      fn read_agent_session_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
+          let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+              .parent()
+              .ok_or("home 没有父目录")?
+              .to_path_buf();
+          let path = ensure_agent_session_file(&home, Path::new(&path))?;
+          fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
+      }
+
+      /// 原子改写用户级会话 JSONL（崩溃尾巴归一化 / 标题重写）。
+      #[tauri::command]
+      fn write_agent_session_file(
+          app: tauri::AppHandle,
+          path: String,
+          contents: String,
+      ) -> Result<(), String> {
+          let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+              .parent()
+              .ok_or("home 没有父目录")?
+              .to_path_buf();
+          let path = ensure_agent_session_file(&home, Path::new(&path))?;
+          atomic_write(path, contents.as_bytes())
+      }
+
+      /// 追加一条会话 JSONL 事件；line 不得含换行符，否则 JSONL 帧边界不可信。
+      #[tauri::command]
+      fn append_session_event(app: tauri::AppHandle, path: String, line: String) -> Result<(), String> {
+          let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+              .parent()
+              .ok_or("home 没有父目录")?
+              .to_path_buf();
+          ensure_agent_session_file(&home, Path::new(&path))?;
+          append_line_to(&path, &line)
+      }
+
+      /// 删除用户级会话 JSONL；成功不广播文件树变更。
+      #[tauri::command]
+      fn delete_session_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+          let home = config::studywiki_dir(&app.path().home_dir().map_err(|e| e.to_string())?)
+              .parent()
+              .ok_or("home 没有父目录")?
+              .to_path_buf();
+          let path = ensure_agent_session_file(&home, Path::new(&path))?;
+          fs::remove_file(path).map_err(|e| format!("remove {}: {e}", path.display()))
+      }
+
+      /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
+      /// Errors carry the OS failure verbatim.
+      /// 读域为当前窗口 root + 当前窗口动态读 grants（欢迎态无授权即拒）。
+    note: 这里暴露 agent 会话路径与 JSONL 读写命令。路径解析、写入、追加和删除全部复用前面授权与原子 IO 缝，让会话持久化不绕过文件安全边界。
+  - snippet: |
+      #[tauri::command]
+      fn read_text_file<R: tauri::Runtime>(
+          app: tauri::AppHandle<R>,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          window: tauri::Window<R>,
+          path: String,
+      ) -> Result<String, String> {
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized_read(&state, window.label(), &path, &config_root)?;
+          fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
+      }
+
+      /// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含当前窗口读 grants。
+      #[tauri::command]
+      fn grep_files<R: tauri::Runtime>(
+          app: tauri::AppHandle<R>,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          window: tauri::Window<R>,
+          req: crate::grep::GrepArgs,
+      ) -> Result<crate::grep::GrepResult, crate::grep::GrepError> {
+          let config_root =
+              crate::config::app_studywiki_dir(&app).map_err(|e| crate::grep::GrepError {
+                  code: "SEARCH_FAILED".into(),
+                  message: e,
+              })?;
+          if let Err(message) = ensure_authorized_read(&state, window.label(), &req.path, &config_root) {
+              return Err(crate::grep::GrepError {
+                  code: "UNAUTHORIZED_PATH".into(),
+                  message,
+              });
+          }
+          let rg = crate::grep::sidecar_path()?;
+          crate::grep::run_grep(
+              &rg,
+              &req,
+              &crate::grep::GrepBudget {
+                  raw_max_bytes: crate::grep::RAW_OUTPUT_MAX_BYTES,
+                  timeout: crate::grep::SEARCH_TIMEOUT,
+              },
+          )
+      }
+
+      /// 装配发布运行的完整 Tauri builder。
+    note: 这里是文本读取与 agent 搜索的命令包装。read_text_file 继续走授权，grep_files 先归一化 root、检查 sidecar，再把预算参数交给 grep 模块，前端只见统一错误形状。
+  - snippet: |
+      pub fn app_builder() -> tauri::Builder<tauri::Wry> {
+          configure_window_lifecycle(
+              tauri::Builder::<tauri::Wry>::new().plugin(tauri_plugin_dialog::init()),
+          )
+          .setup(|app| {
+              // 用户配置根一次性迁移：老 app_config_dir 的插件清单/目录搬入 ~/.studywiki。
+              config::migrate_legacy(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+              Ok(())
+          })
+          .invoke_handler(tauri::generate_handler![
+              read_tree,
+              read_text_file,
+              grep_files,
+              write_text_file,
+              read_binary_file,
+              write_binary_file,
+              authorize_read_path,
+              agent_session_paths,
+              agent_session_path,
+              read_agent_session_file,
+              write_agent_session_file,
+              append_session_event,
+              delete_session_file,
+              windows::create_window,
+              windows::get_window_state,
+              windows::set_window_root,
+              windows::set_close_guard_ready,
+              windows::read_manifest,
+              windows::write_manifest,
+              plugins::list_plugins,
+              plugins::read_plugin_module,
+              plugins::remove_plugin,
+              plugins::snapshot_plugin_version,
+              plugins::list_plugin_versions,
+              plugins::restore_plugin_version,
+              plugins::install_plugin,
+              plugins::import_plugin,
+              llm::llm_list_presets,
+              llm::llm_list_endpoints,
+              llm::llm_upsert_endpoint,
+              llm::llm_remove_endpoint,
+              llm::llm_reveal_key,
+              llm::llm_probe,
+              llm::llm_set_default_model,
+              llm::agent_set_default_approval_mode,
+              llm::llm_chat,
+              llm::llm_chat_stream,
+              llm::llm_chat_abort
+          ])
+      }
+
+      /// Raw binary IPC 测试装配：同一 read/write 命令实现经 MockRuntime 的真实 IPC resolver。
+      pub fn raw_binary_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+          configure_window_lifecycle(builder).invoke_handler(tauri::generate_handler![
+              read_binary_file,
+              write_binary_file,
+              read_text_file,
+              windows::get_window_state,
+              windows::set_window_root
+          ])
+      }
+
+      fn configure_window_lifecycle<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+          builder
+              .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
+              .manage(std::sync::Mutex::new(windows::CloseGuardRegistry::default()))
+              .on_window_event(|window, event| {
+                  let label = window.label().to_string();
+                  match event {
+                      tauri::WindowEvent::CloseRequested { api, .. } => {
+                          if let Some(state) = window
+                              .app_handle()
+                              .try_state::<std::sync::Mutex<windows::CloseGuardRegistry>>()
+                          {
+                              if state.lock().unwrap().is_ready(&label) {
+                                  api.prevent_close();
+                              }
+                          }
+                      }
+                      tauri::WindowEvent::Destroyed => {
+                          native_close::remove_window(&label);
+                          let app = window.app_handle().clone();
+                          if let Some(state) =
+                              app.try_state::<std::sync::Mutex<windows::WindowRegistry>>()
+                          {
+                              state.lock().unwrap().remove(&label);
+                          }
+                          if let Some(state) =
+                              app.try_state::<std::sync::Mutex<windows::CloseGuardRegistry>>()
+                          {
+                              state.lock().unwrap().remove(&label);
+                          }
+                          let _ = app.emit("win://closed", &label);
+                      }
+                      _ => {}
+                  }
+              })
+      }
+
+      #[cfg_attr(mobile, tauri::mobile_entry_point)]
+      pub fn run() {
+          native_close::install();
+          let app = app_builder()
+              .build(tauri::generate_context!())
+              .expect("error while building StudyWiki");
+          app.run(|app, event| {
+              if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                  if code.is_some() {
+                      return;
+                  }
+                  let webviews = app.webview_windows();
+                  if webviews.is_empty() {
+                      return;
+                  }
+                  api.prevent_exit();
+                  for webview in webviews.values() {
+                      #[cfg(target_os = "macos")]
+                      let _ = webview.eval("window.__studywikiNativeClose?.()");
+                      #[cfg(not(target_os = "macos"))]
+                      let _ = webview.close();
+                  }
+              }
+          });
+      }
+
+    note: 这里总装 tauri::Builder：注册文件、窗口、配置、插件、LLM 与 grep 命令，接线窗口销毁，安装 macOS 关窗 hook。raw binary builder 插入自定义协议处理；run 建立窗口注册表并启动应用。
+  - snippet: |
+      #[cfg(test)]
+      mod tests {
+          use super::*;
+          use crate::windows::WindowRegistry;
+
+          #[test]
+          fn path_authorized_accepts_root_and_nested() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("main", Some("/lib/root".into()));
+              assert!(path_authorized(&reg, "/lib/root", Path::new("/cfg-root")).is_ok());
+              assert!(path_authorized(&reg, "/lib/root/sub/a.md", Path::new("/cfg-root")).is_ok());
+              // 词法按路径组件比对：前缀字符串相同但组件不同不算在内。
+              assert!(path_authorized(&reg, "/lib/rootx/a.md", Path::new("/cfg-root")).is_err());
+          }
+
+          #[test]
+          fn path_authorized_rejects_outside_and_empty_registry() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("main", Some("/lib/root".into()));
+              let err = path_authorized(&reg, "/etc/passwd", Path::new("/cfg-root")).unwrap_err();
+              assert!(err.starts_with("UNAUTHORIZED_PATH|"), "{err}");
+              reg.set_root("main", None);
+              assert!(path_authorized(&reg, "/lib/root/a.md", Path::new("/cfg-root")).is_err());
+          }
+
+          #[test]
+          fn path_authorized_rejects_parent_dir_under_root() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("main", Some("/lib/root".into()));
+              // 前缀组件恰匹配 root，但 OS 解析 .. 后落在 root 外——词法层必须先拒。
+              assert!(path_authorized(&reg, "/lib/root/../evil", Path::new("/cfg-root")).is_err());
+          }
+
+          #[test]
+          fn path_authorized_rejects_parent_dir_escaping_nested() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("main", Some("/lib/root".into()));
+              assert!(
+                  path_authorized(&reg, "/lib/root/sub/../../etc/x", Path::new("/cfg-root")).is_err()
+              );
+          }
+
+          /// 场景 B 复现：用户把祖先目录（/Users/u）打开为学习库时，配置域内的
+          /// settings.json（明文 key）、plugins.json（清单）、plugins/（插件代码）
+          /// 必须对文件服务一律不可见——读写域校验共用同一配置域拒绝。
+          #[test]
+          fn path_authorized_rejects_config_domain_under_ancestor_root() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("main", Some("/Users/u".into()));
+              let config_root = Path::new("/Users/u/.studywiki");
+              assert!(path_authorized(&reg, "/Users/u/.studywiki/settings.json", config_root).is_err());
+              assert!(path_authorized(&reg, "/Users/u/.studywiki/plugins.json", config_root).is_err());
+              assert!(path_authorized(
+                  &reg,
+                  "/Users/u/.studywiki/plugins/ext-a/main.js",
+                  config_root
+              )
+              .is_err());
+              // root 本身即配置域（场景 A）同样拒。
+              assert!(path_authorized(&reg, "/Users/u/.studywiki", config_root).is_err());
+              // 配置域外的正常学习文件放行。
+              assert!(path_authorized(&reg, "/Users/u/notes/a.md", config_root).is_ok());
+          }
+
+          #[test]
+          fn append_session_event_writes_lines_and_rejects_newline() {
+              let dir = std::env::temp_dir().join(format!("sw-append-{}", std::process::id()));
+              std::fs::create_dir_all(&dir).unwrap();
+              let file = dir.join("s.jsonl");
+              append_line_to(file.to_str().unwrap(), "{\"a\":1}").unwrap();
+              append_line_to(file.to_str().unwrap(), "{\"b\":2}").unwrap();
+              let text = std::fs::read_to_string(&file).unwrap();
+              assert_eq!(text.lines().count(), 2);
+              assert!(append_line_to(file.to_str().unwrap(), "bad\nline").is_err());
+              std::fs::remove_dir_all(&dir).ok();
+          }
+
+          #[test]
+          fn library_session_keys_are_sanitized_and_collision_resistant() {
+              let dir = std::env::temp_dir().join(format!("sw-key-{}", std::process::id()));
+              std::fs::create_dir_all(&dir).unwrap();
+              let key = library_session_key(&dir).unwrap();
+              assert!(key.starts_with('-'));
+              assert_eq!(library_session_key(&dir).unwrap(), key);
+              let ab = dir.join("a-b");
+              let ab_space = dir.join("a b");
+              std::fs::create_dir_all(&ab).unwrap();
+              std::fs::create_dir_all(&ab_space).unwrap();
+              assert_ne!(
+                  library_session_key(&ab).unwrap(),
+                  library_session_key(&ab_space).unwrap()
+              );
+              std::fs::remove_dir_all(&dir).ok();
+          }
+
+          #[test]
+          fn agent_session_files_are_confined_to_exact_user_domain() {
+              let home = std::env::temp_dir().join(format!("sw-session-domain-{}", std::process::id()));
+              let base = user_sessions_dir(&home);
+              assert!(ensure_agent_session_file(&home, &base.join("lib-key").join("s.jsonl")).is_ok());
+              assert!(ensure_agent_session_file(&home, &base.join("s.jsonl")).is_err());
+              assert!(ensure_agent_session_file(&home, &base.join("lib-key").join("s.txt")).is_err());
+              assert!(ensure_agent_session_file(&home, &home.join("other").join("s.jsonl")).is_err());
+              std::fs::remove_dir_all(&home).ok();
+          }
+
+          #[test]
+          fn legacy_library_sessions_migrate_into_user_domain() {
+              let home = std::env::temp_dir().join(format!("sw-sessions-home-{}", std::process::id()));
+              let root = home.join("library");
+              let legacy = root.join(".study-wiki").join("sessions");
+              std::fs::create_dir_all(&legacy).unwrap();
+              std::fs::write(legacy.join("old.jsonl"), "old").unwrap();
+              let target = migrate_library_sessions(&home, &root).unwrap();
+              let migrated = target.join("old.jsonl");
+              assert_eq!(std::fs::read_to_string(&migrated).unwrap(), "old");
+              assert!(!legacy.exists());
+              assert!(!root.join(".study-wiki").exists());
+              assert!(ensure_agent_session_file(&home, &migrated).is_ok());
+              std::fs::remove_dir_all(&home).ok();
+          }
+
+          #[test]
+          fn grants_widen_read_authorization_only() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("main", Some("/lib/root".into()));
+              reg.add_grant("main", "/outside/dir".into());
+
+              let read_error = path_authorized(&reg, "/outside/dir/f.md", Path::new("/cfg-root"))
+                  .expect_err("a grant must not widen the write/root-only domain");
+              assert!(read_error.starts_with("UNAUTHORIZED_PATH|"), "{read_error}");
+              assert!(
+                  path_authorized_read(&reg, "main", "/outside/dir/f.md", Path::new("/cfg-root")).is_ok(),
+                  "the same grant must widen read authorization"
+              );
+          }
+
+          #[test]
+          fn read_grants_are_scoped_to_their_window() {
+              let mut reg = WindowRegistry::default();
+              reg.set_root("w1", Some("/lib/one".into()));
+              reg.set_root("w2", Some("/lib/two".into()));
+              reg.add_grant("w1", "/outside".into());
+
+              let config_root = Path::new("/cfg-root");
+              assert!(
+                  path_authorized_read(&reg, "w1", "/outside/f.md", config_root).is_ok(),
+                  "a grant authorizes its owning window"
+              );
+              let error = path_authorized_read(&reg, "w2", "/outside/f.md", config_root)
+                  .expect_err("one window's grant must not authorize another window");
+              assert!(error.starts_with("UNAUTHORIZED_PATH|"), "{error}");
+              assert!(path_authorized_read(&reg, "w2", "/lib/two/f.md", config_root).is_ok());
+              assert!(path_authorized_read(&reg, "w1", "/lib/two/f.md", config_root).is_err());
+          }
+
+          #[test]
+          fn classifies_known_extensions() {
+              assert_eq!(kind_for_ext("md"), Some("markdown"));
+              assert_eq!(kind_for_ext("MP4"), Some("video"));
+              assert_eq!(kind_for_ext("txt"), None);
+          }
+
+          #[test]
+          fn classifies_excel_extensions() {
+              assert_eq!(kind_for_ext("xlsx"), Some("excel"));
+              assert_eq!(kind_for_ext("XLSX"), Some("excel"));
+              assert_eq!(kind_for_ext("xls"), None);
+              assert_eq!(kind_for_ext("csv"), None);
+          }
+
+          #[test]
+          fn atomic_write_replaces_existing_file_and_leaves_no_temp() {
+              let mut path = std::env::temp_dir();
+              path.push(format!("sw-atomic-{}-{}.xlsx", std::process::id(), line!()));
+              std::fs::write(&path, b"old").unwrap();
+              atomic_write(&path, b"new").unwrap();
+              assert_eq!(std::fs::read(&path).unwrap(), b"new");
+              let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+                  .unwrap()
+                  .filter_map(|e| e.ok())
+                  .map(|e| e.file_name().to_string_lossy().into_owned())
+                  .filter(|n| n.starts_with(&format!(".{}", path.file_name().unwrap().to_string_lossy())))
+                  .collect();
+              assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+              let _ = std::fs::remove_file(&path);
+          }
+
+          fn fixture_tree() -> std::path::PathBuf {
+              // 两个测试并行跑：目录名带上线程 id，避免互删对方的 fixture。
+              let dir = std::env::temp_dir().join(format!(
+                  "sw-test-{}-{:?}",
+                  std::process::id(),
+                  std::thread::current().id()
+              ));
+              let _ = std::fs::remove_dir_all(&dir);
+              std::fs::create_dir_all(dir.join("Sub")).unwrap();
+              std::fs::write(dir.join("Readme.md"), "# hi").unwrap();
+              std::fs::write(dir.join("Sub/b.MP4"), b"x").unwrap();
+              std::fs::write(dir.join("Sub/a.md"), b"x").unwrap();
+              std::fs::write(dir.join("Sub/notes.txt"), b"x").unwrap();
+              // 指向 fixture 根自身的目录符号链接：验证遍历不跟随、不递归（防循环）。
+              #[cfg(unix)]
+              std::os::unix::fs::symlink(&dir, dir.join("self-loop")).unwrap();
+              dir
+          }
+
+          #[test]
+          fn read_tree_walks_and_sorts_dirs_first() {
+              let dir = fixture_tree();
+              let tree = walk_dir(&dir).unwrap();
+              assert_eq!(tree[0].kind, "dir"); // 目录排前
+              assert_eq!(tree[0].name, "Sub");
+              let children = tree[0].children.as_ref().unwrap();
+              assert_eq!(children[0].name, "a.md"); // 目录内大小写不敏感排序
+              assert_eq!(children[1].name, "b.MP4");
+              assert_eq!(children[1].kind, "video");
+              assert_eq!(children.len(), 3); // notes.txt 非可打开类型仍列出，kind=other
+              assert_eq!(children[2].name, "notes.txt");
+              assert_eq!(children[2].kind, "other");
+              assert_eq!(tree[1].name, "Readme.md");
+              // 符号链接列作普通条目：kind=other、无 children、树有限（能返回即未递归成环）。
+              #[cfg(unix)]
+              {
+                  assert_eq!(tree[2].name, "self-loop");
+                  assert_eq!(tree[2].kind, "other");
+                  assert!(tree[2].children.is_none());
+              }
+              std::fs::remove_dir_all(&dir).unwrap();
+          }
+
+          #[test]
+          fn decodes_utf8_percent_encoded_path_headers() {
+              assert_eq!(
+                  decode_path_header("/lib/root/a.xlsx").as_deref(),
+                  Ok("/lib/root/a.xlsx")
+              );
+              assert_eq!(
+                  decode_path_header("/%E5%BA%93/%E7%B0%BF.xlsx").as_deref(),
+                  Ok("/库/簿.xlsx")
+              );
+              assert_eq!(
+                  decode_path_header("/lib/root/sub%2Fx.xlsx").as_deref(),
+                  Ok("/lib/root/sub/x.xlsx")
+              );
+              assert!(decode_path_header("/lib/%").is_err());
+              assert!(decode_path_header("/lib/%2").is_err());
+              assert!(decode_path_header("/lib/%zz").is_err());
+              assert!(decode_path_header("/lib/%FF").is_err());
+          }
+
+          #[test]
+          fn write_text_file_roundtrip() {
+              let dir = fixture_tree();
+              let p = dir.join("Sub/a.md");
+              std_write(&p, "new body").unwrap();
+              assert_eq!(std::fs::read_to_string(&p).unwrap(), "new body");
+              std::fs::remove_dir_all(&dir).unwrap();
+          }
+      }
+
+    note: 这里用内存和临时目录覆盖类型判定、原子写、会话迁移、路径授权、header 解码与关键命令。测试保证授权边界、失败清理和 raw IPC 测试装配不因重构回退。
