@@ -1,0 +1,84 @@
+kind: feature
+slug: approval-gate
+title: 审批门
+behavior: |
+  Agent 的写入或越权读先形成带预览的审批请求；ask 模式接管输入区由用户决定，auto 模式在预算内交给 Guardian 审查。决定与理由写入会话日志，取消或审查失败一律 fail-closed。
+
+modules: [src/plugins/agent-core/tools.ts, src/plugins/agent-core/approval.ts, src/plugins/agent-core/service.ts, src/plugins/app-agent/index.ts, src-tauri/src/llm.rs]
+steps:
+  - ref:
+      file: src/plugins/agent-core/tools.ts
+      snippet: |
+        async function executeWrite(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
+          const path = requiredString(args, "path");
+          if (typeof path !== "string") return path;
+          const content = requiredString(args, "content");
+          if (typeof content !== "string") return content;
+          if (!isWithinRoot(path, ctx.root)) return { content: "write 拒绝：目标路径不在库根内；写入永远不会越界。", isError: true };
+          const approval = await askApproval(ctx, {
+            id: call.id,
+            kind: "write",
+            tool: "write",
+
+    note: |
+        write 工具在触碰文件前等待审批；请求带路径、摘要和有界预览，拒绝转成错误工具结果回灌模型。
+
+  - ref:
+      file: src/plugins/agent-core/approval.ts
+      snippet: |
+        ): ApprovalGate {
+          const maxRetries = retry.maxRetries ?? GUARDIAN_MAX_REVIEW_ATTEMPTS - 1;
+          const sleep = retry.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+          const pending = new Set<PendingApproval>();
+          const interruptDrainMs = retry.interruptDrainMs ?? GUARDIAN_INTERRUPT_DRAIN_MS;
+
+          function recordAndResolve(
+            entry: PendingApproval,
+
+    note: |
+        审批门按会话模式和载荷预算路由：Guardian 只见受限 JSON，超预算或 ask 模式回到人工。
+
+  - ref:
+      file: src/plugins/agent-core/service.ts
+      snippet: |
+        export function createAgentService(deps: AgentServiceDeps): AgentService {
+          const threshold = deps.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
+          const sessions = new Map<string, { internal: InternalSession; session: AgentSession }>();
+          let disposed = false;
+
+          const requireRoot = (): string => {
+            const root = deps.workspace.root;
+
+    note: |
+        UI 决定通过 request id 唤醒等待中的工具调用；未知或已取消请求不会重复 settle。
+
+  - ref:
+      file: src/plugins/app-agent/index.ts
+      snippet: |
+        ;
+
+          const refreshSessions = async (): Promise<void> => {
+            if (disposed) return;
+            try {
+              sessions = await ctx.agent.listSessions();
+              paintSessionOptions();
+
+    note: |
+        人工审批接管 composer 并保存原草稿；队列逐个呈现，避免多个请求同时竞争输入区。
+
+  - ref:
+      file: src-tauri/src/llm.rs
+      snippet: |
+        pub fn agent_set_default_approval_mode(app: AppHandle, mode: String) -> Result<(), LlmError> {
+            if mode != "ask" && mode != "auto" {
+                return Err(LlmError::new(
+                    "INVALID_CONFIG",
+                    "agentApprovalMode 只能是 ask 或 auto",
+                ));
+
+    note: |
+        Rust settings 是新会话默认审批模式的持久边界；非法模式在写盘前被拒绝。
+
+related:
+  notes:
+    - 参见 [基础 Agent 决策](../../.agents/notes/implemented/architecture/2026-10-04-basic-agent.md)

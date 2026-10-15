@@ -1,0 +1,78 @@
+kind: feature
+slug: plugin-manage
+title: 外置插件管理
+behavior: |
+  插件面板列出内置与外置插件及其运行、失败或待清理状态；可按包名安装、导入本地 tgz、启停、重载、回退历史版本或移除外置插件。动作即时作用于当前窗口，清单写回后供其他窗口重启跟随。
+
+modules: [src/plugins/plugin-manager/index.ts, src/plugins/plugin-manager/model.ts, src/host/plugins.ts, src/loader/activate.ts, src-tauri/src/plugins.rs]
+steps:
+  - ref:
+      file: src/plugins/plugin-manager/index.ts
+      snippet: |
+        async function openPanel(ctx: Context, opener: HTMLButtonElement): Promise<void> {
+          document.querySelector(".plugin-panel")?.remove();
+          const overlay = document.createElement("div");
+          overlay.className = "plugin-panel";
+          overlay.setAttribute("role", "dialog");
+          overlay.setAttribute("aria-modal", "true");
+          overlay.setAttribute("aria-label", "插件管理");
+          const box = document.createElement("div");
+
+    note: |
+        安装不是只落目录：面板写入启用清单、读取校验模块，并走热重载路径让新插件立刻生效。
+
+  - ref:
+      file: src/host/plugins.ts
+      snippet: |
+        export class PluginsService {
+          readonly #deps: PluginsDeps;
+          #manifestUpdates: Promise<unknown> = Promise.resolve();
+
+    note: |
+        宿主插件服务是插件安装的唯一前端入口；registry 网络动作被限制在 Rust 命令内。
+
+  - ref:
+      file: src-tauri/src/plugins.rs
+      snippet: |
+        fn install_bytes(app: &AppHandle, bytes: &[u8], integrity: Option<&str>) -> Result<String, String> {
+            if let Some(sig) = integrity {
+                verify_integrity(sig, bytes)?;
+            }
+            let extracted = extract_and_validate(bytes)?;
+            let dir = plugin_dir(app)?;
+            fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+            place_plugin(&dir, &extracted)?;
+
+    note: |
+        安装管线先校验 sha512，再解包封闭契约，最后 staging rename 落盘，避免半截插件目录。
+
+  - ref:
+      file: src/plugins/plugin-manager/model.ts
+      snippet: |
+        ): PanelRow[] {
+          const byName = new Map(entries.map((e) => [e.name, e]));
+          const brokenById = new Map(bootBroken.map((b) => [b.id, b.reason]));
+          return manifest.plugins.map((row: ManifestRow) => {
+
+    note: |
+        面板行把清单、目录扫描、启动坏行和本窗运行态合成为一个投影；停用优先于运行态展示。
+
+  - ref:
+      file: src/host/plugins.ts
+      snippet: |
+        export class PluginsService {
+          readonly #deps: PluginsDeps;
+          #manifestUpdates: Promise<unknown> = Promise.resolve();
+          /** boot 报告的外置坏行；bootstrap 在 boot 后回填，面板读它点名待清理。 */
+          bootBroken: BrokenRow[] = [];
+
+          constructor(deps: PluginsDeps = defaultPluginsDeps) {
+            this.#deps = deps;
+          }
+
+    note: |
+        清单读改写按同窗队列串行；每次读取最新原文，慢动作放在 update 外，避免覆盖并发修改。
+
+related:
+  notes:
+    - 参见 [外置插件决策](../../.agents/notes/implemented/architecture/2026-09-16-phase4-dynamic-plugins.md)

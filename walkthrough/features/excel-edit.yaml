@@ -1,0 +1,77 @@
+kind: feature
+slug: excel-edit
+title: Excel 编辑
+behavior: |
+  单击选中单元格或合并块，Shift 点击扩展选区；双击进入内联输入，普通数字按数值保存、撇号强制文本、空白清空。样式与合并写回 worksheet 后立即标脏，Mod-S 序列化保存，切换或关窗前会确认。
+
+modules: [src/plugins/doc-excel/index.ts, src/plugins/doc-excel/editing.ts, src/plugins/doc-excel/model.ts, src/host/excel.ts, src/host/workspace.ts, src/ui/viewer.ts]
+steps:
+  - ref:
+      file: src/plugins/doc-excel/editing.ts
+      snippet: |
+        export function clickSelection(merges: ExcelMerge[], row: number, column: number): CellRange {
+          const single = { top: row, left: column, bottom: row, right: column };
+          const hit = merges.find((merge) => rangesIntersect(merge, single));
+          return hit ? { top: hit.top, left: hit.left, bottom: hit.bottom, right: hit.right } : single;
+        }
+
+    note: |
+        点击先归一成零基矩形；命中的合并自动扩展为整块，后续样式与编辑都以这个选区为准。
+
+  - ref:
+      file: src/plugins/doc-excel/editing.ts
+      snippet: |
+        export function parseCellInput(text: string): string | number | null {
+          if (text.startsWith("'")) return text.slice(1);
+          const trimmed = text.trim();
+          if (trimmed === "") return null;
+          // 十进制白名单而非裸 Number()：`Number` 会把 "0x10" / "0b101" 解析成数值，
+          // 而 Excel/WPS 将它们按文本处理——只对十进制（含科学计数法）做数值化。
+          if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
+            const numeric = Number(trimmed);
+            if (Number.isFinite(numeric)) return numeric;
+          }
+          return text;
+        }
+
+    note: |
+        输入解析集中定义 Excel 语义：撇号保留文本、空白清格、十进制才数值化，其他内容按原文存储。
+
+  - ref:
+      file: src/plugins/doc-excel/index.ts
+      snippet: |
+        export function apply(ctx: Context, _config: Record<string, never>): () => void {
+          let host: HTMLElement | null = null;
+          let current: FileNode | null = null;
+          let workbook: Workbook | null = null;
+          let sheetIndex = -1;
+
+    note: |
+        提交先写 worksheet，再递增编辑序号、重建渲染模型并重绘；输入结果立即反映且脏态可见。
+
+  - ref:
+      file: src/plugins/doc-excel/index.ts
+      snippet: |
+        export function apply(ctx: Context, _config: Record<string, never>): () => void {
+          let host: HTMLElement | null = null;
+          let current: FileNode | null = null;
+          let workbook: Workbook | null = null;
+          let sheetIndex = -1;
+
+    note: |
+        保存序列化整个 workbook 并写回二进制文件；保存期间又有编辑时不误清脏标记。
+
+  - ref:
+      file: src/host/workspace.ts
+      snippet: |
+        export class WorkspaceService {
+          readonly facade: WorkspaceFacade;
+          #root: string | null = null;
+          #activeFile: FileNode | null = null;
+
+    note: |
+        Excel 插件注册的切换守卫在工作区打开新文件前询问；确认后才发生真正状态转移。
+
+related:
+  notes:
+    - 参见 [Excel 查看器决策](../../.agents/notes/implemented/feature/2026-09-20-excel-viewer.md)

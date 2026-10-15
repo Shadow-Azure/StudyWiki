@@ -1,0 +1,93 @@
+kind: feature
+slug: plugin-load
+title: 外置插件装载
+behavior: |
+  每个窗口启动时读取插件清单并逐行装载；内置失败会阻断启动，外置失败被隔离成待清理坏行。外置入口源码经唯一 blob 动态 import、apiVersion 与形状校验、声明式 guard 门面后进入 cordis 激活。
+
+modules: [src/bootstrap.ts, src/loader/boot.ts, src/host/plugins.ts, src/loader/external.ts, src/loader/guard.ts, src/loader/activate.ts]
+steps:
+  - ref:
+      file: src/bootstrap.ts
+      snippet: |
+        export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context> {
+          const ctx = new Context();
+          const files = new FilesService({ invoke: env.invoke, listen: env.listen, openDialog: env.openDialog, assetUrl: env.assetUrl });
+          const excel = new ExcelService(files);
+
+    note: |
+        每窗口启动统一调用装载器；boot 报告的外置坏行回填给插件面板，启动流程本身继续。
+
+  - ref:
+      file: src/loader/boot.ts
+      snippet: |
+        ): Promise<BootReport> {
+          const loaded: string[] = [];
+          const broken: Array<{ id: string; reason: string }> = [];
+          const states: Array<{ id: string; state: () => number }> = [];
+          for (const row of manifest.plugins) {
+            if (!row.enabled) continue;
+            if (row.id.startsWith("ext:")) {
+              const name = row.id.slice(4);
+              try {
+                const plugin = await loadExternal(name);
+                await activateExternal(ctx, name, plugin, row.config, deps ?? { snapshot: async () => {} });
+                loaded.push(row.id);
+
+    note: |
+        装载器按 ext: 前缀分治：外置用户态失败只隔离登记，内置静态表缺失则保持 fail-loud。
+
+  - ref:
+      file: src/host/plugins.ts
+      snippet: |
+        export class PluginsService {
+          readonly #deps: PluginsDeps;
+          #manifestUpdates: Promise<unknown> = Promise.resolve();
+          /** boot 报告的外置坏行；bootstrap 在 boot 后回填，面板读它点名待清理。 */
+          bootBroken: BrokenRow[] = [];
+
+    note: |
+        宿主装载通道先检查 apiVersion，再把源码交给 blob 缝并用 Zod 校验 name/inject/apply 形状。
+
+  - ref:
+      file: src/loader/external.ts
+      snippet: |
+        ): Promise<Record<string, unknown>> {
+          const blob = new Blob([code], { type: "text/javascript" });
+          const url = URL.createObjectURL(blob);
+          try {
+            return await importFn(url);
+          } finally {
+            URL.revokeObjectURL(url);
+
+    note: |
+        这是全前端唯一动态 import 点；单文件零依赖契约让 blob URL 读完即回收，不留下常驻模块 URL。
+
+  - ref:
+      file: src/loader/guard.ts
+      snippet: |
+        export function guardExternalModule(mod: PluginModule): PluginModule {
+          const declared = new Set(mod.inject ?? []);
+          return {
+
+    note: |
+        激活前把真实 ctx 换成 guard 门面：未声明服务读即教学报错，已声明服务再按白名单收窄成员。
+
+  - ref:
+      file: src/loader/activate.ts
+      snippet: |
+        ): Promise<void> {
+          const fiber = ctx.plugin(guardExternalModule(mod) as never, config);
+          try {
+            await waitActive(fiber, name, deps.wait);
+          } catch (e) {
+            await fiber.dispose();
+            failures.set(name, (e as Error).message);
+            throw e;
+
+    note: |
+        共享激活等待声明的服务真正 ACTIVE；审计失败清理半成品 fiber，并记录面板可读的失败原因。
+
+related:
+  notes:
+    - 参见 [外置插件决策](../../.agents/notes/implemented/architecture/2026-09-16-phase4-dynamic-plugins.md)
+    - 参见 [插件架构决策](../../.agents/notes/implemented/architecture/2026-09-10-plugin-architecture.md)

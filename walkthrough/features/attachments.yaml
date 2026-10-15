@@ -1,0 +1,87 @@
+kind: feature
+slug: attachments
+title: 附件三源
+behavior: |
+  Agent 消息支持 inline、path 和 url 三种媒体来源；当前 composer 可粘贴或拖入图片/音频生成 inline 附件，Rust 出口再归一 path/url、检查模型能力和单件/总量大小，最后构建 OpenAI 兼容多模态请求。
+
+modules: [src/plugins/app-agent/attachments.ts, src/plugins/app-agent/index.ts, src/plugins/agent-core/service.ts, src-tauri/src/llm.rs]
+steps:
+  - ref:
+      file: src/plugins/app-agent/attachments.ts
+      snippet: |
+        export async function fileToAttachment(file: File): Promise<AttachmentResult> {
+          const isImage = file.type.startsWith("image/");
+          const isAudio = ["audio/mpeg", "audio/wav", "audio/x-wav"].includes(file.type);
+          const name = file.name || (isImage ? "粘贴的图片" : "粘贴的音频");
+          if (!isImage && !isAudio) {
+            return { ok: false, reason: "unsupported", message: `不支持的附件类型：${name}` };
+          }
+          if (file.size > MAX_ATTACHMENT_BYTES) {
+            return {
+              ok: false,
+
+    note: |
+        粘贴/拖入的 File 先做 MIME 与大小硬门禁；不压缩、不归一化，失败直接给出可操作提示。
+
+  - ref:
+      file: src/plugins/app-agent/index.ts
+      snippet: |
+        ;
+
+          const refreshSessions = async (): Promise<void> => {
+            if (disposed) return;
+            try {
+              sessions = await ctx.agent.listSessions();
+              paintSessionOptions();
+            } catch {
+              // Listing is auxiliary; the open session and composer remain usable.
+            }
+
+    note: |
+        一次多文件输入会分别接受或拒绝；面板只保留可发送附件，失败原因集中在通知区显示。
+
+  - ref:
+      file: src/plugins/app-agent/index.ts
+      snippet: |
+        function composeContent(text: string, attachments: PendingAttachment[]): string | ContentPart[] {
+          if (attachments.length === 0) return text;
+          const parts: ContentPart[] = [];
+          if (text.trim()) parts.push({ type: "text", text });
+          parts.push(...attachments.map((attachment) => attachment.part));
+          return parts;
+        }
+
+    note: |
+        有媒体时文本与附件组合成 ContentPart 数组，无媒体仍保持普通字符串 wire，避免无意义多模态包装。
+
+  - ref:
+      file: src-tauri/src/llm.rs
+      snippet: |
+        fn upstream_content_part(part: &ContentPart) -> serde_json::Value {
+            let media = |source: &MediaSource| match source {
+                MediaSource::Inline { data, mime_type } => Some(format!("data:{mime_type};base64,{data}")),
+                MediaSource::Url { url } => Some(url.clone()),
+                MediaSource::Path { .. } => None,
+            };
+            match part {
+                ContentPart::Text { text } => serde_json::json!({"type": "text", "text": text}),
+                ContentPart::Image { source } => {
+                    let url = media(source).unwrap_or_else(|| {
+                        unreachable!("path 附件必须先经 upstream_request 归一为 inline")
+
+    note: |
+        Rust 上游组装把 inline/path 统一为 image_url，音频映射为 input_audio；未归一的 path 不进入 wire。
+
+  - ref:
+      file: src-tauri/src/llm.rs
+      snippet: |
+        ) -> Result<ChatResponse, LlmError> {
+            ensure_attachment_size(req, MAX_ATTACHMENT_BYTES, MAX_REQUEST_ATTACHMENT_BYTES)?;
+            ensure_media_caps(req, ep)?;
+
+    note: |
+        非流式与流式出口共用最后防线：先按单件与总量门禁，再确认所选模型具备 vision/audio 能力。
+
+related:
+  notes:
+    - 参见 [基础 Agent 决策](../../.agents/notes/implemented/architecture/2026-10-04-basic-agent.md)
