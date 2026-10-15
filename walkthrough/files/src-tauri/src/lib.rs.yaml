@@ -168,7 +168,7 @@ segments:
       fn user_sessions_dir(home: &Path) -> PathBuf {
           home.join(".study-wiki").join("sessions")
       }
-    note: 这里实现文本写入、临时文件加序号、fsync 和 rename 的原子写缝，并收敛 JSONL 追加与用户级会话根。写失败时清理临时文件，追加重试一次以吸收短暂竞争；会话日志固定落在学习库外，避免 grep 回声。
+    note: 这里实现文本写入、临时文件命名和 rename 的原子写缝，并收敛 JSONL 追加与用户级会话根。rename 失败时清理临时文件；JSONL 逐行带换行直接追加，会话日志固定落在学习库外，避免 grep 回声。
   - snippet: |
 
       /// FNV-1a 64：跨启动稳定的短路径 hash，不依赖 Rust HashMap 迭代种子。
@@ -288,7 +288,7 @@ segments:
       /// assetProtocol 的 allow_directory 授权同源；含 `..` 组件直接拒（前缀组件可
       /// 恰匹配 root 而 OS 解析后落在 root 外，必须在词法层收口）；symlink 跟随
       /// 不在本层防线（停机坪）。
-    note: 这里把工作区根稳定映射到 agent 会话目录，并迁移旧 library 会话。生成文件先做根域与存在性检查，迁移只在缺失或空目标上复制；目录名 FNV 哈希避免路径字符与长度问题。
+    note: 这里把工作区根稳定映射到 agent 会话目录，并迁移旧 library 会话。生成文件先做根域与存在性检查，迁移只在目标不存在时复制；目录名 FNV 哈希避免路径字符与长度问题。
   - snippet: |
       fn path_authorized_with(
           reg: &windows::WindowRegistry,
@@ -398,7 +398,7 @@ segments:
       /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
       /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
       /// 命令面与 assetProtocol 运行期授权同源收口）。
-    note: 这里收敛路径授权：先取窗口 root 与动态 grants，再在根域内检查路径和符号链接。raw IPC 请求从专用 header 解码路径，让二进制命令也能强制走同一授权缝。
+    note: 这里收敛路径授权：先取窗口 root 与动态 grants，再做词法组件级检查；symlink 跟随不在该层防线，动态授权处仅 canonicalize 一次。raw IPC 请求从专用 header 解码路径，让二进制命令也能强制走同一授权缝。
   - snippet: |
       #[tauri::command]
       fn read_tree(

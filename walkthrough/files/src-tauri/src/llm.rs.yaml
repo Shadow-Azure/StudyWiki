@@ -721,7 +721,7 @@ segments:
       }
 
       /// 返回厂商预设表（前端唯一拿 baseUrl 的通道）。
-    note: 这里执行探测、附件大小门禁、请求前检查与 endpoint CRUD 辅助。base64 解码长度用于防止超大附件先入内存，设置变更先校验 endpoint，再由调用方原子写回配置。
+    note: 这里执行探测、附件大小门禁、请求前检查与 endpoint CRUD 辅助。base64 解码长度在请求边界、上游请求构建前应用；inline base64 到达 Rust 时已在内存，门禁不阻止其装载。设置变更先校验 endpoint，再由调用方原子写回配置。
   - snippet: |
       #[tauri::command]
       pub fn llm_list_presets() -> Vec<LlmPreset> {
