@@ -24,3 +24,5 @@ Establish a top-level `walkthrough/` directory (Chinese-only, an explicitly regi
 ## Consequences
 
 Every code PR must maintain walkthrough sources in the same PR (enforced by gates); AI carries generation and drift repair while the human only skims the changes page and file-page diffs. Explanation semantic quality cannot be judged mechanically — a standing debt backed by "red anchor forces rewrite" plus human review. The 60% line-coverage threshold is an uncalibrated starting point to be revisited against real distributions after backfill. The bootstrap backfill is a one-time large skim cost, digested in feature-page batches.
+
+Backfill facts: the coverage threshold is finalized at 90%; snapshot granularity prioritizes semantically complete segments and is calibrated by 90% coverage plus maintainer skimming. The exemption mechanism keeps a placeholder for the T10 calibration conclusion — calibration conclusions will be recorded when the backfill PR lands.

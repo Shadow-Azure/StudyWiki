@@ -6,7 +6,7 @@ English | [中文](m2-walkthrough-site.md)
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-walkthrough-site.*
   - walkthrough/**
@@ -53,3 +53,4 @@ AI produces code far faster than the maintainer can read and review it. The repo
 - pnpm test, pnpm verify:docs, and pnpm verify:flow all green.
 - pnpm walkthrough builds successfully; the output navigates overview→architecture→cross-links under file://.
 - Documentation registration done and verify:commands green.
+- The skeleton merged in PR #58; see walkthrough-backfill for full backfill and coverage completion.
