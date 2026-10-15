@@ -1,0 +1,429 @@
+kind: file-page
+source: src/host/workspace.ts
+summary: 窗口 scope 工作区状态机：root/activeFile + 事件流 + 切换守卫与插件 facade
+segments:
+  - snippet: |
+      import type { FileNode } from "../types";
+      import { createEmitter, type Emitter } from "./emitter";
+
+      /** Change events emitted by the workspace. */
+      export type WorkspaceEvents = {
+        "root-changed": string | null;
+        "file-opened": FileNode | null;
+      };
+
+      /** One registered switch guard. */
+      interface SwitchGuard {
+        isDirty(): boolean;
+        confirmDiscard(): Promise<boolean>;
+      }
+    note: WorkspaceEvents 定义 root 和 activeFile 两个变化事件；SwitchGuard 用 isDirty 与 confirmDiscard 表达未保存状态。注释直接指出 facade 不暴露根变更，换根只能经 WindowsService。
+  - snippet: |
+      /** Plugin-facing workspace surface: reads, events, guarded opens, and guard registration.
+       * Root mutation stays on the host controller and is reachable only through WindowsService. */
+      export interface WorkspaceFacade {
+        /** The opened folder, or null in welcome state. */
+        readonly root: string | null;
+        /** The currently open document, if any. */
+        readonly activeFile: FileNode | null;
+        /** Root and active-file change events. */
+        readonly events: Emitter<WorkspaceEvents>;
+        /** Make `file` active after consulting switch guards.
+         * @returns True when opened (or already active); false when rejected. */
+        openFile(file: FileNode): Promise<boolean>;
+        /** Register a guard consulted before file/root switches.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void;
+      }
+    note: WorkspaceFacade 是插件可见面的类型契约。readonly 状态、事件、受守卫 openFile 和 guardSwitch 被显式列出，内部控制器能力不进入这个接口。
+  - snippet: |
+      /** Window-scoped workspace state: which root is open, which file is active. */
+      export class WorkspaceService {
+        readonly facade: WorkspaceFacade;
+        #root: string | null = null;
+        #activeFile: FileNode | null = null;
+        readonly #switchGuards = new Set<SwitchGuard>();
+        readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+        constructor() {
+          const service = this;
+          this.facade = Object.freeze({
+            get root() { return service.root; },
+            get activeFile() { return service.activeFile; },
+            get events() { return service.events; },
+            openFile: (file: FileNode) => service.openFile(file),
+            guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+              service.guardSwitch(isDirty, confirmDiscard),
+          });
+        }
+    note: WorkspaceService 同时声明内部状态、守卫集合、事件流和冻结 facade。facade 的 getter 和方法绑定到 service 实例，因此插件拿到的是受控视图，而不是内部控制器引用。
+  - snippet: |
+      /** Window-scoped workspace state: which root is open, which file is active. */
+      export class WorkspaceService {
+        readonly facade: WorkspaceFacade;
+        #root: string | null = null;
+        #activeFile: FileNode | null = null;
+        readonly #switchGuards = new Set<SwitchGuard>();
+        readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+        constructor() {
+          const service = this;
+          this.facade = Object.freeze({
+            get root() { return service.root; },
+            get activeFile() { return service.activeFile; },
+            get events() { return service.events; },
+            openFile: (file: FileNode) => service.openFile(file),
+            guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+              service.guardSwitch(isDirty, confirmDiscard),
+          });
+        }
+
+        /** The opened folder, or null in welcome state. */
+        get root(): string | null {
+          return this.#root;
+        }
+
+        /** The currently open document, if any. */
+        get activeFile(): FileNode | null {
+          return this.#activeFile;
+        }
+
+        /** Register a guard consulted before switching the active file or root.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void {
+          const guard: SwitchGuard = { isDirty, confirmDiscard };
+          this.#switchGuards.add(guard);
+          return () => this.#switchGuards.delete(guard);
+        }
+    note: 类视窗到守卫注册：root/activeFile getter 是状态读取出口；guardSwitch 把守卫加入 Set 并返回删除闭包，调用方可以在插件卸载或编辑器销毁时自动退订。
+  - snippet: |
+      /** Window-scoped workspace state: which root is open, which file is active. */
+      export class WorkspaceService {
+        readonly facade: WorkspaceFacade;
+        #root: string | null = null;
+        #activeFile: FileNode | null = null;
+        readonly #switchGuards = new Set<SwitchGuard>();
+        readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+        constructor() {
+          const service = this;
+          this.facade = Object.freeze({
+            get root() { return service.root; },
+            get activeFile() { return service.activeFile; },
+            get events() { return service.events; },
+            openFile: (file: FileNode) => service.openFile(file),
+            guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+              service.guardSwitch(isDirty, confirmDiscard),
+          });
+        }
+
+        /** The opened folder, or null in welcome state. */
+        get root(): string | null {
+          return this.#root;
+        }
+
+        /** The currently open document, if any. */
+        get activeFile(): FileNode | null {
+          return this.#activeFile;
+        }
+
+        /** Register a guard consulted before switching the active file or root.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void {
+          const guard: SwitchGuard = { isDirty, confirmDiscard };
+          this.#switchGuards.add(guard);
+          return () => this.#switchGuards.delete(guard);
+        }
+
+        /** Ask every registered switch guard whether unsaved work may be discarded.
+         * @returns True when the pending switch may proceed. */
+        async confirmSwitch(): Promise<boolean> {
+          for (const guard of this.#switchGuards) {
+            if (!guard.isDirty()) continue;
+            if (!(await guard.confirmDiscard())) return false;
+          }
+          return true;
+        }
+    note: confirmSwitch 顺序询问每个 dirty 守卫；干净守卫跳过，任一拒绝立即返回 false。这让文件和根切换共用同一条未保存工作决策路径。
+  - snippet: |
+      /** Window-scoped workspace state: which root is open, which file is active. */
+      export class WorkspaceService {
+        readonly facade: WorkspaceFacade;
+        #root: string | null = null;
+        #activeFile: FileNode | null = null;
+        readonly #switchGuards = new Set<SwitchGuard>();
+        readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+        constructor() {
+          const service = this;
+          this.facade = Object.freeze({
+            get root() { return service.root; },
+            get activeFile() { return service.activeFile; },
+            get events() { return service.events; },
+            openFile: (file: FileNode) => service.openFile(file),
+            guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+              service.guardSwitch(isDirty, confirmDiscard),
+          });
+        }
+
+        /** The opened folder, or null in welcome state. */
+        get root(): string | null {
+          return this.#root;
+        }
+
+        /** The currently open document, if any. */
+        get activeFile(): FileNode | null {
+          return this.#activeFile;
+        }
+
+        /** Register a guard consulted before switching the active file or root.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void {
+          const guard: SwitchGuard = { isDirty, confirmDiscard };
+          this.#switchGuards.add(guard);
+          return () => this.#switchGuards.delete(guard);
+        }
+
+        /** Ask every registered switch guard whether unsaved work may be discarded.
+         * @returns True when the pending switch may proceed. */
+        async confirmSwitch(): Promise<boolean> {
+          for (const guard of this.#switchGuards) {
+            if (!guard.isDirty()) continue;
+            if (!(await guard.confirmDiscard())) return false;
+          }
+          return true;
+        }
+
+        #applyRoot(root: string | null): void {
+          this.#root = root;
+          this.#activeFile = null;
+          this.events.emit("root-changed", root);
+          this.events.emit("file-opened", null);
+        }
+
+        /** Switch the opened folder (null = welcome state); clears the active file.
+         * @returns True when the switch happened; false when a guard rejected it. */
+        async setRoot(root: string | null): Promise<boolean> {
+          if (!(await this.confirmSwitch())) return false;
+          this.#applyRoot(root);
+          return true;
+        }
+
+        /** Apply a root switch after {@link confirmSwitch} has already approved it.
+         * Host-only seam for the authorize-before-switch {@link WindowsService.changeRoot} path. */
+        forceSetRoot(root: string | null): void {
+          this.#applyRoot(root);
+        }
+    note: 根状态转移集中在一个私有方法：更新 root、清空 activeFile 并发两个事件。setRoot 先过守卫；forceSetRoot 服务 WindowsService 已完成守卫和授权的宿主专用换根。
+  - snippet: |
+      /** Window-scoped workspace state: which root is open, which file is active. */
+      export class WorkspaceService {
+        readonly facade: WorkspaceFacade;
+        #root: string | null = null;
+        #activeFile: FileNode | null = null;
+        readonly #switchGuards = new Set<SwitchGuard>();
+        readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+        constructor() {
+          const service = this;
+          this.facade = Object.freeze({
+            get root() { return service.root; },
+            get activeFile() { return service.activeFile; },
+            get events() { return service.events; },
+            openFile: (file: FileNode) => service.openFile(file),
+            guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+              service.guardSwitch(isDirty, confirmDiscard),
+          });
+        }
+
+        /** The opened folder, or null in welcome state. */
+        get root(): string | null {
+          return this.#root;
+        }
+
+        /** The currently open document, if any. */
+        get activeFile(): FileNode | null {
+          return this.#activeFile;
+        }
+
+        /** Register a guard consulted before switching the active file or root.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void {
+          const guard: SwitchGuard = { isDirty, confirmDiscard };
+          this.#switchGuards.add(guard);
+          return () => this.#switchGuards.delete(guard);
+        }
+
+        /** Ask every registered switch guard whether unsaved work may be discarded.
+         * @returns True when the pending switch may proceed. */
+        async confirmSwitch(): Promise<boolean> {
+          for (const guard of this.#switchGuards) {
+            if (!guard.isDirty()) continue;
+            if (!(await guard.confirmDiscard())) return false;
+          }
+          return true;
+        }
+
+        #applyRoot(root: string | null): void {
+          this.#root = root;
+          this.#activeFile = null;
+          this.events.emit("root-changed", root);
+          this.events.emit("file-opened", null);
+        }
+
+        /** Switch the opened folder (null = welcome state); clears the active file.
+         * @returns True when the switch happened; false when a guard rejected it. */
+        async setRoot(root: string | null): Promise<boolean> {
+          if (!(await this.confirmSwitch())) return false;
+          this.#applyRoot(root);
+          return true;
+        }
+
+        /** Apply a root switch after {@link confirmSwitch} has already approved it.
+         * Host-only seam for the authorize-before-switch {@link WindowsService.changeRoot} path. */
+        forceSetRoot(root: string | null): void {
+          this.#applyRoot(root);
+        }
+
+        /** Make `file` the active document; viewers subscribe to file-opened.
+         * @returns True when the file opened; false when a guard rejected the switch. */
+        async openFile(file: FileNode): Promise<boolean> {
+          if (file.path === this.#activeFile?.path) {
+            // Reopening the active dirty document is a no-op: no repeated prompt and no silent reload.
+            if ([...this.#switchGuards].some((guard) => guard.isDirty())) return true;
+          } else if (!(await this.confirmSwitch())) return false;
+          this.#activeFile = file;
+          this.events.emit("file-opened", file);
+          return true;
+        }
+      }
+    note: openFile 对相同路径的 dirty 文档保持 no-op，避免重复提示或静默重载。切换到不同文件时先确认守卫，再更新 activeFile 并发出 file-opened 事件。
+  - snippet: |
+      import type { FileNode } from "../types";
+      import { createEmitter, type Emitter } from "./emitter";
+
+      /** Change events emitted by the workspace. */
+      export type WorkspaceEvents = {
+        "root-changed": string | null;
+        "file-opened": FileNode | null;
+      };
+
+      /** One registered switch guard. */
+      interface SwitchGuard {
+        isDirty(): boolean;
+        confirmDiscard(): Promise<boolean>;
+      }
+
+      /** Plugin-facing workspace surface: reads, events, guarded opens, and guard registration.
+       * Root mutation stays on the host controller and is reachable only through WindowsService. */
+      export interface WorkspaceFacade {
+        /** The opened folder, or null in welcome state. */
+        readonly root: string | null;
+        /** The currently open document, if any. */
+        readonly activeFile: FileNode | null;
+        /** Root and active-file change events. */
+        readonly events: Emitter<WorkspaceEvents>;
+        /** Make `file` active after consulting switch guards.
+         * @returns True when opened (or already active); false when rejected. */
+        openFile(file: FileNode): Promise<boolean>;
+        /** Register a guard consulted before file/root switches.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void;
+      }
+
+      /** Window-scoped workspace state: which root is open, which file is active. */
+      export class WorkspaceService {
+        readonly facade: WorkspaceFacade;
+        #root: string | null = null;
+        #activeFile: FileNode | null = null;
+        readonly #switchGuards = new Set<SwitchGuard>();
+        readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+        constructor() {
+          const service = this;
+          this.facade = Object.freeze({
+            get root() { return service.root; },
+            get activeFile() { return service.activeFile; },
+            get events() { return service.events; },
+            openFile: (file: FileNode) => service.openFile(file),
+            guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+              service.guardSwitch(isDirty, confirmDiscard),
+          });
+        }
+
+        /** The opened folder, or null in welcome state. */
+        get root(): string | null {
+          return this.#root;
+        }
+
+        /** The currently open document, if any. */
+        get activeFile(): FileNode | null {
+          return this.#activeFile;
+        }
+
+        /** Register a guard consulted before switching the active file or root.
+         * @param isDirty Returns true when this guard owns unsaved work.
+         * @param confirmDiscard Resolves true to discard the unsaved work.
+         * @returns Disposer removing the guard. */
+        guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void {
+          const guard: SwitchGuard = { isDirty, confirmDiscard };
+          this.#switchGuards.add(guard);
+          return () => this.#switchGuards.delete(guard);
+        }
+
+        /** Ask every registered switch guard whether unsaved work may be discarded.
+         * @returns True when the pending switch may proceed. */
+        async confirmSwitch(): Promise<boolean> {
+          for (const guard of this.#switchGuards) {
+            if (!guard.isDirty()) continue;
+            if (!(await guard.confirmDiscard())) return false;
+          }
+          return true;
+        }
+
+        #applyRoot(root: string | null): void {
+          this.#root = root;
+          this.#activeFile = null;
+          this.events.emit("root-changed", root);
+          this.events.emit("file-opened", null);
+        }
+
+        /** Switch the opened folder (null = welcome state); clears the active file.
+         * @returns True when the switch happened; false when a guard rejected it. */
+        async setRoot(root: string | null): Promise<boolean> {
+          if (!(await this.confirmSwitch())) return false;
+          this.#applyRoot(root);
+          return true;
+        }
+
+        /** Apply a root switch after {@link confirmSwitch} has already approved it.
+         * Host-only seam for the authorize-before-switch {@link WindowsService.changeRoot} path. */
+        forceSetRoot(root: string | null): void {
+          this.#applyRoot(root);
+        }
+
+        /** Make `file` the active document; viewers subscribe to file-opened.
+         * @returns True when the file opened; false when a guard rejected the switch. */
+        async openFile(file: FileNode): Promise<boolean> {
+          if (file.path === this.#activeFile?.path) {
+            // Reopening the active dirty document is a no-op: no repeated prompt and no silent reload.
+            if ([...this.#switchGuards].some((guard) => guard.isDirty())) return true;
+          } else if (!(await this.confirmSwitch())) return false;
+          this.#activeFile = file;
+          this.events.emit("file-opened", file);
+          return true;
+        }
+      }
+    note: 完整文件视窗展示窗口 scope 状态机的契约：插件只能读状态、订阅事件、受守卫打开和注册守卫。根切换、授权和 forceSetRoot 仍由宿主窗口服务单路控制。
