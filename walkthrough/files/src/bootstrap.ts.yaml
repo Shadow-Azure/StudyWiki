@@ -3,6 +3,25 @@ source: src/bootstrap.ts
 summary: 每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）
 segments:
   - snippet: |
+      import { Context } from "cordis";
+      import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+      import { listen } from "@tauri-apps/api/event";
+      import { open, confirm } from "@tauri-apps/plugin-dialog";
+      import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+      import { FilesService, type FilesInvokeArgs, type FilesInvokeOptions } from "./host/files";
+      import { ExcelService } from "./host/excel";
+      import { WindowsService, defaultWindowsDeps } from "./host/windows";
+      import { WorkspaceService } from "./host/workspace";
+      import { SlotsService } from "./host/slots";
+      import { PluginsService, defaultPluginsDeps } from "./host/plugins";
+      import { LlmService } from "./host/llm";
+      import { loadExternalModule } from "./loader/external";
+      import { loadManifest } from "./loader/manifest";
+      import { boot } from "./loader/boot";
+      import { MODULE_TABLE, type ModuleTable } from "./loader/table";
+    note: |
+      导入面先集中暴露宿主边界：Context 是启动产物，七个宿主服务与 loader 组成启动装配链；Tauri API 只在 defaultEnv 绑定处进入业务代码。
+  - snippet: |
       /** Injected environment; defaults bind real Tauri APIs (tests fake these). */
       export interface BootstrapEnv {
         invoke: (cmd: string, args?: FilesInvokeArgs, options?: FilesInvokeOptions) => Promise<unknown>;
