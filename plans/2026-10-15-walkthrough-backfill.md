@@ -14,7 +14,7 @@
 
 - 全部内容中文单语、写现状不写变更史；文件页 summary 必须与 code-map.manifest.json 登记处逐字一致（门禁）。
 - snippet 取语义完整段（函数/类/状态机转移/错误表等），内容从真实源码逐字复制（含行尾空格——构建期渲染的是源码，快照只用于定位）；每个文件页 segments 目标 5-10 段，优先公共出口、状态机、边界与失败处置。
-- 行覆盖率目标 ≥60%（manifest 阈值）；批次完成后跑 verify 看缺口，低于阈值的文件补段优先于登记豁免；豁免必须带理由且只在 manifest.exemptions 登记。
+- 行覆盖率目标 ≥90%（manifest 阈值，维护者定版）；批次完成后跑 verify 看缺口，低于阈值的文件补段优先于登记豁免；豁免必须带理由且只在 manifest.exemptions 登记。
 - 功能页 steps.ref.file 必须是已登记源文件；related.notes 相对链接必须可达。
 - 提交标题含回填 issue 编号 (#N)（Task 1 回填后注入）；每批次一个提交。
 - 并行批次互不触碰同一文件；features.yaml、manifest.json、issue 文件只允许序批任务改。
@@ -83,7 +83,7 @@ pnpm flow:sync   # 回填编号 N
 
 ### Task 10: 覆盖率校准 + bootstrap 摘除 + 收尾
 
-- [ ] **Step 1**: `node scripts/verify-walkthrough.mjs`——文件页/变更页 WARN 清零；行覆盖率逐文件数据导出（verify 输出或临时脚本），低于 0.6 的文件补段；确实不适合注解的（如纯 CSS/类型声明长文件——评估 styles.css/context.d.ts）在 manifest.exemptions 登记理由。
+- [ ] **Step 1**: `node scripts/verify-walkthrough.mjs`——文件页/变更页 WARN 清零；行覆盖率逐文件数据导出（verify 输出或临时脚本），低于 0.9 的文件补段；确实不适合注解的（如纯 CSS/类型声明长文件——评估 styles.css/context.d.ts）在 manifest.exemptions 登记理由。
 - [ ] **Step 2**: 移除 manifest.json 的 `bootstrap` 字段 → 三条门禁转全量红，`pnpm verify:walkthrough` 必须全绿（任何残留缺口补完为止）。
 - [ ] **Step 3**: 校准结论写入 Agent Note（Consequences 回填段）：阈值实际分布、豁免名单与理由、快照粒度经验；`record:i18n` 重录。
 - [ ] **Step 4**: 全链终验：`npm_config_cache=/tmp/sw-npm-cache pnpm test`、`pnpm build`、`pnpm verify:docs`、`pnpm verify:flow`、`pnpm verify:walkthrough`、`pnpm walkthrough` 全绿。
