@@ -8,6 +8,7 @@ milestone: m2
 priority: P0
 status: in-progress
 scope:
+  - .agents/flow/issues/m2-walkthrough-site.*
   - walkthrough/**
   - scripts/walkthrough-lib.mjs
   - scripts/walkthrough-yaml.mjs
