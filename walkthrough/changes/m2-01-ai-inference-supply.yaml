@@ -1,0 +1,19 @@
+kind: change
+issue: m2-01-ai-inference-supply
+title: 模型供给定论与推理服务
+functional: |
+  用户可以在 LLM 设置面板用厂商预设或自定义表单配置 chat 与 ASR endpoint、模型、key、视觉/语音能力与默认模型；配置能保存、脱敏展示并探测可用性，错误会归一成可理解的中文提示。
+architectural: |
+  模型供给采用用户显式配置的 OpenAI 兼容远程 endpoint，支持自托管闭环；这是登记过的环境无关豁免。配置、脱敏投影与联网出口归 Rust，前端通过宿主 `ctx.llm` 服务消费，不内置密钥。
+code: |
+  - `src-tauri/src/config.rs` 解析 `~/.studywiki/settings.json`，做版本检查、旧域迁移、endpoint 校验、原子写 0600 与脱敏投影。
+  - `src-tauri/src/llm.rs` 提供厂商预设、endpoint CRUD、`GET /models` 探测与非流式 chat，并归一 UNREACHABLE、UNAUTHORIZED、TIMEOUT 等错误词。
+  - `src/host/llm.ts` 暴露 list、upsert、remove、probe、chat facade，并用 MODEL_* 三码路由错误。
+  - `src/plugins/llm-settings/model.ts` 与面板共同完成预设实例化、表单校验、探测和删除流程。
+touches:
+  - feature:llm-settings
+  - file:src-tauri/src/config.rs
+  - file:src-tauri/src/llm.rs
+  - file:src/host/llm.ts
+  - file:src/plugins/llm-settings/model.ts
+  - file:src/plugins/llm-settings/index.ts

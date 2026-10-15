@@ -1,0 +1,20 @@
+kind: change
+issue: m2-03-basic-agent
+title: 基础 agent 插件
+functional: |
+  用户在右栏与 agent 多轮对话；agent 能读取活动库内文件、用打包 ripgrep 检索、写新笔记或按 old/new 编辑文件。写操作与越权读取按 ask/auto 审批，人或 Guardian 给出决定；历史会话保存为 JSONL，重开后可恢复继续。
+architectural: |
+  Agent 拆成无 UI 的 `agent-core` 服务插件与右栏 `app-agent` UI 插件：core 提供 `ctx.agent` 的回合状态机、四工具、审批、会话持久化和 compaction，UI 只消费快照与审批接管。工具协议使用 OpenAI 原生 function calling，`app-chat` 被统一取代。
+code: |
+  - `src/plugins/agent-core/loop.ts` 组装 system prompt、工具声明与历史，串行执行 tool calls，并把只有 finish 的完整回答入账。
+  - `src/plugins/agent-core/tools.ts` 实现 read/grep/write/edit，生成有界写预览，并把越权读取升级为审批。
+  - `src/plugins/agent-core/approval.ts` 按 ask/auto 路由，结合 Guardian 审查和取消/切回恢复语义。
+  - `src-tauri/src/grep.rs` 以 pinned ripgrep sidecar 执行 `rg --json`，套用 raw、超时与 limit 预算。
+  - `src/plugins/agent-core/session.ts` 与 service 负责 JSONL 编解码、崩溃尾容错、历史恢复和压缩视图。
+touches:
+  - feature:agent-chat
+  - feature:approval-gate
+  - feature:grep-search
+  - feature:attachments
+  - file:src/plugins/agent-core/loop.ts
+  - file:src/plugins/agent-core/tools.ts

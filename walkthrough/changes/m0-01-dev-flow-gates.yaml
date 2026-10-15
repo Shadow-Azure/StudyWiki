@@ -1,0 +1,18 @@
+kind: change
+issue: m0-01-dev-flow-gates
+title: 开发流程门禁落地
+functional: |
+  开发者在开工前必须把需求落成 flow issue，并在 roadmap 既有 milestone 内推进；提交与 PR 由本地钩子和离线门禁检查引用、状态与改动面，`flow:sync` 负责把本地流程树同步到 GitHub。
+architectural: |
+  流程事实源收敛为 `.agents/flow/` 的 roadmap、milestone、issue 三层；ADR 复用 Agent Note 并由 issue 的 `adr` 字段关联。状态机、双语围栏一致性、GitHub 双侧一致与 diff 改动面校验分成可组合的门禁，而不是把约束散落在人工 review。
+code: |
+  - `scripts/flow-lib.mjs` 解析 flow YAML 子集并承载流程树、状态与 diff 校验的公共规则。
+  - `scripts/verify-flow.mjs` 执行离线状态机检查，`--diff` 模式补充提交引用与 issue scope 覆盖。
+  - `scripts/flow-sync.mjs` 以 gh 为唯一外部写入口，回填 GitHub 编号并同步状态映射。
+  - `scripts/flow-new-issue.mjs` 生成中英三件套骨架，`scripts/install-git-hooks.mjs` 提供提交信息提醒。
+touches:
+  - file:scripts/flow-lib.mjs
+  - file:scripts/verify-flow.mjs
+  - file:scripts/flow-sync.mjs
+  - file:scripts/flow-new-issue.mjs
+  - file:scripts/install-git-hooks.mjs

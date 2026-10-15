@@ -1,0 +1,19 @@
+kind: change
+issue: m1-01-excel-viewer
+title: excel 查看器
+functional: |
+  用户可以在文件树点开 `.xlsx`，按工作表切换阅读；表格支持虚拟滚动、常用字体、填充、边框、对齐、数字/日期格式、合并单元格、列宽和空表提示。不支持的 csv、老式 `.xls`、`.xlsm` 保留在树中并给出明确反馈。
+architectural: |
+  xlsx 语义归前端：ExcelJS workbook 是唯一读写模型；Rust 只负责字节读写、路径授权和原子落盘。表格能力独立为第七个宿主服务 `ctx.excel`，人与后续 AI 能力共用同一读写契约。
+code: |
+  - `src/host/excel.ts` 封装解析、序列化、稳定错误文案和声明维度单元格上限。
+  - `src/host/files.ts` 提供二进制读写桥，Rust 侧经 raw IPC 处理 UTF-8 路径 header 与原子写。
+  - `src/plugins/doc-excel/model.ts` 把 worksheet 投影成样式、合并和虚拟滚动模型。
+  - `src/plugins/doc-excel/index.ts` 渲染多 sheet 视图，并把加载、错误与不支持格式状态接回壳层。
+touches:
+  - feature:excel-view
+  - feature:file-tree
+  - file:src/host/excel.ts
+  - file:src/host/files.ts
+  - file:src/plugins/doc-excel/model.ts
+  - file:src/plugins/doc-excel/index.ts

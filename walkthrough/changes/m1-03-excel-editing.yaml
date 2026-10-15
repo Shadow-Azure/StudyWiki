@@ -1,0 +1,19 @@
+kind: change
+issue: m1-03-excel-editing
+title: excel 页面编辑
+functional: |
+  用户可以直接在表格页编辑单元格值，并使用加粗、斜体、字体色、填充色和合并控件；支持单击加 Shift 单击矩形选区。修改后的工作簿经脏标记与关窗守卫确认保存，重开仍保留数据与样式。
+architectural: |
+  编辑继续沿用「前端 ExcelJS 数据模型 + Rust 字节边界」：UI 只变换 workbook，保存通过 `ctx.excel.write` 落到 Rust 原子写并广播 `fs://changed`。raw binary IPC 从只读契约扩展为读写集成路径。
+code: |
+  - `src/plugins/doc-excel/editing.ts` 解析十进制、强制文本、空白清空等输入，并维护选区与 worksheet 写回。
+  - `src/plugins/doc-excel/index.ts` 连接内联编辑、样式工具条、脏状态、保存重试、守卫和虚拟滚动。
+  - `src/host/excel.ts` 保持 workbook 序列化、稳定错误文案与单元格上限。
+  - `src-tauri/src/lib.rs` 的 raw binary 命令覆盖读取与写入两条授权路径。
+touches:
+  - feature:excel-edit
+  - feature:excel-view
+  - file:src/plugins/doc-excel/editing.ts
+  - file:src/plugins/doc-excel/index.ts
+  - file:src/host/excel.ts
+  - file:src-tauri/src/lib.rs

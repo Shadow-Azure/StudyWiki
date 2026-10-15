@@ -1,0 +1,18 @@
+kind: change
+issue: m1-native-close-guard
+title: 修复原生关窗退出丢脏稿
+functional: |
+  macOS 原生红点、Close Window、Cmd+W 和 Cmd+Q 不再绕过前端确认；有脏文档时先逐个询问，任一取消就保留窗口或进程，干净窗口直接关闭。
+architectural: |
+  原生生命周期先进入主进程同步拦截，再调用前端聚合守卫；Rust 只维护“守卫已武装”这一同步事实，文档脏语义仍留在前端插件。确认后由前端显式销毁，避免把文档状态镜像进壳层。
+code: |
+  - `src-tauri/src/native_close.rs` 拦截关闭 selector、改接红点动作，并钩住应用 terminate 逐窗走同一桥接。
+  - `src-tauri/src/windows.rs` 维护 CloseGuardRegistry，装载守卫即武装，退订或确认后恢复原生路径。
+  - `src/host/windows.ts` 聚合多个文档守卫，任一取消即停留，全部放行才销毁。
+  - `src/bootstrap.ts` 在每窗口启动时接好原生关闭桥与前端守卫生命周期。
+touches:
+  - feature:multi-window
+  - file:src-tauri/src/native_close.rs
+  - file:src-tauri/src/windows.rs
+  - file:src/host/windows.ts
+  - file:src/bootstrap.ts

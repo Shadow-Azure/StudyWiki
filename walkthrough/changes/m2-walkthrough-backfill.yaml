@@ -1,0 +1,19 @@
+kind: change
+issue: m2-walkthrough-backfill
+title: Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
+functional: |
+  维护者和检视者从任一功能、源文件或变更页都能进入同一套中文讲解：13 个用户可见功能有行为与跨文件步骤，65 个登记源文件有职责与逐段注解，10 个流程 issue 有三层变更叙事；回填验收后不再需要 bootstrap 降级提示。
+architectural: |
+  回填把 walkthrough 从机制骨架推进到可强制保鲜的五层内容：文件页与 code-map 一一对应，功能页与登记处一一对应，变更页与 active flow issue 一一对应；源码锚点、summary 逐字一致、行覆盖率和 touches 覆盖都由共享库机械校验。
+code: |
+  - 六批文件页覆盖启动装载、宿主服务、agent 线、阅读面、壳与 Rust 侧，优先公共出口、状态机和失败边界。
+  - 13 个功能页用真实源码锚点串起行为路径，并保留到相关文件页的互链。
+  - 10 个变更页从 issue、Agent Note 与历史提交重建功能、架构和代码细节叙事。
+  - 覆盖率校准和 bootstrap 摘除使三档降级缺口转为正式红门禁。
+touches:
+  - feature:file-tree
+  - feature:excel-view
+  - feature:markdown-read
+  - feature:plugin-load
+  - feature:agent-chat
+  - feature:multi-window

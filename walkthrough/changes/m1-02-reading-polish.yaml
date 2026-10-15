@@ -1,0 +1,20 @@
+kind: change
+issue: m1-02-reading-polish
+title: 阅读体验统一
+functional: |
+  Markdown、Excel 和视频在同一窗口内有一致的打开、切换、加载、错误、标题与保存体验。未打开文档和已开库未选文档有空态；脏文档切换或换库必须确认；视频支持空格暂停和左右方向键快退快进。
+architectural: |
+  切换守卫上收到 `WorkspaceService`，查看器只自证是否脏并提供确认闭包；`openFile` 与 `setRoot` 返回异步布尔，任一守卫拒绝即保持原状态。外置插件只能访问窄化的 workspace facade，不能编程换根或建窗。
+code: |
+  - `src/host/workspace.ts` 维护 root、activeFile、事件流、切换守卫和插件 facade。
+  - `src/host/windows.ts` 在换根、切文件与关窗路径上先聚合并发守卫，再决定是否变更或销毁。
+  - `src/ui/viewer.ts` 统一错误条、加载态、窗口标题规则和 Mod-S 键位。
+  - Markdown 与 Excel 用读取/保存代际防竞态；视频把迟到错误按渲染代际丢弃。
+touches:
+  - feature:markdown-read
+  - feature:excel-view
+  - feature:video-play
+  - feature:multi-window
+  - file:src/host/workspace.ts
+  - file:src/host/windows.ts
+  - file:src/ui/viewer.ts

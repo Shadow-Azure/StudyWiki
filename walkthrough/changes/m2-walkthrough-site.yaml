@@ -1,0 +1,17 @@
+kind: change
+issue: m2-walkthrough-site
+title: Walkthrough 工程讲解站：机制骨架
+functional: |
+  维护者和检视者可以构建离线讲解站，从总览、架构、功能、文件与变更史互跳；讲解站展示构建期真实源码，并由锚点把注解定位到当前代码，而不是依赖会漂移的复制粘贴。
+architectural: |
+  站点源是封闭 schema 的 YAML 五层结构：overview、architecture、features、files、changes。零依赖 YAML 子集解析器、共享校验库、九条门禁与静态构建器共同形成机制骨架；bootstrap 标志先把文件页、变更页和覆盖率缺口降级为 WARN，回填完成后再转硬门禁。
+code: |
+  - `scripts/walkthrough-yaml.mjs` fail-loud 解析仓内受限 YAML 子集，不引入外部 YAML 依赖。
+  - `scripts/walkthrough-lib.mjs` 统一 schema、锚点、文件/功能/变更对账、行覆盖率和 diff 检查。
+  - `scripts/verify-walkthrough.mjs` 输出静态与 PR diff 门禁结果。
+  - `scripts/build-walkthrough.mjs` 渲染多页 file:// 可开的 HTML，并复制非空资源。
+touches:
+  - file:scripts/walkthrough-yaml.mjs
+  - file:scripts/walkthrough-lib.mjs
+  - file:scripts/verify-walkthrough.mjs
+  - file:scripts/build-walkthrough.mjs
