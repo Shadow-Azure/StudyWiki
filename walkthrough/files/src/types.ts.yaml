@@ -1,0 +1,50 @@
+kind: file-page
+source: src/types.ts
+summary: FileNode —— 前后端共享的唯一形状
+segments:
+  - snippet: |
+      /** One node of the opened library's file tree. */
+      export type FileNode = {
+    note: |
+      FileNode 是文件树节点的唯一共享形状，前后端都引用这个类型。它的字段同时服务传输、展示和资源访问。
+  - snippet: |
+      /** One node of the opened library's file tree. */
+      export type FileNode = {
+        /** File or directory name including extension. */
+        name: string;
+    note: |
+      name 保留完整扩展名，前端不需要从 path 再猜显示名。目录和文件沿用同一个字段渲染。
+  - snippet: |
+      /** One node of the opened library's file tree. */
+      export type FileNode = {
+        /** File or directory name including extension. */
+        name: string;
+        /** Absolute path — used for reads/writes and asset-protocol URLs. */
+        path: string;
+    note: |
+      path 约定为绝对路径，读、写、资源协议 URL 都以它为键。这样前端不会维护第二套相对路径拼接规则。
+  - snippet: |
+      /** One node of the opened library's file tree. */
+      export type FileNode = {
+        /** File or directory name including extension. */
+        name: string;
+        /** Absolute path — used for reads/writes and asset-protocol URLs. */
+        path: string;
+        /** Dispatches handling: directories expand; markdown/video/excel open; other opens the shell unsupported hint. */
+        kind: "dir" | "markdown" | "video" | "excel" | "other";
+    note: |
+      kind 是封闭分派集合，决定目录展开、Markdown、视频、Excel 打开或 unsupported 提示。新增可见类型必须先扩大这个契约。
+  - snippet: |
+      /** One node of the opened library's file tree. */
+      export type FileNode = {
+        /** File or directory name including extension. */
+        name: string;
+        /** Absolute path — used for reads/writes and asset-protocol URLs. */
+        path: string;
+        /** Dispatches handling: directories expand; markdown/video/excel open; other opens the shell unsupported hint. */
+        kind: "dir" | "markdown" | "video" | "excel" | "other";
+        /** Present only for directories. */
+        children?: FileNode[];
+      };
+    note: |
+      children 只属于目录，文件节点保持精简。递归形状让整棵树可以在一次载荷内完整表达。
