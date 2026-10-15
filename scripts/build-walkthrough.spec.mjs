@@ -144,6 +144,20 @@ describe("build-walkthrough", () => {
     expect(readFileSync(path.join(outDir, "architecture.html"), "utf8")).toContain("src/demo.ts");
     expect(readFileSync(path.join(outDir, "features/demo.html"), "utf8")).toContain("const covered = 1;");
     expect(readFileSync(path.join(outDir, `files/${"src/demo.ts"}.html`), "utf8")).toContain("const coveredToo = 2;");
+
+    // 导航文件区：按源码目录嵌套的可折叠树（details/summary，零脚本）
+    const nestedSource = "src/host/nested.ts";
+    write(root, nestedSource, "export const nested = true;\n");
+    write(
+      root,
+      `walkthrough/files/${nestedSource}.yaml`,
+      `kind: file-page\nsource: ${nestedSource}\nsummary: 嵌套演示\nsegments:\n  - snippet: |\n      export const nested = true;\n    note: |\n      嵌套演示。\n`,
+    );
+    buildSite(root, outDir);
+    const nav = readFileSync(path.join(outDir, "index.html"), "utf8");
+    expect(nav).toContain("<details class=\"nav-dir\"><summary>host/ (1)</summary>");
+    expect(nav).toContain('href="files/src/host/nested.ts.html"');
+    expect(nav).toContain("<summary>src/ (2)</summary>");
     expect(readFileSync(path.join(outDir, "changes/demo-change.html"), "utf8")).toContain("功能行为变化");
 
     const feature = readFileSync(path.join(outDir, "features/demo.html"), "utf8");

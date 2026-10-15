@@ -9,6 +9,8 @@ priority: P0
 status: in-progress
 scope:
   - walkthrough/**
+  - scripts/build-walkthrough.mjs
+  - scripts/build-walkthrough.spec.mjs
   - .agents/flow/issues/m2-walkthrough-backfill.*
   - .agents/flow/issues/m2-walkthrough-site.*
   - .agents/notes/implemented/process/2026-10-15-walkthrough-site.*
