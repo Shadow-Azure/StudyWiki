@@ -146,7 +146,13 @@ function renderNavigation(fromPage, site) {
   const fileTree = renderFileTreeNav(fromPage, site);
   const fileSection = `
     <section class="nav-group"><h2>文件</h2>${fileTree}</section>`;
-  return `<nav class="site-nav" aria-label="站点导航">${group("总览", [{ href: "index.html", label: "站点总览" }])}${group("架构", [{ href: "architecture.html", label: "架构组成" }])}${group("功能", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug })))}${fileSection}${group("变更史", [...site.changes.keys()].sort().map((issue) => ({ href: `changes/${issue}.html`, label: site.changes.get(issue).title ?? issue })))}</nav>`;
+  return `<nav class="site-nav" aria-label="站点导航">${group("总览", [{ href: "index.html", label: "站点总览" }])}${group("架构", [{ href: "architecture.html", label: "架构组成" }])}${group("功能", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug })))}${fileSection}${group("变更史", sortedChanges(site).map(([issue, page]) => ({ href: `changes/${issue}.html`, label: page.title ?? issue })))}</nav>`;
+}
+
+/** 变更史排序：标题以 #PR 编号开头者降序，无编号者按 slug 排后。 */
+function sortedChanges(site) {
+  const num = (title) => Number((/^#(\d+)/.exec(title ?? "") ?? [])[1] ?? -1);
+  return [...site.changes.entries()].sort((a, b) => num(b[1].title) - num(a[1].title) || a[0].localeCompare(b[0]));
 }
 
 /** 文件页导航树：按源码目录嵌套为可折叠 details（纯 HTML，零脚本），summary 带目录下文件总数。 */
@@ -266,7 +272,7 @@ aside.note p { margin:8px 0 }
 .touch-list a:hover { border-color:var(--accent); color:var(--accent) }
 .backlinks { margin:14px 0 }
 
-@media (max-width:860px) {
+.search { width:100%; margin:0 0 12px; padding:8px 12px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); color:var(--text); font:inherit; font-size:13.5px } .search::placeholder { color:var(--faint) } .search:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft) } @media (max-width:860px) {
   body { grid-template-columns:1fr }
   .sidebar { position:static; height:auto; max-height:42vh; border-right:0; border-bottom:1px solid var(--line) }
   .topbar { position:static }
@@ -426,7 +432,12 @@ function renderOverviewPage(site) {
     return `<section><h2>${escapeHtml(section.heading)}</h2>${renderMarkdown(section.body)}${images}</section>`;
   }).join("");
   const entries = (title, id, items) => `<section id="${escapeHtml(id)}"><h2>${escapeHtml(title)}</h2><ul class="card-list">${items.map((item) => `<li><a href="${relativeHref("index.html", item.href)}"><span class="card-title">${escapeHtml(item.label)}</span>${item.description ? `<span class="card-desc">${escapeHtml(item.description)}</span>` : ""}</a></li>`).join("")}</ul></section>`;
-  const content = `<h1>StudyWiki Walkthrough</h1>${overview}${entries("功能导览", "features", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug, description: site.featureIndex?.features?.find((feature) => feature.slug === slug)?.summary })))}${entries("文件注解", "files", [...site.filePages.keys()].sort().map((source) => ({ href: `files/${source}.html`, label: source, description: site.filePages.get(source).summary })))}${entries("变更史", "changes", [...site.changes.keys()].sort().map((issue) => ({ href: `changes/${issue}.html`, label: site.changes.get(issue).title ?? issue })))}`;
+  const content = `<h1>StudyWiki Walkthrough</h1>${overview}${entries("功能导览", "features", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug, description: site.featureIndex?.features?.find((feature) => feature.slug === slug)?.summary })))}${entries("文件注解", "files", [...site.filePages.keys()].sort().map((source) => ({ href: `files/${source}.html`, label: source, description: site.filePages.get(source).summary })))}${(() => {
+  const cards = sortedChanges(site).map(([issue, page]) => `<li><a href="${relativeHref("index.html", `changes/${issue}.html`)}"><span class="card-title">${escapeHtml(page.title ?? issue)}</span><span class="card-desc">Issue ${escapeHtml(issue)}</span></a></li>`).join("");
+  const filter = `<input class="search" type="search" placeholder="搜索 PR 编号或关键词…" aria-label="搜索变更史" data-filter="changes-cards">`;
+  const script = `<script>(() => { const input = document.querySelector('input[data-filter="changes-cards"]'); const list = document.getElementById('changes-cards'); if (!input || !list) return; input.addEventListener('input', () => { const q = input.value.trim().toLowerCase(); for (const li of list.children) li.style.display = li.textContent.toLowerCase().includes(q) ? '' : 'none'; }); })();<\/script>`;
+  return `<section id="changes"><h2>变更史</h2>${filter}<ul class="card-list" id="changes-cards">${cards}</ul></section>${script}`;
+})()}`;
   return renderPage({
     title: "总览",
     current: "index.html",

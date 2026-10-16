@@ -158,6 +158,21 @@ describe("build-walkthrough", () => {
     expect(nav).toContain("<details class=\"nav-dir\"><summary>host/ (1)</summary>");
     expect(nav).toContain('href="files/src/host/nested.ts.html"');
     expect(nav).toContain("<summary>src/ (2)</summary>");
+
+    // 变更史：按 PR 编号降序 + 搜索框
+    for (const [slug, title] of [["demo-b", "#52 Alpha"], ["demo-c", "#7 Beta"]]) {
+      write(
+        root,
+        `walkthrough/changes/${slug}.yaml`,
+        `kind: change\nissue: ${slug}\ntitle: ${title}\nfunctional: |\n  f\narchitectural: |\n  a\ncode: |\n  c\ntouches: []\n`,
+      );
+    }
+    buildSite(root, outDir);
+    const homeSorted = readFileSync(path.join(outDir, "index.html"), "utf8");
+    expect(homeSorted.indexOf("#52 Alpha")).toBeGreaterThan(-1);
+    expect(homeSorted.indexOf("#52 Alpha")).toBeLessThan(homeSorted.indexOf("#7 Beta"));
+    expect(homeSorted.indexOf("#7 Beta")).toBeLessThan(homeSorted.indexOf(">Demo change<"));
+    expect(homeSorted).toContain('type="search"');
     expect(readFileSync(path.join(outDir, "changes/demo-change.html"), "utf8")).toContain("功能行为变化");
 
     const feature = readFileSync(path.join(outDir, "features/demo.html"), "utf8");
