@@ -1,6 +1,6 @@
 kind: change
 issue: m2-walkthrough-site
-title: Walkthrough 工程讲解站：机制骨架
+title: #58 Walkthrough 工程讲解站：机制骨架
 functional: |
   维护者和检视者可以构建离线讲解站，从总览、架构、功能、文件与变更史互跳；讲解站展示构建期真实源码，并由锚点把注解定位到当前代码，而不是依赖会漂移的复制粘贴。
 architectural: |

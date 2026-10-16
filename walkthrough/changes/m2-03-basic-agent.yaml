@@ -1,6 +1,6 @@
 kind: change
 issue: m2-03-basic-agent
-title: 基础 agent 插件
+title: #56 基础 agent 插件
 functional: |
   用户在右栏与 agent 多轮对话；agent 能读取活动库内文件、用打包 ripgrep 检索、写新笔记或按 old/new 编辑文件。写操作与越权读取按 ask/auto 审批，人或 Guardian 给出决定；历史会话保存为 JSONL，重开后可恢复继续。
 architectural: |

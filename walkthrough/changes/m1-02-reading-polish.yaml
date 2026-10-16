@@ -1,6 +1,6 @@
 kind: change
 issue: m1-02-reading-polish
-title: 阅读体验统一
+title: #44 阅读体验统一
 functional: |
   Markdown、Excel 和视频在同一窗口内有一致的打开、切换、加载、错误、标题与保存体验。未打开文档和已开库未选文档有空态；脏文档切换或换库必须确认；视频支持空格暂停和左右方向键快退快进。
 architectural: |

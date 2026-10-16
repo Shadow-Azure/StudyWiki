@@ -1,6 +1,6 @@
 kind: change
 issue: m0-01-dev-flow-gates
-title: 开发流程门禁落地
+title: #26 开发流程门禁落地
 functional: |
   开发者在开工前必须把需求落成 flow issue，并在 roadmap 既有 milestone 内推进；提交与 PR 由本地钩子和离线门禁检查引用、状态与改动面，`flow:sync` 负责把本地流程树同步到 GitHub。
 architectural: |

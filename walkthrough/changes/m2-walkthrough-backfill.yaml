@@ -1,6 +1,6 @@
 kind: change
 issue: m2-walkthrough-backfill
-title: Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
+title: #60 Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
 functional: |
   维护者和检视者从任一功能、源文件或变更页都能进入同一套中文讲解：13 个用户可见功能有行为与跨文件步骤，65 个登记源文件有职责与逐段注解，10 个流程 issue 有三层变更叙事；回填验收后不再需要 bootstrap 降级提示。
 architectural: |

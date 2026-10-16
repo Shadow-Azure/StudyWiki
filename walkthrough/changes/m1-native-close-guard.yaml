@@ -1,6 +1,6 @@
 kind: change
 issue: m1-native-close-guard
-title: 修复原生关窗退出丢脏稿
+title: #46 修复原生关窗退出丢脏稿
 functional: |
   macOS 原生红点、Close Window、Cmd+W 和 Cmd+Q 不再绕过前端确认；有脏文档时先逐个询问，任一取消就保留窗口或进程，干净窗口直接关闭。
 architectural: |

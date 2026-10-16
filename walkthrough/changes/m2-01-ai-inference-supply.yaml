@@ -1,6 +1,6 @@
 kind: change
 issue: m2-01-ai-inference-supply
-title: 模型供给定论与推理服务
+title: #49 模型供给定论与推理服务
 functional: |
   用户可以在 LLM 设置面板用厂商预设或自定义表单配置 chat 与 ASR endpoint、模型、key、视觉/语音能力与默认模型；配置能保存、脱敏展示并探测可用性，错误会归一成可理解的中文提示。
 architectural: |

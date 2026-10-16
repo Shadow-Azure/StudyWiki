@@ -1,6 +1,6 @@
 kind: change
 issue: m1-01-excel-viewer
-title: excel 查看器
+title: #41 excel 查看器
 functional: |
   用户可以在文件树点开 `.xlsx`，按工作表切换阅读；表格支持虚拟滚动、常用字体、填充、边框、对齐、数字/日期格式、合并单元格、列宽和空表提示。不支持的 csv、老式 `.xls`、`.xlsm` 保留在树中并给出明确反馈。
 architectural: |
