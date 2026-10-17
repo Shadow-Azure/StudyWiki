@@ -500,6 +500,7 @@ touches: []
     );
     write(root, "src/demo.ts", "export const covered = 1;\nexport const changed = 2;\nexport const keep = 2;\n");
     write(root, "src/nested/skim.ts", "export const skimOld = 1;\nexport const skimNew = 2;\n");
+    write(root, "docs/rest.md", "# Rest\n\nRest body.\n");
     git(["add", "."]);
     git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "work"]);
     const outDir = path.join(root, "walkthrough/dist");
@@ -515,11 +516,31 @@ touches: []
     expect(review.indexOf('<div class="tree-legend">')).toBeGreaterThan(-1);
     expect(review.indexOf("核心变更")).toBeLessThan(review.indexOf('<section class="review-tree"'));
 
-    // 树本体复用目录折叠模式：目录与文件都是初始收起的 details。
+    // 树目录默认展开；每个文件 details 默认收起。
     expect(review).toContain('<section class="review-tree">');
-    expect(review).toContain('<details class="review-dir"><summary>src/ (2)</summary>');
-    expect(review).toContain('<details class="review-file attention-must-read"><summary><code>src/demo.ts</code>');
-    expect(review).not.toMatch(/<details[^>]*\sopen(?:\s|>)/u);
+    expect(review).toContain('<details class="review-dir" open><summary>src/ (2)</summary>');
+    expect(review).toContain('<details class="review-dir review-unclassified" open><summary>未归类 (2)</summary>');
+    expect(review).toMatch(/<details class="review-file attention-must-read"><summary>/);
+    expect(review).toMatch(/<details class="review-file attention-skim"><summary>/);
+    expect(review).not.toMatch(/<details class="review-file[^>]*\sopen(?:\s|>)/u);
+
+    // summary 收起态包含文件职责（①）与逐段修改点（②）两行摘要。
+    const demoSummary = review.slice(
+      review.indexOf('<details class="review-file attention-must-read"><summary>'),
+      review.indexOf('</details>', review.indexOf('<details class="review-file attention-must-read"><summary>')),
+    );
+    expect(demoSummary).toContain('<code>src/demo.ts</code>');
+    expect(demoSummary).toContain('>修改</span>');
+    expect(demoSummary).toContain('>+1 −0</span>');
+    expect(demoSummary).toContain('演示文件。');
+    expect(demoSummary).toContain('这是本次修改的那行。');
+
+    const skimSummary = review.slice(
+      review.indexOf('<details class="review-file attention-skim"><summary>'),
+      review.indexOf('</details>', review.indexOf('<details class="review-file attention-skim"><summary>')),
+    );
+    expect(skimSummary).toContain('只看规模与文件级说明。');
+    expect(skimSummary).toContain('（无逐段注解）');
 
     // must-read reviewable 文件展开后是 changes 锚定骨架 + 段内 diff 行 + 段下注解。
     expect(review).toContain('<div class="changes-segment" data-path="src/demo.ts" data-start="2" data-end="2">');
@@ -527,10 +548,22 @@ touches: []
     expect(review).toContain("这是本次修改的那行。");
     expect(review).toContain('<details class="diff-rest-lines"><summary>其余变更行');
 
-    // skim 文件只给规模行与文件级 note，不泄漏 hunk。
-    expect(review).toContain('<details class="review-file attention-skim"><summary><code>src/nested/skim.ts</code>');
-    expect(review).not.toContain("export const skimNew = 2;");
-    expect(review).not.toContain("export const skimOld = 1;");
+    // skim 展开体也渲染完整 unified diff，但没有注解。
+    expect(review).toContain("export const skimNew = 2;");
+    expect(review).toContain("export const skimOld = 1;");
+    const skimStart = review.indexOf('<details class="review-file attention-skim"><summary>');
+    const skimBody = review.slice(skimStart, review.indexOf('</details>', review.indexOf('<div class="review-file-body">', skimStart)));
+    expect(skimBody).toContain('@@ 旧 1 → 新 1 @@');
+    expect(skimBody).not.toContain('diff-note');
+
+    // 未归类文件也在树内，summary 两个摘要位均为 —，展开体仍有完整 diff。
+    expect(review).toContain('<code>docs/rest.md</code>');
+    expect(review).toContain('Rest body.');
+    const restSummary = review.slice(
+      review.indexOf('<code>docs/rest.md</code>') - 240,
+      review.indexOf('</details>', review.indexOf('<code>docs/rest.md</code>')),
+    );
+    expect(restSummary.match(/<span class="summary-text">—<\/span>/gu)).toHaveLength(2);
 
     // 导航置顶链接
     expect(review).toContain("本 PR 检视</a>");

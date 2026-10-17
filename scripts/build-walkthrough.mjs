@@ -333,7 +333,7 @@ ol.user-flow li { margin:5px 0 }
 .attention-badge { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.08em; padding:1px 9px; border-radius:99px; vertical-align:middle; margin-left:8px }
 .attention-must-read .attention-badge { color:#cf222e; border:1px solid color-mix(in srgb,#cf222e 45%,transparent) } .attention-skim .attention-badge { color:var(--muted); border:1px solid var(--line-strong) } .attention-skip .attention-badge { color:var(--faint); border:1px solid var(--line) }
 .attention-skim .diff-file,.attention-skip .diff-file { opacity:.86 }
-.review-tree { display:grid; gap:8px } .tree-legend { display:grid; gap:10px; margin-bottom:12px } .review-dir { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden } .review-dir > summary { padding:8px 12px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-dir[open] > summary { border-bottom:1px solid var(--line) } .review-dir > details { margin:6px } .review-file > summary { display:flex; gap:8px; align-items:center; padding:7px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-wrap:anywhere } .review-file > summary .meta { margin-left:auto } .review-file[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0 } .review-file-body { padding:0 10px 10px } .changes-segment { margin:8px 0; border:1px solid var(--line); border-radius:10px; overflow:hidden } .diff-rest-lines > summary { padding:8px 10px; cursor:pointer; color:var(--muted); font-size:13px } .diff-rest-lines > summary + .diff-pre { border-top:1px solid var(--line) }
+.review-tree { display:grid; gap:8px } .tree-legend { display:grid; gap:10px; margin-bottom:12px } .review-dir { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden } .review-dir > summary { padding:8px 12px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-dir[open] > summary { border-bottom:1px solid var(--line) } .review-dir > details { margin:6px } .review-file > summary { display:flex; gap:8px; align-items:center; padding:7px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-wrap:anywhere } .review-file > summary .meta { margin-left:auto } .review-file[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0 } .review-file-body { padding:0 10px 10px } .review-dir > summary { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-unclassified > summary { color:var(--muted) } .review-file > summary { display:block; padding:10px 12px; cursor:pointer } .review-file > summary .file-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font:12.5px ui-monospace,SFMono-Regular,monospace } .review-file > summary .file-chips { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap } .status-chip,.stat-chip { display:inline-block; padding:1px 8px; border:1px solid var(--line-strong); border-radius:99px; font:11px ui-monospace,SFMono-Regular,monospace; color:var(--muted) } .review-file > summary .summary-line { display:grid; grid-template-columns:18px minmax(0,1fr); gap:6px; margin-top:5px; font-size:12.8px; line-height:1.45; color:var(--muted) } .review-file > summary .summary-label { color:var(--faint); user-select:none } .review-file > summary .summary-text { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow-wrap:anywhere }
 .diff-note { margin:0; border-left:3px solid var(--accent); border-radius:0 }
 table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top } th { color:var(--muted); font-size:12.5px }
 @media (max-width:860px) {
@@ -693,6 +693,14 @@ function execGit(root, argv) {
   return execFileSync("git", argv, { cwd: root, encoding: "utf8" });
 }
 
+/** 渲染普通 unified hunks：所有 diff 行完整输出，不挂 changes 注解。 */
+function renderUnifiedHunks(file) {
+  return file.hunks.map((hunk) => {
+    const lines = hunk.lines.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("");
+    return `<div class="hunk"><div class="hunk-head meta">@@ 旧 ${hunk.oldStart} → 新 ${hunk.newStart} @@</div><pre class="diff-pre">${lines}</pre></div>`;
+  }).join("");
+}
+
 /** 渲染 review 路径树上方的分组图例：只保留组名、attention 与 why。 */
 function renderReviewLegend(groups) {
   if (groups.length === 0) return "";
@@ -782,35 +790,77 @@ function buildReviewTree(groups, byPath) {
 }
 
 /** 渲染 review 专属文件正文：must-read reviewable 文件展开逐段 diff，其余只分诊。 */
-function renderReviewFileBody(metadata, site, root) {
+function renderReviewFileBody(metadata, root) {
   const { entry, group, file } = metadata;
-  const stats = file ? `<span class="meta">+${file.additions} −${file.deletions}</span>` : "";
-  const note = `<div class="meta">${renderMarkdown(entry.note ?? "")}</div>`;
-  const segmented = group.attention === "must-read" && file && isReviewableSourcePath(entry.path) && file.hunks.length > 0
-    ? renderSegmentedDiff(file, entry, root)
-    : "";
-  return `<div class="review-file-body">${stats}${note}${segmented}</div>`;
+  if (group.attention === "must-read" && isReviewableSourcePath(entry.path) && file.hunks.length > 0) {
+    return renderSegmentedDiff(file, entry, root);
+  }
+  return renderUnifiedHunks(file);
 }
 
-/** review 变更区路径树：目录与文件均用纯 HTML details，初始全部收起。 */
-function renderReviewFileTree(groups, byPath, site, root) {
-  const { root: tree, metadata } = buildReviewTree(groups, byPath);
-  const count = (node) => node.files.length + [...node.dirs.values()].reduce((sum, child) => sum + count(child), 0);
-  const render = (node) => {
-    const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) =>
-      `<details class="review-dir"><summary>${escapeHtml(name)}/ (${count(child)})</summary>${render(child)}</details>`).join("");
-    const files = node.files.sort().map((file) => {
-      const meta = metadata.get(file);
-      const href = site.filePages.has(file) ? `<a href="${relativeHref("review.html", `files/${file}.html`)}"><code>${escapeHtml(file)}</code></a>` : `<code>${escapeHtml(file)}</code>`;
-      const stats = meta.file ? `<span class="meta">+${meta.file.additions} −${meta.file.deletions}</span>` : "";
-      return `<details class="review-file attention-${escapeHtml(meta.group.attention)}"><summary>${href}<span class="attention-badge">${escapeHtml(meta.group.attention)}</span>${stats}</summary>${renderReviewFileBody(meta, site, root)}</details>`;
-    }).join("");
+/** 生成 summary 中的两行摘要：文件职责与 changes 修改点；未归类用占位符。 */
+function reviewFileSummaryLines(metadata) {
+  if (metadata.unclassified) {
+    return `
+      <div class="summary-line"><span class="summary-label">①</span><span class="summary-text">—</span></div>
+      <div class="summary-line"><span class="summary-label">②</span><span class="summary-text">—</span></div>`;
+  }
+  const changeNotes = (metadata.entry.changes ?? [])
+    .map((change) => typeof change?.note === "string" ? change.note.trim() : "")
+    .filter(Boolean);
+  const changeSummary = changeNotes.length > 0 ? changeNotes.join("；") : "（无逐段注解）";
+  return `
+    <div class="summary-line"><span class="summary-label">①</span><span class="summary-text">${escapeHtml(metadata.entry.note)}</span></div>
+    <div class="summary-line"><span class="summary-label">②</span><span class="summary-text">${escapeHtml(changeSummary)}</span></div>`;
+}
+
+/** 渲染一个默认折叠的文件节点；summary 承载路径、chips 与两行摘要。 */
+function renderReviewFile(path, metadata, site, root) {
+  const { file } = metadata;
+  const href = site.filePages.has(path) ? `<a href="${relativeHref("review.html", `files/${path}.html`)}"><code>${escapeHtml(path)}</code></a>` : `<code>${escapeHtml(path)}</code>`;
+  const status = file ? (file.status === "A" ? "新增" : file.status === "D" ? "删除" : "修改") : "未变更";
+  const stats = file ? `+${file.additions} −${file.deletions}` : "+0 −0";
+  const attention = metadata.unclassified
+    ? ""
+    : `<span class="attention-badge">${escapeHtml(metadata.group.attention)}</span>`;
+  const attentionClass = metadata.unclassified ? "" : ` attention-${escapeHtml(metadata.group.attention)}`;
+  const body = metadata.unclassified ? renderUnifiedHunks(file) : renderReviewFileBody(metadata, root);
+  return `<details class="review-file${attentionClass}"><summary><span class="file-head">${href}<span class="file-chips"><span class="status-chip">${escapeHtml(status)}</span><span class="stat-chip">${escapeHtml(stats)}</span>${attention}</span></span>${reviewFileSummaryLines(metadata)}</summary><div class="review-file-body">${body}</div></details>`;
+}
+
+/** 渲染默认展开的目录 details 与其下文件；目录 summary 只显示路径与文件数。 */
+function renderReviewDirTree(node, metadata, site, root) {
+  const count = (current) => current.files.filter((file) => metadata.get(file).file).length +
+    [...current.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+  const render = (current) => {
+    const dirs = [...current.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) =>
+      `<details class="review-dir" open><summary>${escapeHtml(name)}/ (${count(child)})</summary>${render(child)}</details>`).join("");
+    const files = current.files
+      .filter((file) => metadata.get(file).file)
+      .sort()
+      .map((file) => renderReviewFile(file, metadata.get(file), site, root))
+      .join("");
     return dirs + files;
   };
-  return `<section class="review-tree">${render(tree)}</section>`;
+  return render(node);
 }
 
-/** 渲染 PR 检视页：v2 叙事区 + 分组图例、折叠路径树与 must-read 逐段注解 diff。 */
+/** review 变更区路径树：grouped 文件按路径嵌套，未归类文件挂独立默认展开子树。 */
+function renderReviewFileTree(diffFiles, groups, byPath, site, root, restHtml) {
+  const { root: tree, metadata } = buildReviewTree(groups, byPath);
+  return `<section class="review-tree">${renderReviewDirTree(tree, metadata, site, root)}${restHtml}</section>`;
+}
+
+/** 渲染未归类子树：文件级 note/changes 摘要位均为占位符，展开体仍是完整 diff。 */
+function renderUnclassifiedTree(rest, site, root) {
+  if (rest.length === 0) return "";
+  const files = rest.sort((a, b) => a.path.localeCompare(b.path))
+    .map((file) => renderReviewFile(file.path, { file, unclassified: true }, site, root))
+    .join("");
+  return `<details class="review-dir review-unclassified" open><summary>未归类 (${rest.length})</summary>${files}</details>`;
+}
+
+/** 渲染 PR 检视页：分组图例 + 默认展开路径树，所有文件详情默认折叠但完整渲染 diff。 */
 function renderReviewPage(site, review, root) {
   const { base } = review;
   const diff = collectReviewDiff(root, base);
@@ -831,9 +881,9 @@ function renderReviewPage(site, review, root) {
   const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
   const rest = diff.files.filter((file) => !covered.has(file.path));
   const restHtml = rest.length
-    ? `<details class="diff-rest"><summary>未归类的其余变更文件（${rest.length}）</summary><ul class="touch-list">${rest.map((file) => `<li><code>${escapeHtml(file.path)}</code> <span class="meta">+${file.additions} −${file.deletions}</span></li>`).join("")}</ul></details>`
+    ? renderUnclassifiedTree(rest, site, root)
     : "";
-  const codeSection = `<section><h2>代码变更（路径树）</h2>${renderReviewLegend(groups)}${renderReviewFileTree(groups, byPath, site, root)}${restHtml}</section>`;
+  const codeSection = `<section><h2>代码变更（路径树）</h2>${renderReviewLegend(groups)}${renderReviewFileTree(diff.files, groups, byPath, site, root, restHtml)}</section>`;
   const guide = page.reviewGuide
     ? `<section><h2>检视指引</h2><h3>建议阅读顺序</h3><ol>${page.reviewGuide.order.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ol><h3>风险点</h3><ul>${page.reviewGuide.risks.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul><h3>验收对照</h3><table><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${page.reviewGuide.acceptance.map((row) => `<tr><td>${renderMarkdown(row.item)}</td><td>${renderMarkdown(row.evidence)}</td></tr>`).join("")}</tbody></table></section>`
     : "";
