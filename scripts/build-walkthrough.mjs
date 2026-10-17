@@ -151,7 +151,10 @@ function renderNavigation(fromPage, site) {
   const fileTree = renderFileTreeNav(fromPage, site);
   const fileSection = `
     <section class="nav-group"><h2>文件</h2>${fileTree}</section>`;
-  return `<nav class="site-nav" aria-label="站点导航">${group("总览", [{ href: "index.html", label: "站点总览" }])}${group("架构", [{ href: "architecture.html", label: "架构组成" }])}${group("功能", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug })))}${fileSection}${group("变更史", sortedChanges(site).map(([issue, page]) => ({ href: `changes/${issue}.html`, label: page.title ?? issue })))}</nav>`;
+  const reviewGroup = activeReviewNav
+    ? `<section class="nav-group"><h2>本 PR</h2><a href="${relativeHref(fromPage, "review.html")}">本 PR 检视</a></section>`
+    : "";
+  return `<nav class="site-nav" aria-label="站点导航">${reviewGroup}${group("总览", [{ href: "index.html", label: "站点总览" }])}${group("架构", [{ href: "architecture.html", label: "架构组成" }])}${group("功能", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug })))}${fileSection}${group("变更史", sortedChanges(site).map(([issue, page]) => ({ href: `changes/${issue}.html`, label: page.title ?? issue })))}</nav>`;
 }
 
 /** 变更史排序：标题以 #PR 编号开头者降序，无编号者按 slug 排后。 */
@@ -182,7 +185,7 @@ function renderFileTreeNav(fromPage, site) {
 }
 
 /** 生成 HTML 外壳、内联 CSS 与共同导航。 */
-function renderPage({ title, current, site, breadcrumb, content, reviewNav = false }) {
+function renderPage({ title, current, site, breadcrumb, content }) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -342,7 +345,7 @@ table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-al
 }
 </style>
 </head>
-<body><aside class="sidebar"><a class="brand" href="${relativeHref(current, "index.html")}">StudyWiki<span class="brand-sub">工程讲解站 · Walkthrough</span></a>${reviewNav ? `<section class="nav-group"><h2>本 PR</h2><a href="${relativeHref(current, "review.html")}">本 PR 检视</a></section>` : ""}${renderNavigation(current, site)}</aside><main><div class="topbar">${breadcrumb}</div><article class="content">${content}</article></main></body>
+<body><aside class="sidebar"><a class="brand" href="${relativeHref(current, "index.html")}">StudyWiki<span class="brand-sub">工程讲解站 · Walkthrough</span></a>${renderNavigation(current, site)}</aside><main><div class="topbar">${breadcrumb}</div><article class="content">${content}</article></main></body>
 </html>
 `;
 }
@@ -580,7 +583,10 @@ function renderOverviewPage(site) {
  * @param {string} [outDir] - 输出目录；默认解析到 root 下的 walkthrough/dist。
  * @returns {void} 构建成功时无返回值；多处锚点命中会向 stdout 输出 WARN。
  */
+let activeReviewNav = false;
+
 export function buildSite(root, outDir, options = {}) {
+  activeReviewNav = Boolean(options.review);
   const resolvedRoot = path.resolve(root);
   const resolvedOut = path.resolve(outDir ?? path.join(resolvedRoot, "walkthrough/dist"));
   const site = parseSite(resolvedRoot);
@@ -732,7 +738,6 @@ function renderReviewPage(site, review, root) {
     site,
     breadcrumb: renderBreadcrumb(current, [{ label: "首页", href: "index.html" }, { label: "本 PR 检视" }]),
     content,
-    reviewNav: true,
   });
 }
 
