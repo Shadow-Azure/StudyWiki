@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m2-walkthrough-backfill.md
-m2-walkthrough-backfill.md: 403e1ee2cde6c4afe5038901ea559829eaadc135
-m2-walkthrough-backfill.en.md: 5fdd46ebf9a3439469f238c11297b4e112d79882
+m2-walkthrough-backfill.md: 68a1ee44858e3160859f954ada87123bec8ba143
+m2-walkthrough-backfill.en.md: 025b0b94f867e0b1cce20e112a489b051e4db73a
