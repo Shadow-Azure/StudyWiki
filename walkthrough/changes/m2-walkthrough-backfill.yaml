@@ -362,6 +362,121 @@ codeMap:
                   site,
             note: |
                 变更页渲染把 Issue 链接、规模徽章、用户路径、检视指引和验证证据编排成静态页，未登记的外链降级为文本。
+          - snippet: |
+              /** 从 flow 树读 issue 状态（review 模式探测当前 PR 页用）。 */
+              function flowStatuses(root) {
+                const statuses = new Map();
+                const dir = path.join(root, ".agents/flow/issues");
+                if (!existsSync(dir)) return statuses;
+                for (const name of readdirSync(dir)) {
+                  if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+                  const text = readFileSync(path.join(dir, name), "utf8");
+                  const status = /status: (\w[\w-]*)/u.exec(text)?.[1];
+                  if (status) statuses.set(name.replace(/\.md$/u, ""), status);
+                }
+                return statuses;
+              }
+
+              /** 探测当前 PR 对应的变更页：提交标题 (#N) → issue 编号 → slug；其次 in-progress issue 且其页在 diff 中。 */
+              function detectReviewPage(root, site, diffFiles, base) {
+                const numbers = new Set(
+                  (execGit(root, ["log", "--format=%s", `${base}..HEAD`]).match(/\(#(\d+)\)/gu) ?? [])
+                    .map((tag) => Number(tag.replace(/\D/gu, ""))),
+                );
+            note: |
+                flowStatuses 只读取中文 issue 侧的 status 行并建立 slug 映射，review 模式用它把 in-progress 页映射到当前 diff。
+          - snippet: |
+              /** 探测当前 PR 对应的变更页：提交标题 (#N) → issue 编号 → slug；其次 in-progress issue 且其页在 diff 中。 */
+              function detectReviewPage(root, site, diffFiles, base) {
+                const numbers = new Set(
+                  (execGit(root, ["log", "--format=%s", `${base}..HEAD`]).match(/\(#(\d+)\)/gu) ?? [])
+                    .map((tag) => Number(tag.replace(/\D/gu, ""))),
+                );
+                if (numbers.size > 0) {
+                  const dir = path.join(root, ".agents/flow/issues");
+                  for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+                    if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+                    const text = readFileSync(path.join(dir, name), "utf8");
+                    const number = /number: (\d+)/u.exec(text)?.[1];
+                    if (number && numbers.has(Number(number))) {
+                      const slug = name.replace(/\.md$/u, "");
+                      if (site.changes.has(slug)) return slug;
+                    }
+                  }
+                }
+                const statuses = flowStatuses(root);
+                const changed = new Set(diffFiles
+            note: |
+                review 页优先用提交标题中的 PR 编号匹配 flow 登记；找不到时才退回 in-progress 且变更页在 diff 中的 slug。
+          - snippet: |
+              /** 渲染 review 路径树上方的分组图例：只保留组名、attention 与 why。 */
+              function renderReviewLegend(groups) {
+                if (groups.length === 0) return "";
+                return `<div class="tree-legend">${groups.map((group) => `<section class="codemap-group attention-${escapeHtml(group.attention)}"><h3>${escapeHtml(group.group)} <span class="attention-badge">${escapeHtml(group.attention)}</span></h3><p class="meta">${renderMarkdown(group.why ?? "")}</p></section>`).join("")}</div>`;
+              }
+
+              /** 渲染 diff 行；after 行号优先，删除行保留 before 行号。 */
+              function renderReviewDiffLine(line) {
+                const sign = line.type === "add" ? "+" : line.type === "del" ? "−" : " ";
+                const no = line.newNo ?? line.oldNo ?? "";
+                return `<span class="diff-line diff-${line.type}"><span class="line-number">${no}</span><span class="diff-sign">${sign}</span><span class="diff-text">${escapeHtml(line.text)}</span></span>`;
+              }
+
+              /** 计算某 after 区间内的 add/ctx diff 行；删除行保留在“其余变更行”里。 */
+              function diffLinesForRange(lines, range) {
+                const selected = new Set();
+                lines.forEach((line, index) => {
+                  if (line.newNo === null || line.newNo < range.start || line.newNo > range.end) return;
+                  selected.add(line);
+                });
+            note: |
+                review 路径树先把组名、attention 与 why 渲染成图例；diff 行渲染保留 after 行号，删除行保留 before 行号。
+          - snippet: |
+              /** 用 groups 中的文件元数据建立嵌套路径树。 */
+              function buildReviewTree(groups, byPath) {
+                const root = { dirs: new Map(), files: [] };
+                const metadata = new Map();
+                for (const group of groups) {
+                  for (const entry of group.files ?? []) {
+                    if (metadata.has(entry.path)) continue;
+                    metadata.set(entry.path, { entry, group, file: byPath.get(entry.path) });
+                    let node = root;
+                    for (const part of entry.path.split("/").slice(0, -1)) {
+                      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+                      node = node.dirs.get(part);
+                    }
+                    node.files.push(entry.path);
+                  }
+                }
+                return { root, metadata };
+              }
+
+              /** 渲染 review 专属文件正文：must-read reviewable 文件展开逐段 diff，其余只分诊。 */
+            note: |
+                buildReviewTree 把 codeMap 文件按目录聚合成可折叠树，同时记录每条路径的 entry、组元数据和 diff 数据。
+          - snippet: |
+              if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+                const argv = process.argv.slice(2);
+                const reviewIndex = argv.indexOf("--review");
+                if (argv.some((arg) => arg.startsWith("--") && arg !== "--review")) {
+                  console.error(`build-walkthrough: 未知参数（仅支持 [root] [outDir] [--review <base>]）`);
+                  process.exit(2);
+                }
+                if (reviewIndex !== -1 && argv[reviewIndex + 1] === undefined) {
+                  console.error("build-walkthrough: --review 需要 <base> 值");
+                  process.exit(2);
+                }
+                const positional = argv.filter((_, index) => index !== reviewIndex && index !== reviewIndex + 1);
+                const [rootArg, outArg] = positional;
+                try {
+                  const options = reviewIndex === -1 ? {} : { review: { base: argv[reviewIndex + 1] } };
+                  buildSite(rootArg ?? process.cwd(), outArg, options);
+                } catch (error) {
+                  console.error(`build-walkthrough: ${error instanceof Error ? error.message : String(error)}`);
+                  process.exit(1);
+                }
+            note: |
+                CLI 只接受位置参数与 --review <base>；未知 flag、缺 base 和构建异常都输出清晰错误并返回非零。
       - path: scripts/walkthrough-review.mjs
         note: PR 检视 diff 数据层：numstat + 统一 diff hunk 解析 + 注解归位。
         changes:
@@ -408,6 +523,28 @@ codeMap:
                     hunk.lines.push({ type: "del", text: line.slice(1), oldNo: nextOld(hunk), newNo: null });
             note: |
                 统一 diff 解析器从 @@ 头建立 hunk 行号基准，并把 add/del 行推进到正确的 after/before 行号，为注解定位提供可靠坐标。
+          - snippet: |
+              /** after 侧下一行号。 */
+              function nextNew(hunk) {
+                return hunk.newStart + hunk.lines.filter((l) => l.type !== "del").length;
+              }
+
+              /** before 侧下一行号。 */
+              function nextOld(hunk) {
+                return hunk.oldStart + hunk.lines.filter((l) => l.type !== "add").length;
+              }
+
+              /**
+               * 把变更注解挂到 hunk：注解锚定的 after 行区间与 hunk 的 add/ctx 行区间相交即归属。
+               * @param {Array<{oldStart, newStart, lines: DiffLine[]}>} hunks
+               * @param {{start: number, end: number}} range 注解锚定的 after 行区间（1-based）
+               * @returns {number} 归属 hunk 下标，不相交时返回 -1
+               */
+              export function hunkForRange(hunks, range) {
+                return hunks.findIndex((hunk) => hunk.lines.some((l) => l.newNo !== null && l.newNo >= range.start && l.newNo <= range.end));
+              }
+            note: |
+                nextNew/nextOld 在 hunk 内推进 after/before 行号；hunkForRange 只把注解挂到 after 内容行与区间相交的 hunk。
       - path: scripts/walkthrough-review.spec.mjs
         note: 数据层自测试（真实 git 夹具）。
         changes:
@@ -460,6 +597,75 @@ codeMap:
             note: |
                 回归先构建完整夹具站点，再断言五层页面都引用锚定源码，并用嵌套源文件锁定首页文件导航的可折叠目录结构。
 
+          - snippet: |
+              /** 生成新 schema 的 change 页 YAML 文本。 */
+              function changeYaml(issue, title, sourcePath) {
+                return `kind: change
+              issue: ${issue}
+              title: ${title}
+              scale:
+                files: 2
+                additions: 30
+                deletions: 4
+              feature: |
+                功能行为变化。
+              userFlow:
+                - 打开演示页面
+                - 确认演示行为
+              architectural: |
+                架构不变。
+              codeMap:
+                - group: 实现
+                  attention: must-read
+                  why: 核心变化
+            note: |
+                changeYaml 夹具生成完整 v2 变更页：规模、叙事、must-read/skim 地图、注解、检视指引和 touches 都被 schema 与渲染同时消费。
+          - snippet: |
+              function writeValidSite(root, sourcePath = "src/demo.ts") {
+                write(
+                  root,
+                  "walkthrough/overview.yaml",
+                  `kind: overview
+              sections:
+                - heading: 总览
+                  body: |
+                    这是什么工程。
+                  images: [assets/space #image.svg]
+              `,
+                );
+                write(
+                  root,
+                  "walkthrough/architecture.yaml",
+                  `kind: architecture
+              sections:
+                - heading: 分层
+                  body: |
+                    三层结构。
+            note: |
+                writeValidSite 先写总览和架构页夹具，锁定 generated 架构树与站点正文的最小合法输入。
+          - snippet: |
+              describe("review 模式", () => {
+                it("--review 变更区渲染折叠路径树、分组图例与逐段注解 diff", () => {
+                  const root = mkdtempSync(path.join(tmpdir(), "walkthrough-review-build-"));
+                  dirs.push(root);
+                  const git = (argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" });
+                  git(["init", "-q", "-b", "main"]);
+                  write(root, "src/demo.ts", "export const covered = 1;\nexport const keep = 2;\n");
+                  write(root, "src/nested/skim.ts", "export const skimOld = 1;\n");
+                  write(root, "scripts/code-map.manifest.json", "{\"src/demo.ts\": \"演示源文件\"}");
+                  write(root, "walkthrough/manifest.json", "{\"lineCoverage\": {\"threshold\": 0.9, \"exemptions\": {}}}");
+                  write(root, "walkthrough/overview.yaml", "kind: overview\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
+                  write(root, "walkthrough/architecture.yaml", "kind: architecture\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
+                  write(root, "walkthrough/features.yaml", "features: []\n");
+                  git(["add", "."]);
+                  git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]);
+                  write(
+                    root,
+                    "walkthrough/changes/demo-pr.yaml",
+                    `kind: change
+              issue: demo-pr
+            note: |
+                review 模式测试创建真实 git 仓库与两文件 diff，并用 must-read/skim 变更页驱动折叠树和逐段 diff 的产物断言。
   - group: 功能页
     attention: skim
     why: 13 个用户可见功能与登记处互链。

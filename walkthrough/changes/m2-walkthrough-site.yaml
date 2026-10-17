@@ -59,6 +59,328 @@ codeMap:
             note: |
                 本次变更加入了统一锚点定位：源码和 snippet 都按行 trimEnd 后匹配，并统计命中数，为硬门禁和覆盖率提供稳定行区间。
 
+          - snippet: |
+              /** change 页 scale：{files, additions, deletions} 非负整数三元组。 */
+              function validateScale(scale, label, errors) {
+                const scaleLabel = `${label} scale`;
+                if (!isObject(scale)) {
+                  push(errors, label, "scale 必须是 map");
+                  return;
+                }
+                if (!validateKeys(scale, SCALE_KEYS, scaleLabel, errors)) return;
+                for (const field of ["files", "additions", "deletions"]) {
+                  const value = scale[field];
+                  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+                    push(errors, scaleLabel, `${field} 必须是非负整数`);
+                  }
+                }
+              }
+
+              /** change 页 codeMap：变更地图分组；机械路径不得标 must-read。 */
+              function validateCodeMap(codeMap, label, errors) {
+                if (!Array.isArray(codeMap) || codeMap.length === 0) {
+                  push(errors, label, "codeMap 必须是非空数组");
+            note: |
+                变更页 scale 是封闭的三字段 map；files/additions/deletions 都必须是非负整数，错误信息带源页路径便于定位。
+          - snippet: |
+              /** change 页 reviewGuide：阅读顺序 + 风险点 + 验收对照。 */
+              function validateReviewGuide(reviewGuide, label, errors) {
+                const guideLabel = `${label} reviewGuide`;
+                if (!isObject(reviewGuide)) {
+                  push(errors, label, "reviewGuide 必须是 map");
+                  return;
+                }
+                if (!validateKeys(reviewGuide, REVIEW_GUIDE_KEYS, guideLabel, errors)) return;
+                if (
+                  !Array.isArray(reviewGuide.order) ||
+                  reviewGuide.order.length === 0 ||
+                  !reviewGuide.order.every(isNonEmptyString)
+                ) {
+                  push(errors, guideLabel, "order 必须是非空字符串数组");
+                }
+                if (!isStringArray(reviewGuide.risks)) {
+                  push(errors, guideLabel, "risks 必须是字符串数组");
+                }
+                if (!Array.isArray(reviewGuide.acceptance) || reviewGuide.acceptance.length === 0) {
+                  push(errors, guideLabel, "acceptance 必须是非空数组");
+            note: |
+                reviewGuide 校验阅读顺序、风险数组和验收对照；每个 acceptance 只允许 item/evidence，且都必须是非空字符串。
+          - snippet: |
+              /**
+               * 读取 walkthrough/ 全部 YAML 与 manifest，并按源路径/slug/issue 建索引。
+               * @param {string} root - 仓库根目录。
+               * @returns {object} Site 索引；解析失败不抛出，而是累积在 parseErrors。
+               */
+              export function parseSite(root) {
+                if (!isNonEmptyString(root)) throw new Error("root 必须是非空字符串");
+                const parseErrors = [];
+                const site = {
+                  overview: readYaml(root, "walkthrough/overview.yaml", parseErrors),
+                  architecture: readYaml(root, "walkthrough/architecture.yaml", parseErrors),
+                  featureIndex: readYaml(root, "walkthrough/features.yaml", parseErrors),
+                  features: new Map(),
+                  filePages: new Map(),
+                  changes: new Map(),
+                  manifest: null,
+                  parseErrors,
+                };
+
+                const manifestPath = "walkthrough/manifest.json";
+            note: |
+                parseSite 读取五层 YAML 与 manifest 并建立索引；解析异常累积到 parseErrors 而不是中途抛出，让门禁输出完整站点上下文。
+          - snippet: |
+              /** 计算注解 snippet 的 after 内容行数（块标量的一个空尾行不计）。 */
+              function snippetLineCount(snippet) {
+                const lines = String(snippet).replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd());
+                if (lines.at(-1) === "") lines.pop();
+                return lines.length;
+              }
+
+              /**
+               * --diff 档逐段上限：must-read 组 reviewable 源码文件的每条 changes 注解
+               * 在 after 源码中最多锚定 20 行；skim/skip 与非源码路径不进入注意力骨架。
+               * @param {string} root - 仓库根目录（与覆盖率对账共用调用缝）。
+               * @param {object} site - 站点索引。
+               * @param {string[]} targetSlugs - 本轮 review 关注的变更页 slug。
+               * @returns {string[]} 错误列表。
+               */
+              export function checkChangesSegments(root, site, targetSlugs) {
+                if (root !== null && root !== undefined && typeof root !== "string") {
+                  return ["root 必须是字符串"];
+                }
+                if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+            note: |
+                snippetLineCount 去掉一个空尾行后计行；逐段上限只作用于指定变更页 must-read 组里的 reviewable 源码注解。
+          - snippet: |
+              export function checkReviewCoverage(root, site, numstat, targetSlugs) {
+                if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+                if (!Array.isArray(numstat)) return ["numstat 必须是数组"];
+                if (
+                  numstat.some((row) =>
+                    !isObject(row) ||
+                    typeof row.additions !== "number" ||
+                    typeof row.deletions !== "number" ||
+                    typeof row.path !== "string"
+                  )
+                ) {
+                  return ["numstat 每项必须是 {additions, deletions, path}"];
+                }
+                const configured = isObject(site.manifest) ? site.manifest.reviewCoverage : undefined;
+                const threshold = configured ?? 0.9;
+                if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+                  return ["walkthrough/manifest.json: reviewCoverage 必须是 0 到 1 的数字"];
+                }
+
+                const targetPaths = new Set();
+            note: |
+                覆盖率门禁先校验注入 numstat 形状，再读取 manifest 的 reviewCoverage；缺省阈值 0.9，非法配置整条 fail-loud。
+          - snippet: |
+              /** 归一化 numstat 改名路径（`a/{b => c}/d` 与 `b => c` 两种形态取新路径）。 */
+              function normalizeNumstatPath(value) {
+                return normalizePath(value)
+                  .replace(/\{[^{}]* => ([^{}]*)\}/u, "$1")
+                  .replace(/^.* => /u, "");
+              }
+
+              /**
+               * 解析 `git diff --numstat` 输出为 {additions, deletions, path} 数组；
+               * 二进制行的 `-` 计 0。坏行 fail-loud 抛错（CLI 契约边界）。
+               * @param {string} text - numstat 原始输出。
+               * @returns {Array<{additions:number, deletions:number, path:string}>} 行数组。
+               */
+              export function parseNumstat(text) {
+                if (typeof text !== "string") throw new Error("numstat 输出必须是字符串");
+                return text
+                  .split("\n")
+                  .filter((line) => line.trim() !== "")
+                  .map((line) => {
+                    const match = /^(\d+|-)\t(\d+|-)\t(.+)$/u.exec(line);
+            note: |
+                numstat 解析先归一 Git 改名路径，再把增删负号计为 0；任何不符合 tab 三段格式的行都在 CLI 边界抛错。
+          - snippet: |
+              export function checkDiffScale(diffFiles, site, numstat, addedDiffFiles) {
+                const errors = [];
+                if (!Array.isArray(diffFiles)) return ["diffFiles 必须是字符串数组"];
+                if (diffFiles.some((item) => typeof item !== "string")) {
+                  return ["diffFiles 每项必须是字符串"];
+                }
+                if (numstat !== undefined) {
+                  if (!Array.isArray(numstat)) return ["numstat 必须是数组"];
+                  if (
+                    numstat.some(
+                      (row) =>
+                        !isObject(row) ||
+                        typeof row.additions !== "number" ||
+                        typeof row.deletions !== "number" ||
+                        typeof row.path !== "string",
+                    )
+                  ) {
+                    return ["numstat 每项必须是 {additions, deletions, path}"];
+                  }
+                }
+            note: |
+                diff scale 对账先校验 diffFiles/numstat 输入形状；这些纯数据检查保证 CLI 注入缝不会把坏类型静默当成空规则。
+          - snippet: |
+              export function validateSchema(site) {
+                const errors = [];
+                validateFeatureIndex(site, errors);
+                validateManifest(site, errors);
+                validateSectionPage(site.overview, "overview", "overview", errors);
+                validateSectionPage(site.architecture, "architecture", "architecture", errors);
+
+                for (const [slug, feature] of site.features) {
+                  const label = pagePath("feature", slug);
+                  if (!isObject(feature)) {
+                    push(errors, label, "feature 页必须是 map");
+                    continue;
+                  }
+                  if (feature.kind !== "feature") {
+                    push(errors, label, "kind 必须是封闭集合之一");
+                  }
+                  if (!validateKeys(feature, FEATURE_KEYS, label, errors)) continue;
+                  requireString(feature.slug, "slug", label, errors);
+                  if (isNonEmptyString(feature.slug) && !SLUG_PATTERN.test(feature.slug)) {
+                    push(errors, label, "slug 必须是 kebab-case");
+            note: |
+                validateSchema 是封闭 schema 的总入口：先校验登记处和 manifest，再逐一校验总览、架构与功能页，错误始终带规范页路径。
+          - snippet: |
+              export function checkAnchors(root, site) {
+                const errors = [];
+                const cache = new Map();
+                for (const [source, page] of site.filePages) {
+                  const label = pagePath("file-page", source);
+                  if (isObject(page) && Array.isArray(page.segments)) {
+                    page.segments.forEach((segment, index) => {
+                      if (isObject(segment) && isNonEmptyString(segment.snippet)) {
+                        checkAnchor(root, source, segment.snippet, `${label} segments[${index}]`, cache, errors);
+                      }
+                    });
+                  }
+                }
+                // 变更页 changes 是历史检视注解：path 已不在当前树时按“历史归档”跳过；
+                // 仍存在的源文件必须保证 snippet 可定位，防止注解漂移成无锚文本。
+                for (const [slug, change] of site.changes) {
+                  const label = pagePath("change", slug);
+                  if (!isObject(change) || !Array.isArray(change.codeMap)) continue;
+                  for (const group of change.codeMap) {
+                    if (!isObject(group) || !Array.isArray(group.files)) continue;
+            note: |
+                文件页 segments 全部要求当前源码定位；变更页 changes 对已删除源文件按历史归档跳过，仍存在的文件则防止注解漂移。
+          - snippet: |
+              /**
+               * 对账文件页与 code-map 登记处，并校验 summary 逐字一致。
+               * @param {object} site - 站点索引。
+               * @param {object} codeMap - code-map.manifest.json 的扁平 map。
+               * @returns {string[]} 错误列表。
+               */
+              export function checkFilePages(site, codeMap) {
+                const errors = [];
+                const registered = codeMapSources(codeMap);
+                const pageSources = new Set(site.filePages.keys());
+                for (const source of registered) {
+                  if (!pageSources.has(source)) {
+                    errors.push(`文件页缺失: ${source}`);
+                    continue;
+                  }
+                  const page = site.filePages.get(source);
+                  if (isObject(page) && page.summary !== codeMap[source]) {
+                    errors.push(`summary 与 code-map 不一致: ${source}`);
+                  }
+                }
+            note: |
+                文件页对账要求 code-map 中每个源文件都有镜像页，并且文件页 summary 与登记职责逐字一致。
+          - snippet: |
+              export function checkChanges(site, issues) {
+                const errors = [];
+                if (!Array.isArray(issues)) return ["flow issues 必须是数组"];
+                const allSlugs = new Set();
+                const activeSlugs = new Set();
+                for (const issue of issues) {
+                  if (!isObject(issue) || !isNonEmptyString(issue.slug)) continue;
+                  if (allSlugs.has(issue.slug)) errors.push(`重复 flow issue: ${issue.slug}`);
+                  allSlugs.add(issue.slug);
+                  if (ACTIVE_ISSUE_STATUSES.has(issue.status)) activeSlugs.add(issue.slug);
+                }
+                for (const slug of [...activeSlugs].sort()) {
+                  if (!site.changes.has(slug)) errors.push(`变更页缺失: ${slug}`);
+                }
+                for (const issue of [...site.changes.keys()].sort()) {
+                  if (!allSlugs.has(issue)) errors.push(`变更页指向不存在 issue: ${issue}`);
+                }
+                return errors;
+              }
+
+            note: |
+                变更页对账从 flow issue 建立 active/done 集合：active 页缺失红，站点页指向不存在 issue 也红，防止叙事树和流程树分叉。
+          - snippet: |
+              export function checkLineCoverage(root, site) {
+                const errors = [];
+                const coverage = isObject(site.manifest) ? site.manifest.lineCoverage : null;
+                if (!isObject(coverage) || typeof coverage.threshold !== "number" ||
+                    !Number.isFinite(coverage.threshold) || coverage.threshold < 0 || coverage.threshold > 1) {
+                  return ["walkthrough/manifest.json: lineCoverage.threshold 必须是 0 到 1 的数字"];
+                }
+                if (!isObject(coverage.exemptions)) {
+                  return ["walkthrough/manifest.json: lineCoverage.exemptions 必须是 map"];
+                }
+
+                const cache = new Map();
+                for (const source of [...site.filePages.keys()].sort()) {
+                  const exemption = coverage.exemptions[source];
+                  if (exemption !== undefined && !isNonEmptyString(exemption)) {
+                    push(errors, source, "覆盖率豁免理由必须是非空字符串");
+                    continue;
+                  }
+                  if (exemption !== undefined) continue;
+
+            note: |
+                文件页行覆盖率读取 manifest 阈值与豁免表；豁免理由必须非空，否则不能静默跳过源文件。
+          - snippet: |
+              export function checkChangesSegments(root, site, targetSlugs) {
+                if (root !== null && root !== undefined && typeof root !== "string") {
+                  return ["root 必须是字符串"];
+                }
+                if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+                const errors = [];
+                for (const slug of targetSlugs) {
+                  const page = site.changes.get(slug);
+                  if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+                  for (const group of page.codeMap) {
+                    if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+                    for (const file of group.files) {
+                      if (!isObject(file) || !isReviewableSourcePath(file.path) || !Array.isArray(file.changes)) continue;
+                      file.changes.forEach((change, index) => {
+                        if (!isObject(change) || typeof change.snippet !== "string") return;
+                        const count = snippetLineCount(change.snippet);
+                        if (count > 20) {
+                          errors.push(`changes 注解每段不超过 20 行: ${file.path} changes[${index}] (${count} 行)`);
+                        }
+                      });
+            note: |
+                逐段上限独立校验注入页集合中的 must-read reviewable 源码；超过 20 行的 snippet 精确输出文件、序号和行数。
+          - snippet: |
+              export function checkDiff(diffFiles, site) {
+                const errors = [];
+                if (!Array.isArray(diffFiles)) return ["diffFiles 必须是字符串数组"];
+                // diff 列表是 CLI 契约边界：坏项整条 fail-loud，不做静默归一化。
+                if (diffFiles.some((item) => typeof item !== "string")) {
+                  return ["diffFiles 每项必须是字符串"];
+                }
+                const diff = new Set(diffFiles.map(normalizePath));
+                const changedSources = [...diff].filter(isForcedSource);
+
+                for (const source of changedSources) {
+                  const page = `walkthrough/files/${source}.yaml`;
+                  if (!site.filePages.has(source)) errors.push(`改码但缺少文件页: ${source}`);
+                  else if (!diff.has(page)) errors.push(`改码但 ${page} 未在同一 diff 修改`);
+                }
+
+                const touched = new Set();
+                for (const change of site.changes.values()) {
+                  const touches = isObject(change) && Array.isArray(change.touches) ? change.touches : [];
+                  for (const touch of touches) {
+            note: |
+                diff 对账强制源码改动同时有文件页且页在同一 diff 中；随后汇总所有变更页 touches 的 file 引用做反向覆盖。
       - path: scripts/verify-walkthrough.mjs
         note: 装配 root、code-map、flow issue 与注入 diff，输出门禁结果。
         changes:
@@ -106,6 +428,73 @@ codeMap:
             note: |
                 本次变更加入了门禁装配器：读取 root、code-map 和 flow issue，组合 schema、锚点、对账、覆盖率与 diff 检查并区分 WARN。
 
+          - snippet: |
+              async function appendReviewGates(root, options, result) {
+                if (options.diffFiles === undefined || options.numstat === undefined) return;
+                let issues = options.issues;
+                if (issues === undefined) {
+                  const { tree } = await loadFlowTree(path.join(root, ".agents/flow"));
+                  issues = tree.issues
+                    .filter((issue) => issue.data && typeof issue.data === "object")
+                    .map((issue) => ({ slug: issue.name, status: issue.data.status }));
+                }
+                const activeSlugs = new Set(issues
+                  .filter((issue) => issue.status === "in-progress")
+                  .map((issue) => issue.slug));
+                const reviewSlugs = options.diffFiles
+                  .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+                  .filter(Boolean)
+                  .filter((slug) => activeSlugs.has(slug));
+                result.errors.push(...checkChangesSegments(root, siteOf(options), reviewSlugs));
+                result.errors.push(...checkReviewCoverage(root, siteOf(options), options.numstat, reviewSlugs));
+              }
+            note: |
+                review 专属硬门禁独立装配：只有 diff 与 numstat 同时注入时，才从 diff 变更页里筛出 in-progress issue 并检查段上限和覆盖率。
+          - snippet: |
+              export function readDiffFiles(base, exec = execFileSync) {
+                return exec("git", ["diff", "--name-only", base + "...HEAD"])
+                  .toString()
+                  .split("\n")
+                  .filter(Boolean);
+              }
+
+              /** 执行 `git diff --numstat base...HEAD` 并解析为行数组；exec 参数仅供测试注入。 */
+              export function readNumstat(base, exec = execFileSync) {
+                return parseNumstat(exec("git", ["diff", "--numstat", base + "...HEAD"]).toString());
+              }
+
+              /** 执行 `git diff --name-only --diff-filter=A base...HEAD`；exec 参数仅供测试注入。 */
+              export function readAddedDiffFiles(base, exec = execFileSync) {
+                return exec("git", ["diff", "--name-only", "--diff-filter=A", base + "...HEAD"])
+                  .toString()
+                  .split("\n")
+                  .filter(Boolean);
+              }
+            note: |
+                CLI 的 diff 文件、numstat 和新增页列表都是可注入读取函数；保持纯装配层薄，便于 leaf 测试替代 git 输出。
+          - snippet: |
+              if (import.meta.url === `file://${process.argv[1]}`) {
+                const args = process.argv.slice(2);
+                let diffIndex = -1;
+                for (let index = 0; index < args.length; index += 1) {
+                  if (args[index] === "--diff") {
+                    diffIndex = index;
+                    index += 1;
+                    continue;
+                  }
+                  console.error(`未知参数: ${args[index]}`);
+                  process.exit(2);
+                }
+                let diffFiles;
+                let numstat;
+                let addedDiffFiles;
+                if (diffIndex >= 0) {
+                  const base = args[diffIndex + 1];
+                  if (!base) {
+                    console.error("verify-walkthrough --diff 需要 <base> 参数（如 origin/main）");
+                    process.exit(2);
+            note: |
+                CLI 参数只接受 --diff <base>；未知参数立即退出，基线缺失也给出用法，避免把装配错误伪装成站点内容错误。
   - group: 静态构建器
     attention: must-read
     why: 构建成功同时证明锚点可达和产物可离线打开。
