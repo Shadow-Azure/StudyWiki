@@ -21,14 +21,820 @@ codeMap:
     files:
       - path: src/host/excel.ts
         note: 封装解析、序列化、稳定错误文案和声明维度单元格上限。
+        changes:
+          - snippet: |
+              /** Upper bound on rowCount × columnCount across all worksheets. */
+              export const MAX_EXCEL_CELLS = 1_000_000;
+
+              /** User-facing message for any workbook that reaches ExcelJS but cannot be parsed. */
+              const INVALID_EXCEL_MESSAGE =
+                "Excel 文件损坏或不是有效的 .xlsx 文件，请确认来源文件，或另存为 .xlsx 后重试。";
+
+            note: |
+                本次变更加入了 100 万单元格公开上限，先在宿主数据模型边界挡住声明规模过大的工作簿，避免渲染层和插件各自承受无界数据。
+
+          - snippet: |
+              /** Spreadsheet host service: the human/AI-shared xlsx data-model boundary. */
+              export class ExcelService {
+                readonly #files: ExcelFiles;
+                readonly #parse: (bytes: Uint8Array) => Promise<Workbook>;
+
+                constructor(files: ExcelFiles, deps: ExcelDeps = {}) {
+                  this.#files = files;
+                  this.#parse = deps.parseWorkbook ?? parseWorkbook;
+                }
+
+                /** Read and parse an xlsx workbook; rejects corrupt files and workbooks whose
+                 * declared dimensions (rowCount × columnCount per sheet) exceed the cell cap. */
+                async read(path: string): Promise<Workbook> {
+                  let bytes: Uint8Array;
+                  try {
+                    bytes = await this.#files.readBinary(path);
+                  } catch (error) {
+                    throw new Error(`读取 Excel 失败：${(error as Error).message}`);
+                  }
+                  let workbook: Workbook;
+                  try {
+                    workbook = await this.#parse(bytes);
+                  } catch (error) {
+                    // Reserved passthrough: a future streaming parser may reject oversize workbooks before a
+                    // full parse; its "过大" error must surface as-is instead of being swallowed by the
+                    // corrupt-file message below. Production parseWorkbook never throws that prefix today —
+                    // the cap check below runs after parsing (contract noted at the throw site).
+                    if (error instanceof Error && error.message.includes("过大")) throw error;
+                    throw new Error(INVALID_EXCEL_MESSAGE);
+                  }
+                  const cells = workbook.worksheets.reduce(
+                    (sum, ws) => sum + Math.max(1, ws.rowCount) * Math.max(1, ws.columnCount),
+                    0,
+                  );
+                  // The "过大" prefix is a contract: the parse-seam catch above passes it through untouched.
+                  // If this message ever changes wording, update that branch in the same commit.
+                  if (cells > MAX_EXCEL_CELLS)
+                    throw new Error(`Excel 过大：按声明维度累计 ${cells} 个单元格，超过上限 ${MAX_EXCEL_CELLS}`);
+                  return workbook;
+
+            note: |
+                本次变更加入了人机共用的 ExcelService 读写缝：读取时统一解析和超限检查，保存时把序列化字节交给文件服务，插件不直接触碰磁盘。
+
       - path: src/host/files.ts
         note: 二进制读写桥，raw IPC 承载字节与 UTF-8 路径 header。
+        changes:
+          - snippet: |
+              /** Window-scoped service: the only file channel plugins may use. */
+              export class FilesService {
+                readonly #deps: FilesDeps;
+                readonly #events = createEmitter<{ "fs-changed": string }>();
+                #unlisten: (() => void) | null = null;
+
+                constructor(deps: FilesDeps = defaultFilesDeps) {
+                  this.#deps = deps;
+                }
+
+                /** Bridge Rust `fs://changed` broadcasts into this window. */
+                async start(): Promise<void> {
+                  this.#unlisten = await this.#deps.listen("fs://changed", (e) =>
+                    this.#events.emit("fs-changed", String(e.payload)));
+                }
+
+                /** Stop bridging (window teardown). */
+                stop(): void {
+                  this.#unlisten?.();
+                  this.#unlisten = null;
+                }
+
+                /** Full recursive tree of an opened root. */
+                readTree(root: string): Promise<FileNode[]> {
+                  return this.#deps.invoke("read_tree", { root }) as Promise<FileNode[]>;
+                }
+
+                /** Whole-file UTF-8 read — the document data source. */
+                readText(path: string): Promise<string> {
+                  return this.#deps.invoke("read_text_file", { path }) as Promise<string>;
+                }
+
+                /** Whole-file write; Rust broadcasts the change (including back to us). */
+                writeText(path: string, contents: string): Promise<void> {
+                  return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
+                }
+
+                /** Whole-file binary read — the Excel service's byte source. */
+                async readBinary(path: string): Promise<Uint8Array> {
+                  const bytes = await this.#deps.invoke("read_binary_file", new Uint8Array(0), {
+                    headers: { "x-studywiki-path": encodeURIComponent(path) },
+                  });
+                  return normalizeRawBytes(bytes);
+                }
+
+                /** Whole-file binary write; Rust writes atomically and broadcasts the change. */
+                writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+                  return this.#deps.invoke("write_binary_file", bytes, {
+                    headers: { "x-studywiki-path": encodeURIComponent(path) },
+                  }) as Promise<void>;
+                }
+
+
+            note: |
+                本次变更加入了 raw binary 读写通道，用路径头和原子写承载 xlsx 数据；读回字节先归一化，写盘后由 Rust 广播变更。
+
       - path: src/plugins/doc-excel/model.ts
         note: 把 worksheet 投影成样式、合并和虚拟滚动模型。
+        changes:
+          - snippet: |
+              /** Parse an A1:B2 Excel merge reference and clamp it to the initialized worksheet grid. */
+              function parseMergeRange(merge: string, rowCount: number, columnCount: number): ExcelMerge | undefined {
+                const match = /^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/.exec(merge);
+                if (!match) return undefined;
+
+                const toColumn = (letters: string) =>
+                  Array.from(letters).reduce((column, character) => column * 26 + (character.toUpperCase().charCodeAt(0) - 64), 0);
+                const firstRow = Number(match[2]);
+                const firstColumn = toColumn(match[1]);
+                const lastRow = Number(match[4]);
+                const lastColumn = toColumn(match[3]);
+                const top = Math.max(0, Math.min(firstRow, lastRow) - 1);
+                const left = Math.max(0, Math.min(firstColumn, lastColumn) - 1);
+                const bottom = Math.min(rowCount - 1, Math.max(firstRow, lastRow) - 1);
+                const right = Math.min(columnCount - 1, Math.max(firstColumn, lastColumn) - 1);
+                if (top > bottom || left > right) return undefined;
+                return { top, left, bottom, right };
+              }
+
+              /** Convert one Excel worksheet and its merges into a framework-independent view model.
+               * @param sheet Structural worksheet source supplied by the Excel host service.
+               * @returns CSS-ready cells, column widths, merges, and dimensions. */
+              export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
+                const rows: ExcelCell[][] = Array.from({ length: sheet.rowCount }, () =>
+                  Array.from({ length: sheet.columnCount }, emptyCell),
+                );
+                const columnWidths = Array.from({ length: sheet.columnCount }, (_, index) => {
+                  const width = sheet.getColumn(index + 1).width;
+                  return Math.min(240, Math.max(64, Math.round((width ?? 7) * 8 + 8)));
+                });
+
+                const merges = (sheet.model?.merges ?? [])
+                  .map((merge) => parseMergeRange(merge, sheet.rowCount, sheet.columnCount))
+                  .filter((merge): merge is ExcelMerge => merge !== undefined);
+                const owner = rows.map(() => Array.from({ length: sheet.columnCount }, () => undefined as ExcelMerge | undefined));
+                for (const merge of merges) {
+                  for (let row = merge.top; row <= merge.bottom; row += 1) {
+                    for (let column = merge.left; column <= merge.right; column += 1) {
+                      owner[row][column] ??= merge;
+                    }
+                  }
+                }
+
+                sheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+                  row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+                    const rowIndex = rowNumber - 1;
+                    const columnIndex = columnNumber - 1;
+                    if (rowIndex < 0 || rowIndex >= sheet.rowCount || columnIndex < 0 || columnIndex >= sheet.columnCount) {
+                      return;
+                    }
+
+                    const ownedMerge = owner[rowIndex][columnIndex];
+                    const isCovered = ownedMerge !== undefined && !(rowIndex === ownedMerge.top && columnIndex === ownedMerge.left);
+
+                    const sourceStyle = cell.style;
+                    const style: ExcelCellStyle = {};
+                    if (sourceStyle?.font?.bold !== undefined) style.bold = sourceStyle.font.bold;
+                    if (sourceStyle?.font?.italic !== undefined) style.italic = sourceStyle.font.italic;
+                    const color = cssColor(sourceStyle?.font?.color);
+                    if (color !== undefined) style.color = color;
+                    const background = cssColor(sourceStyle?.fill?.fgColor);
+                    if (background !== undefined) style.background = background;
+                    if (sourceStyle?.alignment?.horizontal !== undefined) style.horizontal = sourceStyle.alignment.horizontal;
+                    if (sourceStyle?.alignment?.vertical !== undefined) style.vertical = sourceStyle.alignment.vertical;
+                    if (sourceStyle?.border) {
+                      style.border = {
+                        top: Boolean(sourceStyle.border.top),
+                        right: Boolean(sourceStyle.border.right),
+                        bottom: Boolean(sourceStyle.border.bottom),
+                        left: Boolean(sourceStyle.border.left),
+                      };
+                    }
+
+                    rows[rowIndex][columnIndex] = {
+                      // Do not read ExcelJS covered-cell text getters: they can throw for an empty merge master.
+                      text: isCovered ? "" : formatCellValue(cell),
+                      style,
+                      rowSpan: 1,
+                      colSpan: 1,
+                      hidden: isCovered,
+                    };
+                  });
+                });
+
+                for (const { top, left, bottom, right } of merges) {
+                  if (rows[top][left].rowSpan === 1 && rows[top][left].colSpan === 1) {
+                    rows[top][left] = { ...rows[top][left], rowSpan: bottom - top + 1, colSpan: right - left + 1, hidden: false };
+                  }
+                  for (let row = top; row <= bottom; row += 1) {
+                    for (let column = left; column <= right; column += 1) {
+                      if ((row !== top || column !== left) && rows[row][column].rowSpan === 1 && rows[row][column].colSpan === 1) {
+                        rows[row][column] = { ...rows[row][column], text: "", hidden: true };
+                      }
+                    }
+                  }
+                }
+
+                return {
+                  name: sheet.name,
+                  rowCount: sheet.rowCount,
+                  columnCount: sheet.columnCount,
+                  columnWidths,
+                  rows,
+                  merges,
+                };
+              }
+
+            note: |
+                本次变更加入了 worksheet 到纯渲染模型的折叠层，用占位矩阵、合并 owner 和隐藏 covered cell 把 ExcelJS 细节挡在 DOM 之外。
+
       - path: src/plugins/doc-excel/index.ts
         note: 渲染多 sheet 视图，加载、错误与不支持格式状态接回壳层。
+        changes:
+          - snippet: |
+              /** Excel editor for the active workbook: sheet tabs, styled grid cells, merged
+               * merge segments, row-windowed repaint driven by the pure sheet model, plus
+               * inline cell editing, a style toolbar, save, and a close guard.
+               * @param ctx Host context (excel/workspace/windows/slots injected).
+               * @param _config Unused; the plugin takes no options.
+               * @returns Teardown removing the file-opened subscription, slot renderer, scroll listener and close guard. */
+              export function apply(ctx: Context, _config: Record<string, never>): () => void {
+                let host: HTMLElement | null = null;
+                let current: FileNode | null = null;
+                let workbook: Workbook | null = null;
+                let sheetIndex = -1;
+                let models: ExcelSheetModel[] = [];
+                let error: string | null = null;
+                let loading = false;
+                let openSeq = 0;
+                let firstRow = 0;
+                let scroll: HTMLDivElement | null = null;
+                let selection: CellRange | null = null;
+                let selectionAnchor: CellAddress | null = null;
+                let editing: { row: number; column: number } | null = null;
+                let dirtyState = false;
+                let editSeq = 0;
+                let saving = false;
+                let offSave: (() => void) | null = null;
+                let offSwitchGuard: (() => void) | null = null;
+                let toolbarState: ToolbarState | null = null;
+
+                const clearDocument = (): void => {
+                  workbook = null;
+                  models = [];
+                  sheetIndex = -1;
+                  firstRow = 0;
+                  selection = null;
+                  selectionAnchor = null;
+                  editing = null;
+                  dirtyState = false;
+                  editSeq = 0;
+                };
+
+                const markDirty = (): void => {
+                  dirtyState = true;
+                  editSeq += 1;
+                };
+
+                const ownsActiveExcel = (): boolean =>
+                  ctx.workspace.activeFile?.path === current?.path && current?.kind === "excel";
+
+                const dirty = (): boolean => ownsActiveExcel() && dirtyState;
+
+                const model = (): ExcelSheetModel | null => models[sheetIndex] ?? null;
+
+                const worksheet = (): Workbook["worksheets"][number] | null => workbook?.worksheets[sheetIndex] ?? null;
+
+                const paintChrome = (): void => {
+                  const isDirty = dirty();
+                  host?.querySelector(".save-btn")?.classList.toggle("dirty", isDirty);
+                  if (current?.kind === "excel") paintTitle(current, isDirty);
+                };
+
+                const save = async (): Promise<void> => {
+                  if (saving || !current || current.kind !== "excel" || !workbook || !dirtyState) return;
+                  saving = true;
+                  const savedOpenSeq = openSeq;
+                  const savedEditSeq = editSeq;
+                  try {
+                    await ctx.excel.write(current.path, workbook);
+                    host?.querySelector(".doc-error")?.remove();
+                    error = null;
+                    if (openSeq === savedOpenSeq && editSeq === savedEditSeq) dirtyState = false;
+                    paintChrome();
+                  } catch (e) {
+                    error = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+                    if (host) errorBanner(host, error, () => { error = null; });
+                  } finally {
+                    saving = false;
+                  }
+                };
+
+                const rebuildModel = (): void => {
+                  const ws = worksheet();
+                  if (!ws) return;
+                  models[sheetIndex] = createSheetModel(ws as unknown as SheetSource);
+                };
+
+                const commitEdit = (text: string): void => {
+                  const ws = worksheet();
+                  if (!editing || !ws) {
+                    editing = null;
+                    return;
+                  }
+                  setCellValue(ws, editing.row, editing.column, text);
+                  editing = null;
+                  markDirty();
+                  rebuildModel();
+                  render();
+                };
+
+                const selected = (row: number, column: number): boolean =>
+                  selection !== null && row >= selection.top && row <= selection.bottom && column >= selection.left && column <= selection.right;
+
+                const updateToolbar = (): void => {
+                  const tools = toolbarState;
+                  if (!tools) return;
+                  const ws = worksheet();
+                  const sheetModel = model();
+                  const noSelection = !ws || !sheetModel || !selection;
+                  tools.bold.disabled = noSelection;
+                  tools.italic.disabled = noSelection;
+                  if (!noSelection && selection) {
+                    const range = selection;
+                    const anchor = ws!.getCell(range.top + 1, range.left + 1);
+                    tools.bold.setAttribute("aria-pressed", String(anchor.style.font?.bold === true));
+                    tools.italic.setAttribute("aria-pressed", String(anchor.style.font?.italic === true));
+                    const single = range.top === range.bottom && range.left === range.right;
+                    const hit = sheetModel.merges.some((merge) => rangesIntersect(merge, range));
+                    tools.merge.disabled = single && !hit;
+                    tools.unmerge.disabled = !hit;
+                  } else {
+                    tools.bold.setAttribute("aria-pressed", "false");
+                    tools.italic.setAttribute("aria-pressed", "false");
+                    tools.merge.disabled = true;
+                    tools.unmerge.disabled = true;
+                  }
+                };
+
+                const select = (row: number, column: number, extend: boolean): void => {
+                  const sheetModel = model();
+                  if (!sheetModel) return;
+                  if (extend && selection && selectionAnchor) {
+                    selection = normalizeRange(selectionAnchor, { row, column });
+                  } else {
+                    selection = clickSelection(sheetModel.merges, row, column);
+                    selectionAnchor = { row: selection.top, column: selection.left };
+                  }
+                  paintSelection();
+                  updateToolbar();
+                };
+
+                const paintSelection = (): void => {
+                  if (!scroll) return;
+                  for (const el of scroll.querySelectorAll<HTMLElement>("[data-selected]")) el.removeAttribute("data-selected");
+                  if (!selection) return;
+                  const sheetModel = model();
+                  if (!sheetModel) return;
+                  const range = visibleRowRange(
+                    scroll.scrollTop,
+                    scroll.clientHeight || INITIAL_VIEWPORT_HEIGHT,
+                    ROW_HEIGHT,
+                    sheetModel.rowCount,
+                  );
+                  for (let row = range.start; row < range.start + range.count; row += 1) {
+                    for (let column = 0; column < sheetModel.columnCount; column += 1) {
+                      if (!selected(row, column)) continue;
+                      const address = `${columnAddress(column + 1)}${row + 1}`;
+                      scroll.querySelector<HTMLElement>(`[data-address="${address}"]`)?.setAttribute("data-selected", "true");
+                    }
+                  }
+                };
+
+                const startEdit = (cellEl: HTMLElement, row: number, column: number): void => {
+                  const ws = worksheet();
+                  const sheetModel = model();
+                  if (!ws || !sheetModel || editing) return;
+                  const merge = sheetModel.merges.find(
+                    (item) => row >= item.top && row <= item.bottom && column >= item.left && column <= item.right,
+                  );
+                  const targetRow = merge?.top ?? row;
+                  const targetColumn = merge?.left ?? column;
+                  const cell = ws.getCell(targetRow + 1, targetColumn + 1);
+                  editing = { row: targetRow, column: targetColumn };
+
+                  const input = document.createElement("input");
+                  input.className = "excel-cell-editor";
+                  input.value = initialEditorText(cell);
+                  input.setAttribute("aria-label", `编辑 ${columnAddress(targetColumn + 1)}${targetRow + 1}`);
+                  cellEl.textContent = "";
+                  cellEl.append(input);
+                  input.focus();
+                  input.select();
+
+                  let finished = false;
+                  const finish = (commit: boolean): void => {
+                    if (finished) return;
+                    finished = true;
+                    const value = input.value;
+                    input.remove();
+                    if (commit) commitEdit(value);
+                    else {
+                      editing = null;
+                      render();
+                    }
+                  };
+                  input.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      finish(true);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      finish(false);
+                    }
+                  });
+                  input.addEventListener("blur", () => finish(true));
+                };
+
+                const paintWindow = (): void => {
+                  if (!scroll) return;
+                  const sheetModel = model();
+                  const topSpacer = scroll.querySelector<HTMLElement>(".excel-top-spacer");
+                  const bottomSpacer = scroll.querySelector<HTMLElement>(".excel-bottom-spacer");
+                  const grid = scroll.querySelector<HTMLElement>(".excel-grid");
+                  if (!sheetModel || !topSpacer || !bottomSpacer || !grid) return;
+
+                  const range = visibleRowRange(scroll.scrollTop, scroll.clientHeight || INITIAL_VIEWPORT_HEIGHT, ROW_HEIGHT, sheetModel.rowCount);
+                  firstRow = range.start;
+                  topSpacer.style.height = `${range.start * ROW_HEIGHT}px`;
+                  bottomSpacer.style.height = `${Math.max(0, sheetModel.rowCount - (range.start + range.count)) * ROW_HEIGHT}px`;
+                  const segments = visibleMergeSegments(sheetModel, range.start, range.start + range.count - 1);
+                  grid.style.gridTemplateColumns = trackTemplate(sheetModel);
+                  grid.style.gridTemplateRows = `repeat(${range.count}, 28px)`;
+                  grid.replaceChildren();
+
+                  const bindCell = (cell: HTMLElement, row: number, column: number): void => {
+                    if (selected(row, column)) cell.setAttribute("data-selected", "true");
+                    cell.addEventListener("click", (event) => {
+                      if (editing) return;
+                      select(row, column, event.shiftKey);
+                    });
+                    cell.addEventListener("dblclick", () => {
+                      if (editing) return;
+                      select(row, column, false);
+                      startEdit(cell, row, column);
+                    });
+                  };
+
+                  for (let rowIndex = range.start; rowIndex < range.start + range.count; rowIndex += 1) {
+                    const row = document.createElement("div");
+                    row.className = "excel-row";
+                    for (const [columnIndex, cellModel] of sheetModel.rows[rowIndex].entries()) {
+                      if (cellModel.hidden || segments.has(`${rowIndex}:${columnIndex}`)) continue;
+                      const cell = document.createElement("div");
+                      cell.className = "excel-cell";
+                      cell.dataset.address = `${columnAddress(columnIndex + 1)}${rowIndex + 1}`;
+                      cell.style.gridColumn = `${columnIndex + 2} / span ${cellModel.colSpan}`;
+                      cell.style.gridRow = `${rowIndex - range.start + 1} / span 1`;
+                      paintCellStyle(cell, cellModel);
+                      cell.textContent = cellModel.text;
+                      bindCell(cell, rowIndex, columnIndex);
+                      row.append(cell);
+                    }
+                    grid.append(row);
+                  }
+
+                  for (const segment of segments.values()) {
+                    const { anchor, visualStart, visualEnd } = segment;
+                    const cell = document.createElement("div");
+                    cell.className = "excel-cell";
+                    cell.dataset.address = `${columnAddress(anchor.column + 1)}${visualStart + 1}`;
+                    cell.style.gridColumn = `${anchor.column + 2} / span ${anchor.cell.colSpan}`;
+                    cell.style.gridRow = `${visualStart - range.start + 1} / span ${visualEnd - visualStart + 1}`;
+                    paintCellStyle(cell, anchor.cell);
+                    cell.textContent = anchor.cell.text;
+                    bindCell(cell, anchor.row, anchor.column);
+                    grid.append(cell);
+                  }
+                };
+
+                const toolbar = (): HTMLElement => {
+                  const bar = document.createElement("div");
+                  bar.className = "viewer-toolbar excel-toolbar";
+                  const boldBtn = labelButton("bold", "加粗", { className: "btn btn-ghost excel-tool" });
+                  boldBtn.addEventListener("click", () => {
+                    const ws = worksheet();
+                    if (!ws || !selection) return;
+                    toggleFontFlag(ws, selection, "bold", { row: selection.top, column: selection.left });
+                    markDirty();
+                    rebuildModel();
+                    render();
+                  });
+                  const italicBtn = labelButton("italic", "斜体", { className: "btn btn-ghost excel-tool" });
+                  italicBtn.addEventListener("click", () => {
+                    const ws = worksheet();
+                    if (!ws || !selection) return;
+                    toggleFontFlag(ws, selection, "italic", { row: selection.top, column: selection.left });
+                    markDirty();
+                    rebuildModel();
+                    render();
+                  });
+
+                  const colorControl = (title: string, clearText: string, apply: (hex: string | null) => void): HTMLElement => {
+                    const wrap = document.createElement("div");
+                    wrap.className = "excel-color";
+                    const input = document.createElement("input");
+                    input.type = "color";
+                    input.title = title;
+                    input.setAttribute("aria-label", title);
+                    input.addEventListener("input", () => apply(input.value));
+                    const clear = document.createElement("button");
+                    clear.type = "button";
+                    clear.className = "btn btn-ghost";
+                    clear.textContent = clearText;
+                    clear.addEventListener("click", () => apply(null));
+                    wrap.append(input, clear);
+                    return wrap;
+                  };
+                  const editStyle = (apply: (sheet: NonNullable<ReturnType<typeof worksheet>>, range: CellRange) => void): void => {
+                    const ws = worksheet();
+                    if (!ws || !selection) return;
+                    apply(ws, selection);
+                    markDirty();
+                    rebuildModel();
+                    render();
+                  };
+                  const textColor = colorControl("字体颜色", "默认字色", (hex) =>
+                    editStyle((sheet, range) => setFontColor(sheet, range, hex)));
+                  const fillColor = colorControl("填充颜色", "无填充", (hex) =>
+                    editStyle((sheet, range) => setFillColor(sheet, range, hex)));
+
+                  const mergeBtn = labelButton("merge", "合并", { className: "btn btn-ghost excel-tool" });
+                  mergeBtn.addEventListener("click", () => {
+                    const ws = worksheet();
+                    if (!ws || !selection) return;
+                    const range = selection;
+                    mergeRange(ws, range);
+                    markDirty();
+                    rebuildModel();
+                    selection = clickSelection(models[sheetIndex]?.merges ?? [], range.top, range.left);
+                    selectionAnchor = { row: selection.top, column: selection.left };
+                    render();
+                  });
+                  const unmergeBtn = labelButton("unmerge", "取消合并", { className: "btn btn-ghost excel-tool" });
+                  unmergeBtn.addEventListener("click", () => {
+                    const ws = worksheet();
+                    if (!ws || !selection) return;
+                    unmergeRange(ws, selection);
+                    markDirty();
+                    rebuildModel();
+                    render();
+                  });
+
+                  const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
+                  saveBtn.setAttribute("aria-keyshortcuts", "Control+S Meta+S");
+                  saveBtn.addEventListener("click", () => void save());
+
+                  bar.append(boldBtn, italicBtn, textColor, fillColor, mergeBtn, unmergeBtn, saveBtn);
+                  toolbarState = { bold: boldBtn, italic: italicBtn, merge: mergeBtn, unmerge: unmergeBtn };
+                  return bar;
+                };
+
+                const render = (): void => {
+                  if (!host) return;
+                  scroll?.removeEventListener("scroll", onScroll);
+                  scroll = null;
+                  toolbarState = null;
+                  host.replaceChildren();
+                  if (!current || current.kind !== "excel") {
+                    host.hidden = true;
+                    paintChrome();
+                    return;
+                  }
+
+                  host.hidden = false;
+                  if (error) {
+                    errorBanner(host, error, () => { error = null; });
+                    if (!workbook) return;
+                  }
+                  if (loading || !workbook) {
+                    host.append(loadingHint());
+                    return;
+                  }
+
+                  const viewer = document.createElement("div");
+                  viewer.className = "excel-viewer";
+                  const tabs = document.createElement("div");
+                  tabs.className = "excel-tabs";
+                  models.forEach((sheetModel, index) => {
+                    const tab = document.createElement("button");
+                    tab.type = "button";
+                    tab.className = "excel-tab";
+                    tab.textContent = sheetModel.name;
+                    tab.setAttribute("aria-pressed", String(index === sheetIndex));
+                    tab.addEventListener("click", () => {
+                      if (index === sheetIndex) return;
+                      sheetIndex = index;
+                      firstRow = 0;
+                      selection = null;
+                      selectionAnchor = null;
+                      editing = null;
+                      render();
+                    });
+                    tabs.append(tab);
+                  });
+
+                  scroll = document.createElement("div");
+                  scroll.className = "excel-scroll";
+                  scroll.tabIndex = 0;
+                  const topSpacer = document.createElement("div");
+                  topSpacer.className = "excel-top-spacer";
+                  const header = document.createElement("div");
+                  header.className = "excel-header-row";
+                  header.setAttribute("aria-hidden", "true");
+                  const bottomSpacer = document.createElement("div");
+                  bottomSpacer.className = "excel-bottom-spacer";
+                  const grid = document.createElement("div");
+                  grid.className = "excel-grid";
+                  scroll.append(header, topSpacer, grid, bottomSpacer);
+                  viewer.append(toolbar(), tabs, scroll);
+                  host.append(viewer);
+
+                  const sheetModel = model();
+                  const tracks = sheetModel ? trackTemplate(sheetModel) : "36px";
+                  header.style.gridTemplateColumns = tracks;
+                  grid.style.gridTemplateColumns = tracks;
+                  grid.style.gridTemplateRows = "repeat(0, 28px)";
+                  if (!sheetModel || sheetModel.rowCount === 0) {
+                    const empty = document.createElement("div");
+                    empty.className = "excel-empty";
+                    empty.textContent = "此 sheet 为空";
+                    scroll.append(empty);
+                    updateToolbar();
+                    return;
+                  }
+                  paintHeader(header);
+                  paintWindow();
+                  updateToolbar();
+                  paintChrome();
+                  scroll.addEventListener("scroll", onScroll);
+                };
+
+                /** Paint the sticky column-letter header for the selected model. */
+                function paintHeader(header: HTMLElement): void {
+                  const sheetModel = model();
+                  header.replaceChildren();
+                  if (!sheetModel) return;
+                  header.style.gridTemplateColumns = trackTemplate(sheetModel);
+                  const corner = document.createElement("div");
+                  corner.className = "excel-header-cell";
+                  corner.style.gridColumn = "1";
+                  corner.style.gridRow = "1";
+                  header.append(corner);
+                  for (let column = 1; column <= sheetModel.columnCount; column += 1) {
+                    const label = document.createElement("div");
+                    label.className = "excel-header-cell";
+                    label.style.gridColumn = String(column + 1);
+                    label.style.gridRow = "1";
+                    label.textContent = columnAddress(column);
+                    header.append(label);
+                  }
+                }
+
+                function onScroll(): void {
+                  if (!scroll) return;
+                  const sheetModel = model();
+                  if (!sheetModel) return;
+                  const range = visibleRowRange(
+                    scroll.scrollTop,
+                    scroll.clientHeight || INITIAL_VIEWPORT_HEIGHT,
+                    ROW_HEIGHT,
+                    sheetModel.rowCount,
+                  );
+                  if (range.start === firstRow) return;
+                  paintWindow();
+                }
+
+                const open = async (file: FileNode | null): Promise<void> => {
+                  const seq = ++openSeq;
+                  current = file;
+                  error = null;
+                  clearDocument();
+                  if (file?.kind !== "excel") {
+                    loading = false;
+                    render();
+                    return;
+                  }
+
+                  loading = true;
+                  render();
+                  try {
+                    const loaded = await ctx.excel.read(file.path);
+                    if (seq !== openSeq) return;
+                    loading = false;
+                    workbook = loaded;
+                    models = loaded.worksheets.map((sheet) => createSheetModel(sheet as unknown as SheetSource));
+                    sheetIndex = models.length > 0 ? 0 : -1;
+                    firstRow = 0;
+                    selection = null;
+                    selectionAnchor = null;
+                    editing = null;
+                    render();
+                  } catch (e) {
+                    if (seq !== openSeq) return;
+                    loading = false;
+                    clearDocument();
+                    error = `读取失败：${e instanceof Error ? e.message : String(e)}`;
+                    render();
+                  }
+                };
+
+                offSave = bindSaveShortcut(ownsActiveExcel, () => void save());
+                offSwitchGuard = ctx.workspace.guardSwitch(
+                  dirty,
+                  () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
+                );
+
+                const offFile = ctx.workspace.events.on("file-opened", (file) => void open(file));
+                const offSlot = ctx.slots.register("main.viewer", (el) => {
+                  host = el;
+                  render();
+                  void open(ctx.workspace.activeFile);
+                });
+                const offGuardPromise = ctx.windows.guardClose(
+                  dirty,
+                  () => confirmDiscardDialog(current?.name ?? "工作簿", "关闭"),
+                );
+                let offGuard: (() => void) | null = null;
+                void offGuardPromise.then((off) => { offGuard = off; });
+                return () => {
+                  scroll?.removeEventListener("scroll", onScroll);
+                  scroll = null;
+                  host = null;
+                  offFile();
+                  offSlot();
+                  offSave?.();
+                  offSwitchGuard?.();
+                  offGuard?.();
+                  // guardClose promise may resolve after teardown; always drain it.
+                  void offGuardPromise.then((off) => off());
+                };
+              }
+
+            note: |
+                本次变更加入了 Excel 插件完整装配：状态更新先写 worksheet，再标脏、重建模型并重绘；过期打开结果按 openSeq 丢弃，生命周期统一回收。
+
       - path: src-tauri/src/lib.rs
         note: raw IPC 命令与扩展名分派，EXCEL_EXTS 只含 xlsx。
+        changes:
+          - snippet: |
+              /// 读取整文件字节（excel 等二进制文档的数据源），以 Tauri raw bytes 返回。
+              /// 路径取 `x-studywiki-path` header 并 UTF-8 percent 解码；读授权与 FS 访问前先校验，
+              /// 边界为当前窗口 root + 当前窗口动态读 grants。
+              #[tauri::command]
+              fn read_binary_file<R: tauri::Runtime>(
+                  app: tauri::AppHandle<R>,
+                  state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+                  window: tauri::Window<R>,
+                  request: Request<'_>,
+              ) -> Result<Response, String> {
+                  let path = request_path(&request)?;
+                  let config_root = config::app_studywiki_dir(&app)?;
+                  ensure_authorized_read(&state, window.label(), &path, &config_root)?;
+                  fs::read(&path)
+                      .map(Response::new)
+                      .map_err(|e| format!("read {path}: {e}"))
+              }
+
+              /// 原子写二进制文件（同目录 tmp + rename），成功后广播 `fs://changed`。
+              /// 路径经 header 传入且须在原始授权 root 内（读 grant 不解锁写面）；
+              /// body 必须是 Tauri raw bytes，拒绝 JSON 数组。
+              #[tauri::command]
+              fn write_binary_file<R: tauri::Runtime>(
+                  app: tauri::AppHandle<R>,
+                  state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+                  request: Request<'_>,
+              ) -> Result<(), String> {
+                  let path = request_path(&request)?;
+                  let config_root = config::app_studywiki_dir(&app)?;
+                  ensure_authorized(&state, &path, &config_root)?;
+                  let bytes = match request.body() {
+                      InvokeBody::Raw(bytes) => bytes,
+                      InvokeBody::Json(_) => {
+                          return Err("write_binary_file 需要 Tauri raw IPC bytes，而不是 JSON".to_string())
+                      }
+                  };
+                  atomic_write(Path::new(&path), bytes)?;
+                  app.emit("fs://changed", &path)
+                      .map_err(|e| format!("emit: {e}"))
+              }
+
+            note: |
+                本次变更加入了 xlsx 所需的二进制读写命令：路径先过窗口授权，读返回 raw bytes，写拒绝 JSON 并以同目录临时文件加 rename 原子落盘。
+
   - group: 接入面
     attention: skim
     why: 文件树、壳层与类型声明的挂接改动。

@@ -20,18 +20,393 @@ codeMap:
     files:
       - path: src-tauri/src/native_close.rs
         note: 拦截 performClose、close、_close 和 terminate，红点动作改接原生关闭桥。
+        changes:
+          - snippet: |
+              pub fn install() {
+                  INSTALL.call_once(|| unsafe {
+                      let method = class!(NSWindow)
+                          .instance_method(sel!(performClose:))
+                          .expect("NSWindow implements performClose:");
+                      let original = method.implementation();
+                      ORIGINAL_PERFORM_CLOSE.store(original as usize, Ordering::Release);
+                      let close_method = class!(NSWindow)
+                          .instance_method(sel!(close))
+                          .expect("NSWindow implements close");
+                      let original_close = close_method.implementation();
+                      ORIGINAL_CLOSE.store(original_close as usize, Ordering::Release);
+                      // `_close:` is the private selector macOS 26 routes the red traffic
+                      // light through. Other (or future) systems may not expose it; skip
+                      // that fallback instead of failing app startup. The public
+                      // performClose:/close hooks and the rewritten red-button target keep
+                      // guarding every exit they can see.
+                      let underscore_close_method = class!(NSWindow).instance_method(sel!(_close:));
+                      let terminate_method = class!(NSApplication)
+                          .instance_method(sel!(terminate:))
+                          .expect("NSApplication implements terminate:");
+                      ORIGINAL_TERMINATE.store(
+                          terminate_method.implementation() as usize,
+                          Ordering::Release,
+                      );
+                      let hook_function: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) =
+                          perform_close;
+                      let hook: Imp = std::mem::transmute(hook_function);
+                      method.set_implementation(hook);
+                      close_method.set_implementation(hook);
+                      if let Some(underscore_close_method) = underscore_close_method {
+                          ORIGINAL_UNDERSCORE_CLOSE.store(
+                              underscore_close_method.implementation() as usize,
+                              Ordering::Release,
+                          );
+                          underscore_close_method.set_implementation(hook);
+                      } else {
+                          eprintln!("StudyWiki: NSWindow._close: unavailable; skipping private close fallback");
+                      }
+                      let terminate_hook: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) =
+                          application_terminate;
+                      let terminate_hook: Imp = std::mem::transmute(terminate_hook);
+                      terminate_method.set_implementation(terminate_hook);
+                  });
+              }
+
+              /// Route Cmd+Q / Quit StudyWiki through the same per-window guards. tao's
+              /// macOS app delegate declares no `applicationShouldTerminate:`, so AppKit
+              /// would terminate the process directly and `RunEvent::ExitRequested` never
+              /// fires; without this hook a Cmd+Q silently discards dirty drafts. Windows
+              /// close themselves through the bridge, and the resulting empty-window exit
+              /// request lets the process end.
+              unsafe extern "C-unwind" fn application_terminate(
+                  this: *mut AnyObject,
+                  command: Sel,
+                  sender: *mut AnyObject,
+              ) {
+                  let requests: Vec<Arc<dyn Fn() + Send + Sync>> = CLOSE_GUARDS
+                      .lock()
+                      .unwrap()
+                      .as_ref()
+                      .map(|guards| {
+                          guards
+                              .values()
+                              .map(|guard| guard.request_close.clone())
+                              .collect()
+                      })
+                      .unwrap_or_default();
+                  if requests.is_empty() {
+                      let original: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) =
+                          std::mem::transmute(ORIGINAL_TERMINATE.load(Ordering::Acquire));
+                      original(this, command, sender);
+                      return;
+                  }
+                  for request in requests {
+                      request();
+                  }
+              }
+
+              /// Route a ready window's native close action through Tauri's close request.
+
+            note: |
+                本次变更加入了 macOS 原生关闭方法替换，把红点、Close、Cmd+W 和退出路径接到聚合守卫；只有 ready 窗口会被同步拦截。
+
+          - snippet: |
+              pub fn set_ready<R: Runtime>(app: &AppHandle<R>, label: &str, ready: bool) -> Result<(), String> {
+                  let window = app
+                      .get_webview_window(label)
+                      .ok_or_else(|| format!("unknown window {label}"))?;
+                  let native_window = window
+                      .ns_window()
+                      .map_err(|e| format!("read NSWindow for {label}: {e}"))? as usize;
+                  let mut guards = CLOSE_GUARDS.lock().unwrap();
+                  let guards = guards.get_or_insert_with(HashMap::new);
+                  if ready {
+                      // Idempotent: a second arm while already armed would re-capture our own
+                      // target/action as the "original", permanently breaking native close.
+                      if guards.contains_key(&native_window) {
+                          return Ok(());
+                      }
+                      let (action, target, close_button): (Sel, *mut AnyObject, *mut AnyObject) = unsafe {
+                          let native_window_ref = &*(native_window as *mut AnyObject);
+                          let close_button: *mut AnyObject =
+                              msg_send![native_window_ref, standardWindowButton: 0];
+                          if close_button.is_null() {
+                              return Err(format!("window {label} has no standard close button"));
+                          }
+                          let action: Sel = msg_send![&*close_button, action];
+                          let target: *mut AnyObject = msg_send![&*close_button, target];
+                          (action, target, close_button)
+                      };
+                      unsafe {
+                          let target = close_target();
+                          let _: () = msg_send![&*close_button, setTarget: target];
+                          let _: () = msg_send![&*close_button, setAction: sel!(studywikiClose:)];
+                      }
+                      guards.insert(
+                          native_window,
+                          NativeCloseGuard {
+                              label: label.to_string(),
+                              original_target: target as usize,
+                              original_action: action,
+                              request_close: Arc::new(move || {
+                                  let _ = window.eval("window.__studywikiNativeClose?.()");
+                              }),
+                          },
+                      );
+                  } else {
+                      if let Some(guard) = guards.get(&native_window) {
+                          let close_button: *mut AnyObject = unsafe {
+                              let native_window_ref = &*(native_window as *mut AnyObject);
+                              msg_send![native_window_ref, standardWindowButton: 0]
+                          };
+                          if !close_button.is_null() {
+                              unsafe {
+                                  let original_target = guard.original_target as *mut AnyObject;
+                                  let _: () = msg_send![&*close_button, setTarget: original_target];
+                                  let _: () = msg_send![&*close_button, setAction: guard.original_action];
+                              }
+                          }
+                      }
+                      guards.remove(&native_window);
+                  }
+                  Ok(())
+              }
+
+
+            note: |
+                本次变更加入了前端守卫就绪表同步：装载完成后才武装拦截，取消或卸载时恢复默认行为，避免窗口语义与红点状态错配。
+
       - path: src-tauri/src/windows.rs
         note: CloseGuardRegistry 维护武装状态，处理并发装载、退订和确认后的恢复。
+        changes:
+          - snippet: |
+              impl CloseGuardRegistry {
+                  pub fn set_ready(&mut self, label: &str, ready: bool) {
+                      if ready {
+                          self.ready.insert(label.to_string());
+                      } else {
+                          self.ready.remove(label);
+                      }
+                  }
+
+                  pub fn is_ready(&self, label: &str) -> bool {
+                      self.ready.contains(label)
+                  }
+
+                  pub fn remove(&mut self, label: &str) {
+                      self.ready.remove(label);
+                  }
+
+            note: |
+                本次变更加入了 CloseGuardRegistry，用窗口级 ready 状态判断是否可以拦截原生关闭，防止未完成装载的前端被退出流程绕过。
+
       - path: src-tauri/src/lib.rs
         note: ExitRequested 先阻止退出，再把每个 webview 导回前端关闭桥。
+        changes:
+          - snippet: |
+              fn configure_window_lifecycle<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+                  builder
+                      .manage(std::sync::Mutex::new(windows::WindowRegistry::default()))
+                      .manage(std::sync::Mutex::new(windows::CloseGuardRegistry::default()))
+                      .on_window_event(|window, event| {
+                          let label = window.label().to_string();
+                          match event {
+                              tauri::WindowEvent::CloseRequested { api, .. } => {
+                                  if let Some(state) = window
+                                      .app_handle()
+                                      .try_state::<std::sync::Mutex<windows::CloseGuardRegistry>>()
+                                  {
+                                      if state.lock().unwrap().is_ready(&label) {
+                                          api.prevent_close();
+                                      }
+                                  }
+                              }
+                              tauri::WindowEvent::Destroyed => {
+                                  native_close::remove_window(&label);
+                                  let app = window.app_handle().clone();
+                                  if let Some(state) =
+                                      app.try_state::<std::sync::Mutex<windows::WindowRegistry>>()
+                                  {
+                                      state.lock().unwrap().remove(&label);
+                                  }
+                                  if let Some(state) =
+                                      app.try_state::<std::sync::Mutex<windows::CloseGuardRegistry>>()
+                                  {
+                                      state.lock().unwrap().remove(&label);
+                                  }
+                                  let _ = app.emit("win://closed", &label);
+                              }
+                              _ => {}
+                          }
+                      })
+              }
+
+            note: |
+                本次变更把关窗事件接入统一生命周期：ready 窗口先 prevent_close 给前端确认，窗口销毁时清理原生守卫和注册表。
+
   - group: 前端守卫聚合
     attention: must-read
     why: 多文档插件的脏状态只在前端聚合，决定是否显式销毁。
     files:
       - path: src/host/windows.ts
         note: 聚合同窗守卫，任一取消即停留，全部放行才调用 destroy。
+        changes:
+          - snippet: |
+              /** Window-scoped service: window identity, creation, close guarding. */
+              export class WindowsService {
+                readonly #deps: WindowsDeps;
+                #workspace: WorkspaceService | null = null;
+                #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+                #nextGuardId = 0;
+                #offNativeClose: (() => void | Promise<void>) | null = null;
+                #closing = false;
+
+                constructor(deps: WindowsDeps = defaultWindowsDeps) {
+                  this.#deps = deps;
+                }
+
+                /** This window's Tauri label. */
+                currentLabel(): string {
+                  return this.#deps.currentLabel();
+                }
+
+                /** Create a new window, optionally opening `root`; returns the new label. */
+                async create(root?: string): Promise<string> {
+                  return this.#deps.invoke("create_window", { root }) as Promise<string>;
+                }
+
+                /** Fetch this window's registered workspace root (null = welcome state). */
+                async fetchRoot(label: string): Promise<string | null> {
+                  const state = await this.#deps.invoke("get_window_state", { label });
+                  return (state as string | null) ?? null;
+                }
+
+                /** Persist this window's workspace root Rust-side (registry upsert + asset
+                 * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+                async setRoot(label: string, root: string | null): Promise<void> {
+                  await this.#deps.invoke("set_window_root", { label, root });
+                }
+
+                /** Bind this window-scoped service to its private workspace controller.
+                 * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+                bindWorkspace(workspace: WorkspaceService): void {
+                  this.#workspace = workspace;
+                }
+
+                /** Full root change in one call: Rust-side grant + registry upsert first
+                 * (fail-closed), then the workspace switch. Every root change goes through
+                 * here — Activity Rail button, welcome-state button, boot re-grant — so the
+                 * grant-before-switch ordering is structural, not conventional. Passing
+                 * null clears the frontend only (no Rust call).
+                 * @returns True when the root changed; false when a workspace switch guard rejected it. */
+                async changeRoot(root: string | null): Promise<boolean> {
+                  if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+                  const workspace = this.#workspace;
+                  if (!(await workspace.confirmSwitch())) return false;
+                  if (root !== null) await this.setRoot(this.currentLabel(), root);
+                  workspace.forceSetRoot(root);
+                  return true;
+                }
+
+                /** Native confirm dialog (close-guard prompt); true = proceed. */
+                confirmDialog(message: string): Promise<boolean> {
+                  return this.#deps.confirmDialog(message);
+                }
+
+                /** Mark this window's close listener as ready; the native shell can now
+                 * synchronously cancel native close requests before asking the webview. */
+                async markCloseGuardReady(): Promise<void> {
+                  await this.#syncNativeReady();
+                }
+
+                /** Force this window's native close-guard flag, bypassing live state. */
+                async #setNativeReady(ready: boolean): Promise<void> {
+                  await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+                }
+
+                /** Arm the native shell only while the aggregated listener is installed, so
+                 * startup, guard-less and already-confirmed windows keep native direct close. */
+                async #syncNativeReady(): Promise<void> {
+                  await this.#setNativeReady(this.#offNativeClose !== null);
+                }
+
+                /** Aggregate document guards into one close decision. Every native request
+                 * is synchronously cancelled first; only when every dirty guard confirms the
+                 * discard does this method close through the destroy seam. */
+                async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
+                  const id = this.#nextGuardId++;
+                  this.#guards.set(id, { isDirty, confirmDiscard });
+                  if (!this.#offNativeClose) {
+                    this.#offNativeClose = await this.#deps.onCloseRequested((e) => void this.#handleClose(e));
+                    (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose = () => {
+                      void this.#handleClose({ preventDefault: () => {} });
+                    };
+                    await this.#syncNativeReady();
+                  }
+                  return async () => {
+                    this.#guards.delete(id);
+                    if (this.#guards.size === 0 && this.#offNativeClose) {
+                      const off = this.#offNativeClose;
+                      this.#offNativeClose = null;
+                      await off();
+                      delete (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose;
+                      await this.#syncNativeReady();
+                    }
+                  };
+                }
+
+            note: |
+                本次变更加入了前端守卫注册和 native hook 联动：第一个守卫出现才监听，最后一个移除时卸载并同步 native ready。
+
       - path: src/bootstrap.ts
         note: 每窗口接通原生关闭桥，并把生命周期绑定到前端守卫。
+        changes:
+          - snippet: |
+              export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context> {
+                const ctx = new Context();
+                const files = new FilesService({ invoke: env.invoke, listen: env.listen, openDialog: env.openDialog, assetUrl: env.assetUrl });
+                const excel = new ExcelService(files);
+                const windows = new WindowsService({
+                  invoke: env.invoke,
+                  currentLabel: env.currentLabel,
+                  onCloseRequested: env.onCloseRequested,
+                  confirmDialog: env.confirmDialog ?? defaultWindowsDeps.confirmDialog,
+                  destroy: defaultWindowsDeps.destroy,
+                });
+                const workspace = new WorkspaceService();
+                windows.bindWorkspace(workspace);
+                const slots = new SlotsService();
+                const plugins = new PluginsService({
+                  invoke: env.invoke,
+                  loadExternal: env.loadExternal ?? loadExternalModule,
+                  pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
+                });
+                const llm = new LlmService({ invoke: env.invoke });
+                ctx.reflect.provide("files", files);
+                ctx.reflect.provide("excel", excel);
+                ctx.reflect.provide("windows", windows);
+                ctx.reflect.provide("workspace", workspace.facade);
+                ctx.reflect.provide("slots", slots);
+                ctx.reflect.provide("plugins", plugins);
+                ctx.reflect.provide("llm", llm);
+                await files.start();
+                // 持久 root 启动即重授权（配置 scope 已收空，运行期动态注入是唯一通道）。
+                const root = await windows.fetchRoot(windows.currentLabel());
+                await windows.changeRoot(root);
+                // 注入行叠加在静态表上（同 id 覆盖）：测试补探针行时，默认清单仍含全部内置插件。
+                const table: ModuleTable = { ...MODULE_TABLE, ...env.table };
+                const manifest = await loadManifest(
+                  () => env.invoke("read_manifest") as Promise<string | null>,
+                  (json) => env.invoke("write_manifest", { json }).then(() => undefined),
+                  table,
+                );
+                const report = await boot(ctx, manifest, table, (name) => plugins.loadModule(name), {
+                  snapshot: (name) => plugins.snapshot(name),
+                });
+                plugins.bootBroken = report.broken;
+                await windows.markCloseGuardReady();
+                return ctx;
+              }
+
+            note: |
+                本次变更把关闭守卫就绪标记移到 boot 收尾：内置装配成功后通知宿主，外置坏行仍走投影，不让失败启动被误判为可安全关闭。
+
   - group: 行为测试
     attention: skim
     why: 无脏、确认、取消与多守卫竞争由测试钉住。

@@ -18,16 +18,167 @@ codeMap:
     files:
       - path: scripts/walkthrough-yaml.mjs
         note: fail-loud 解析仓内受限 YAML 子集，不引入外部 YAML 依赖。
+        changes:
+          - snippet: |
+              // walkthrough 专用 YAML 子集解析器。只支持 walkthrough 源页用到的声明式形状：
+              // 顶层 map、一层嵌套 map、标量/行内列表/块标量，以及标量或 map 列表。
+              // 这里刻意不引入 YAML 依赖；超出子集的语法必须 fail-loud。
+
+              const MAX_MAP_DEPTH = 1;
+
+              /** 本子集的 map 不继承 Object.prototype，防止 `__proto__` 特殊键绕过校验。 */
+              function newMap() {
+
+            note: |
+                本次变更加入了 walkthrough 专用 YAML 子集解析器，只接受站点源实际使用的声明式形状并 fail-loud，避免引入运行时 YAML 依赖。
+
       - path: scripts/walkthrough-lib.mjs
         note: 统一 schema、锚点、文件/功能/变更对账、行覆盖率和 diff 检查。
+        changes:
+          - snippet: |
+              export function locateSnippet(sourceText, snippet) {
+                if (typeof sourceText !== "string" || typeof snippet !== "string" || snippet === "") {
+                  return null;
+                }
+                const normalize = (text) => text.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd());
+                const haystack = normalize(sourceText).join("\n");
+                // 块标量天然保留末尾换行；定位前只剥掉恰好一个归一化换行，
+                // 使 end 表示内容最后一行，并避免空尾行灌大覆盖率。
+                let needle = normalize(snippet).join("\n");
+                if (needle.endsWith("\n")) needle = needle.slice(0, -1);
+                if (!haystack || !needle) return null;
+
+                let cursor = haystack.indexOf(needle);
+                if (cursor < 0) return null;
+                const start = cursor;
+                let count = 0;
+                while (cursor >= 0) {
+                  count++;
+                  cursor = haystack.indexOf(needle, cursor + 1);
+
+            note: |
+                本次变更加入了统一锚点定位：源码和 snippet 都按行 trimEnd 后匹配，并统计命中数，为硬门禁和覆盖率提供稳定行区间。
+
       - path: scripts/verify-walkthrough.mjs
         note: 装配 root、code-map、flow issue 与注入 diff，输出门禁结果。
+        changes:
+          - snippet: |
+              export async function collectWalkthrough(options = {}) {
+                const root = options.root ?? process.cwd();
+                const errors = [];
+                const warnings = [];
+                const site = parseSite(root);
+                errors.push(...site.parseErrors);
+                const registration = readCodeMap(root, errors);
+
+                let issues = options.issues;
+                if (issues === undefined) {
+                  const { tree, errors: flowErrors } = await loadFlowTree(path.join(root, ".agents/flow"));
+                  errors.push(...flowErrors);
+                  issues = tree.issues
+                    .filter((issue) => issue.data && typeof issue.data === "object")
+                    .map((issue) => ({ slug: issue.name, status: issue.data.status }));
+                }
+
+                const bootstrap = site.manifest?.bootstrap === true;
+                errors.push(...validateSchema(site));
+                errors.push(...checkAnchors(root, site));
+                if (!registration.invalid) appendDegraded(errors, warnings, bootstrap, checkFilePages(site, registration.codeMap));
+                errors.push(...checkFeatures(site));
+                appendDegraded(errors, warnings, bootstrap, checkChanges(site, issues));
+                appendDegraded(errors, warnings, bootstrap, checkLineCoverage(root, site));
+                if (options.diffFiles !== undefined) {
+                  errors.push(...checkDiff(options.diffFiles, site));
+                  errors.push(...checkDiffScale(options.diffFiles, site, options.numstat, options.addedDiffFiles));
+                }
+
+                return { ok: errors.length === 0, errors, warnings };
+              }
+
+              /**
+               * run-gates 叶子入口；bootstrap 警告不改变叶子结果，由 CLI stdout 呈现。
+               * @param {{root?: string, diffFiles?: string[], issues?: Array<{slug:string,status:string}>}} options
+               *   测试可注入 root/diffFiles/issues；生产调用保持无参。
+               * @returns {Promise<{ok:boolean, errors:string[]}>} run-gates 叶子形状。
+               */
+              export default async function verifyWalkthrough(options = {}) {
+
+            note: |
+                本次变更加入了门禁装配器：读取 root、code-map 和 flow issue，组合 schema、锚点、对账、覆盖率与 diff 检查并区分 WARN。
+
   - group: 静态构建器
     attention: must-read
     why: 构建成功同时证明锚点可达和产物可离线打开。
     files:
       - path: scripts/build-walkthrough.mjs
         note: 渲染多页 file:// 可开的 HTML，并复制非空资源。
+        changes:
+          - snippet: |
+              /**
+               * 构建 walkthrough 多页静态站。
+               * @param {string} root - 站点仓库根目录。
+               * @param {string} [outDir] - 输出目录；默认解析到 root 下的 walkthrough/dist。
+               * @returns {void} 构建成功时无返回值；多处锚点命中会向 stdout 输出 WARN。
+               */
+              let activeReviewNav = false;
+
+              export function buildSite(root, outDir, options = {}) {
+                activeReviewNav = Boolean(options.review);
+                const resolvedRoot = path.resolve(root);
+                const resolvedOut = path.resolve(outDir ?? path.join(resolvedRoot, "walkthrough/dist"));
+                const site = parseSite(resolvedRoot);
+
+                if (site.parseErrors.length > 0) {
+                  throw new Error(`walkthrough 解析失败:\n  ${site.parseErrors.join("\n  ")}`);
+                }
+                const schemaErrors = validateSchema(site);
+                if (schemaErrors.length > 0) {
+                  throw new Error(`walkthrough schema 校验失败:\n  ${schemaErrors.join("\n  ")}`);
+                }
+                const anchorErrors = checkAnchors(resolvedRoot, site);
+                if (anchorErrors.length > 0) {
+                  throw new Error(`walkthrough 锚点校验失败:\n  ${anchorErrors.join("\n  ")}`);
+                }
+
+                site.codeMap = readCodeMap(resolvedRoot);
+                site.root = resolvedRoot;
+
+                rmSync(resolvedOut, { recursive: true, force: true });
+                mkdirSync(resolvedOut, { recursive: true });
+                const output = (relative, html) => {
+                  const file = path.join(resolvedOut, relative);
+                  mkdirSync(path.dirname(file), { recursive: true });
+                  writeFileSync(file, html);
+                };
+
+                output("index.html", renderOverviewPage(site));
+                output("architecture.html", renderSectionPage(site.architecture, "architecture.html", site, {
+                  heading: "架构",
+                  groupLabel: "架构",
+                  target: "architecture.html",
+                }));
+                for (const [slug, feature] of site.features) {
+                  output(`features/${slug}.html`, renderFeaturePage(slug, feature, `features/${slug}.html`, site));
+                }
+                for (const [source, page] of site.filePages) {
+                  output(`files/${source}.html`, renderFilePage(source, page, `files/${source}.html`, site));
+                }
+                for (const [issue, change] of site.changes) {
+                  output(`changes/${issue}.html`, renderChangePage(issue, change, `changes/${issue}.html`, site));
+                if (options.review) {
+                  output("review.html", renderReviewPage(site, options.review, root));
+                }
+                }
+
+                const assets = path.join(resolvedRoot, "walkthrough/assets");
+                if (existsSync(assets) && readdirSync(assets).length > 0) {
+                  cpSync(assets, path.join(resolvedOut, "assets"), { recursive: true });
+                }
+              }
+
+            note: |
+                本次变更加入了静态站构建循环：先硬校验锚点，再渲染五层页面并复制非空资源，构建成功即证明产物可离线打开。
+
       - path: walkthrough/overview.yaml
         note: 总览页源。
       - path: walkthrough/architecture.yaml

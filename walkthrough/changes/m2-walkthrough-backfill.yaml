@@ -44,12 +44,137 @@ codeMap:
         note: 定版 90% 阈值并移除 bootstrap 标志。
       - path: scripts/build-walkthrough.mjs
         note: 回填后继续执行构建即校验。
+        changes:
+          - snippet: |
+              /**
+               * 构建 walkthrough 多页静态站。
+               * @param {string} root - 站点仓库根目录。
+               * @param {string} [outDir] - 输出目录；默认解析到 root 下的 walkthrough/dist。
+               * @returns {void} 构建成功时无返回值；多处锚点命中会向 stdout 输出 WARN。
+               */
+              let activeReviewNav = false;
+
+              export function buildSite(root, outDir, options = {}) {
+                activeReviewNav = Boolean(options.review);
+                const resolvedRoot = path.resolve(root);
+                const resolvedOut = path.resolve(outDir ?? path.join(resolvedRoot, "walkthrough/dist"));
+                const site = parseSite(resolvedRoot);
+
+                if (site.parseErrors.length > 0) {
+                  throw new Error(`walkthrough 解析失败:\n  ${site.parseErrors.join("\n  ")}`);
+                }
+                const schemaErrors = validateSchema(site);
+                if (schemaErrors.length > 0) {
+                  throw new Error(`walkthrough schema 校验失败:\n  ${schemaErrors.join("\n  ")}`);
+                }
+                const anchorErrors = checkAnchors(resolvedRoot, site);
+                if (anchorErrors.length > 0) {
+                  throw new Error(`walkthrough 锚点校验失败:\n  ${anchorErrors.join("\n  ")}`);
+                }
+
+                site.codeMap = readCodeMap(resolvedRoot);
+                site.root = resolvedRoot;
+
+                rmSync(resolvedOut, { recursive: true, force: true });
+                mkdirSync(resolvedOut, { recursive: true });
+                const output = (relative, html) => {
+                  const file = path.join(resolvedOut, relative);
+                  mkdirSync(path.dirname(file), { recursive: true });
+                  writeFileSync(file, html);
+                };
+
+                output("index.html", renderOverviewPage(site));
+                output("architecture.html", renderSectionPage(site.architecture, "architecture.html", site, {
+                  heading: "架构",
+                  groupLabel: "架构",
+                  target: "architecture.html",
+                }));
+                for (const [slug, feature] of site.features) {
+                  output(`features/${slug}.html`, renderFeaturePage(slug, feature, `features/${slug}.html`, site));
+                }
+                for (const [source, page] of site.filePages) {
+                  output(`files/${source}.html`, renderFilePage(source, page, `files/${source}.html`, site));
+                }
+                for (const [issue, change] of site.changes) {
+                  output(`changes/${issue}.html`, renderChangePage(issue, change, `changes/${issue}.html`, site));
+                if (options.review) {
+                  output("review.html", renderReviewPage(site, options.review, root));
+                }
+                }
+
+                const assets = path.join(resolvedRoot, "walkthrough/assets");
+                if (existsSync(assets) && readdirSync(assets).length > 0) {
+                  cpSync(assets, path.join(resolvedOut, "assets"), { recursive: true });
+                }
+              }
+
+            note: |
+                本次回填把五层站点产出接入同一构建循环，并在变更页输出后生成 review.html；构建继续执行即校验锚点与产物。
+
       - path: scripts/walkthrough-review.mjs
         note: PR 检视 diff 数据层：numstat + 统一 diff hunk 解析 + 注解归位。
+        changes:
+          - snippet: |
+              export function collectReviewDiff(root, base, deps = {}) {
+                const exec = deps.exec ?? ((argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" }));
+                const numstat = exec(["diff", "--numstat", `${base}...HEAD`])
+                  .split("\n")
+                  .filter(Boolean)
+                  .map((line) => {
+                    const [a, d, ...rest] = line.split("\t");
+                    return { path: rest.join("\t"), additions: Number(a), deletions: Number(d) };
+                  });
+                const statuses = new Map(
+                  exec(["diff", "--name-status", `${base}...HEAD`])
+                    .split("\n")
+                    .filter(Boolean)
+                    .map((line) => {
+                      const [status, ...rest] = line.split("\t");
+                      return [rest.join("\t"), status];
+                    }),
+                );
+                return {
+                  files: numstat.map((row) => ({
+                    ...row,
+                    status: statuses.get(row.path) === "A" ? "A" : statuses.get(row.path) === "D" ? "D" : "M",
+                    hunks: parseUnifiedDiff(exec(["diff", "--unified=3", `${base}...HEAD`, "--", row.path])),
+                  })),
+                };
+
+            note: |
+                本次变更加入了 PR 检视 diff 数据层：采集 numstat、status 和统一 diff hunks，只产数据不渲染，便于注解归位。
+
       - path: scripts/walkthrough-review.spec.mjs
         note: 数据层自测试（真实 git 夹具）。
+        changes:
+          - snippet: |
+
+
+            note: |
+                本次变更加入了注解归属测试，锚定 after 行区间与 hunk 的 add/ctx 行相交时才挂载，避免注解释放到错误 diff 块。
+
       - path: scripts/build-walkthrough.spec.mjs
         note: 产物与导航回归。
+        changes:
+          - snippet: |
+              describe("build-walkthrough", () => {
+                it("生成五层多页静态站并渲染锚定区间的真实源码", () => {
+                  const root = tempRoot("studywiki-build-walkthrough-");
+                  const outDir = path.join(root, "site-output");
+                  writeValidSite(root);
+
+                  buildSite(root, outDir);
+
+                  const home = readFileSync(path.join(outDir, "index.html"), "utf8");
+                  expect(home).toContain("这是什么工程");
+                  expect(home).toContain('<img src="assets/space%20%23image.svg"');
+                  expect(readFileSync(path.join(outDir, "architecture.html"), "utf8")).toContain("src/demo.ts");
+                  expect(readFileSync(path.join(outDir, "features/demo.html"), "utf8")).toContain("const covered = 1;");
+                  expect(readFileSync(path.join(outDir, `files/${"src/demo.ts"}.html`), "utf8")).toContain("const coveredToo = 2;");
+
+            note: |
+                本次变更加入了五层产物和锚定真实源码的构建回归，覆盖首页、架构、功能、文件页与导航。
+
   - group: 功能页
     attention: skim
     why: 13 个用户可见功能与登记处互链。

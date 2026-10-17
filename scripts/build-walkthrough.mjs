@@ -512,7 +512,10 @@ function renderCodeMapGroups(codeMap, current, site) {
           const cell = target
             ? `<a href="${relativeHref(current, target)}">${escapeHtml(file.path)}</a>`
             : `<code>${escapeHtml(file.path)}</code>`;
-          return `<tr><td class="map-path">${cell}</td><td class="map-note">${markdown.renderInline(file.note)}</td></tr>`;
+          const notes = Array.isArray(file.changes)
+            ? file.changes.map((change) => `<tr class="map-change-note"><td></td><td class="map-note"><aside class="note diff-note"><span class="meta">检视注解：</span>${markdown.renderInline(change.note)}</aside></td></tr>`).join("")
+            : "";
+          return `<tr><td class="map-path">${cell}</td><td class="map-note">${markdown.renderInline(file.note)}</td></tr>${notes}`;
         })
         .join("");
       const table = `<table class="map-files"><tbody>${rows}</tbody></table>`;

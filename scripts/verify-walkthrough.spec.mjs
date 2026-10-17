@@ -377,6 +377,11 @@ codeMap:
     files:
       - path: src/demo.ts
         note: 改动点
+        changes:
+          - snippet: |
+              export const first = 1;
+            note: |
+              本次变更公开了入口导出。
 reviewGuide:
   order:
     - 先读变更地图

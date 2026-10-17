@@ -18,16 +18,178 @@ codeMap:
     files:
       - path: scripts/flow-lib.mjs
         note: 解析 flow YAML 子集，承载流程树、状态与 diff 校验的公共规则。
+        changes:
+          - snippet: |
+              export const FLOW_ROOT = ".agents/flow";
+              // 与 .agents/flow/README.md「封闭集合」节互为镜像（spec 互检）。
+              export const ISSUE_STATUSES = ["backlog", "ready", "in-progress", "done"];
+              export const PRIORITIES = ["P0", "P1", "P2"];
+              export const MILESTONE_STATUSES = ["planned", "active", "done"];
+
+              const FENCE_OPEN = /^```yaml flow$/;
+              const FENCE_CLOSE = /^```$/;
+
+              // ── yaml 子集解析 ────────────────────────────────────────────────────────────
+              // 只支持本库 flow 围栏用到的形状：顶层 `key: scalar` / `key:` + 同列或缩进
+              // 的 `- item` 列表 / 缩进两格的一层嵌套 map；行内列表 `[a, b]`；标量只认
+              // null / true / false / 非负整数 / 裸字符串或引号字符串。超出即抛错。
+
+            note: |
+                本次变更加入了封闭状态集合与受限 flow YAML 解析边界，把 roadmap、milestone 和 issue 收敛成可机械校验的事实源，避免工具各自解释流程格式。
+
       - path: scripts/verify-flow.mjs
         note: 离线状态机门禁；--diff 模式补充提交引用与 issue scope 覆盖。
+        changes:
+          - snippet: |
+              #!/usr/bin/env node
+              // Gate: 开发流程体系（roadmap → milestone → issue → ADR）。规则 home：
+              // .agents/flow/README.md（封闭集合与 flow-lib 互为镜像）。
+              // 默认模式（离线，进 doc-quick/doc-sync/release）：流程树状态机全量校验。
+              // --diff <base> 模式（CI on PR）：在离线校验之上追加——base 树无 roadmap 时
+              // 跳过（流程自举前的 PR 不绑人）；每个 commit 标题与 PR 标题（PR_TITLE 环境
+              // 变量，CI 必传）须挂 (#N) 引用；引用的 issue 须在树内且处于 ready/
+              // in-progress；若本 PR 把 backlog issue 推进为 ready/in-progress/done，
+              // 则视为开工激活；diff 触及的文件须落在所挂 issue 的 scope 并集内。无豁免通道。
+
+            note: |
+                本次变更加入了离线与 PR diff 两档流程门禁：前者校验状态机，后者强制提交/PR 引用和改动面落在 issue scope 内。
+
       - path: scripts/verify-flow-online.mjs
         note: 与 GitHub 双侧一致的在线 lane，只校验不修改。
+        changes:
+          - snippet: |
+              async function main() {
+                const { tree, errors } = await loadFlowTree();
+                if (!tree.roadmap) {
+                  console.log("verify-flow-online: 流程树未启用，跳过");
+                  return;
+                }
+                if (errors.length > 0) {
+                  console.error(`verify-flow-online: 流程树解析失败\n  ${errors.join("\n  ")}`);
+                  process.exit(1);
+                }
+                const repo = deriveRepo();
+                const all = [];
+                const milestoneTitle = new Map(tree.milestones.map((m) => [m.data.id, m.data.title]));
+                for (const m of tree.milestones) {
+                  const n = m.data.github?.number;
+                  if (!Number.isInteger(n)) continue;
+                  const remote = gh(["api", `repos/${repo}/milestones/${n}`]);
+                  all.push(...checkMilestoneRemote(m.file, m.data, remote));
+                }
+                for (const issue of tree.issues) {
+                  const n = issue.data.github?.number;
+                  if (!Number.isInteger(n)) continue;
+                  const remote = gh(["issue", "view", String(n), "--repo", repo, "--json", "state,milestone,url"]);
+                  all.push(...checkIssueRemote(issue.file, issue.data.status, remote));
+                  all.push(...checkIssueMilestone(issue.file, milestoneTitle.get(issue.data.milestone), remote));
+                  if (remote.url !== issue.data.github.url)
+                    all.push(`${issue.file}: github.url 与远端不符（本地 ${issue.data.github.url}，远端 ${remote.url}）`);
+                }
+                const prNumber = process.env.PR_NUMBER;
+                if (prNumber) {
+                  const pr = gh(["pr", "view", prNumber, "--repo", repo, "--json", "milestone,projectItems"]);
+                  const projectCheck = process.env.FLOW_PROJECT_CHECK === "1";
+                  if (!projectCheck)
+                    console.log("verify-flow-online: 未配 FLOW_TOKEN，project 关联降级为提醒（本地跑本命令用 PAT 强校验）");
+                  all.push(...checkPrRemote(pr, { projectCheck }));
+                }
+                if (all.length > 0) {
+                  console.error(`verify-flow-online: FAIL\n  ${all.join("\n  ")}`);
+                  process.exit(1);
+                }
+                console.log("verify-flow-online: ok");
+
+            note: |
+                本次变更加入了 GitHub 双侧只读核对，检查 milestone、issue、PR 关联和状态映射，防止本地流程树与远端事实漂移。
+
       - path: scripts/flow-sync.mjs
         note: 以 gh 为唯一外部写入口，回填编号并同步状态映射。
+        changes:
+          - snippet: |
+              /** 把围栏内 github 段的 number/url 从 null 回填为实值（字符串变换，两侧共用）。 */
+              export function applyGithubRef(content, number, url) {
+                const next = content
+                  .replace("  number: null", `  number: ${number}`)
+                  .replace("  url: null", `  url: ${url}`);
+                if (next === content)
+                  throw new Error("回填失败：未找到 github 段的 null 占位（编号已回填过？）");
+                return next;
+              }
+
+              /** 回填一个文件的两侧围栏并重录配对记录。 */
+              async function backfill(file, number, url) {
+                const paths = pairPaths(file);
+                for (const side of [paths.base, paths.en]) {
+                  const content = await readFile(side, "utf8");
+                  await writeFile(side, applyGithubRef(content, number, url));
+                }
+                const baseContent = await readFile(paths.base, "utf8");
+                const enContent = await readFile(paths.en, "utf8");
+                await writeFile(
+                  paths.meta,
+                  renderPairRecord(paths, { baseHash: blobHash(baseContent), enHash: blobHash(enContent) }),
+                );
+              }
+
+            note: |
+                本次变更加入了编号与 URL 的两侧回填和配对重录，让中英 issue 围栏在创建远端对象后保持逐字一致。
+
       - path: scripts/flow-new-issue.mjs
         note: 生成 issue 中英三件套骨架。
+        changes:
+          - snippet: |
+              const FENCE = (milestone, priority, scopes) => [
+                "```yaml flow",
+                "kind: issue",
+                `milestone: ${milestone}`,
+                `priority: ${priority}`,
+                "status: backlog",
+                "scope:",
+                ...scopes.map((s) => `  - ${s}`),
+                "adr: []",
+                "github:",
+                "  number: null",
+                "  url: null",
+                "```",
+              ].join("\n");
+
+              /** 生成 issue 三件套。返回三件套路径。 */
+              export async function createIssue({ root = ".", milestone, priority, slug, title, titleEn, scopes }) {
+                if (!milestone || !slug || !title || !titleEn || !Array.isArray(scopes) || scopes.length === 0)
+                  throw new Error("milestone/slug/title/title-en/scope 均为必填");
+                if (!PRIORITIES.includes(priority))
+                  throw new Error(`priority 必须是 ${PRIORITIES.join(" | ")}`);
+                if (!/^[a-z0-9-]+$/.test(slug)) throw new Error(`slug 必须是 kebab-case：${slug}`);
+                const { tree, errors } = await loadFlowTree(path.join(root, ".agents/flow"));
+                if (errors.length > 0) throw new Error(`流程树有错误：${errors.join("；")}`);
+                if (!tree.milestones.some((m) => m.data.id === milestone))
+                  throw new Error(`milestone ${milestone} 不存在于 roadmap 序列`);
+
+                const name = `${milestone}-${slug}`;
+                const base = path.join(root, ".agents/flow/issues", `${name}.md`);
+                if (existsSync(base)) throw new Error(`issue 已存在：${base}`);
+                const fence = FENCE(milestone, priority, scopes);
+
+            note: |
+                本次变更加入了 issue 三件套脚手架，先生成中文、英文和配对记录的统一骨架，再进入流程校验。
+
       - path: scripts/install-git-hooks.mjs
         note: 安装 commit-msg 提醒钩子。
+        changes:
+          - snippet: |
+              # Installed by scripts/install-git-hooks.mjs — do not edit.
+              # 开发流程的本地提醒：提交标题须挂 flow issue 引用 (#N)（契约见
+              # .agents/flow/README.md；穷尽覆盖归 CI 的 verify-flow --diff）。
+              grep -Eq '[([]#[0-9]+[)]]' "$1" || {
+                echo "commit-msg: 提交标题缺 issue 引用 (#N)（--no-verify 可跳过，风险自担）" >&2
+                exit 1
+              }
+              `,
+
+            note: |
+                本次变更加入了 commit-msg 本地提醒，促使提交标题带上流程引用；穷尽校验仍由 CI 的 diff 门禁承担。
+
   - group: 门禁接线
     attention: skim
     why: 新门禁挂进 CI 与既有编排，扫一眼接线点即可。

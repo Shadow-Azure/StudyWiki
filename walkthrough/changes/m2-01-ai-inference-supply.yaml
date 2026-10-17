@@ -21,24 +21,785 @@ codeMap:
     files:
       - path: src-tauri/src/config.rs
         note: 解析、迁移、校验、原子写 0600 并生成脱敏投影。
+        changes:
+          - snippet: |
+              pub fn load_settings(dir: &Path) -> Result<Settings, String> {
+                  let path = dir.join("settings.json");
+                  let raw = match fs::read_to_string(&path) {
+                      Ok(raw) => raw,
+                      Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settings::default()),
+                      Err(e) => return Err(format!("读 {}: {e}", path.display())),
+                  };
+                  let s: Settings = serde_json::from_str(&raw)
+                      .map_err(|e| format!("settings.json 解析失败：{e}（保持原文件不动）"))?;
+                  if s.version > SUPPORTED_SETTINGS_VERSION {
+                      return Err(format!(
+                          "settings.json 版本 {} 高于本客户端支持的 {}，请升级客户端",
+                          s.version, SUPPORTED_SETTINGS_VERSION
+                      ));
+                  }
+                  if s.stream_event_limit_bytes == Some(0) {
+                      return Err("settings.json 的 streamEventLimitBytes 不能为 0".into());
+                  }
+                  if let Some(mode) = &s.agent_approval_mode {
+                      if mode != "ask" && mode != "auto" {
+                          return Err("settings.json 的 agentApprovalMode 只能是 ask 或 auto".into());
+                      }
+                  }
+                  Ok(s)
+              }
+
+              /// 原子写 settings.json：唯一 tmp 名（pid+纳秒）+ 创建即 0600（OpenOptions，
+              /// 不存在"先 0644 后 chmod"的窗口）+ rename，杜绝半截文件、权限窗口与并发覆盖 tmp。
+              pub fn save_settings(dir: &Path, s: &Settings) -> Result<(), String> {
+                  fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+                  let path = dir.join("settings.json");
+                  let nanos = SystemTime::now()
+                      .duration_since(UNIX_EPOCH)
+                      .map(|d| d.as_nanos())
+                      .unwrap_or(0);
+                  let tmp = dir.join(format!(
+                      "settings.json.{}.{}.tmp",
+                      std::process::id(),
+                      nanos
+                  ));
+                  let json = serde_json::to_string_pretty(s).map_err(|e| format!("序列化失败：{e}"))?;
+                  #[cfg(unix)]
+                  {
+                      use std::io::Write;
+                      use std::os::unix::fs::OpenOptionsExt;
+                      let mut f = std::fs::OpenOptions::new()
+                          .create(true)
+                          .truncate(true)
+                          .write(true)
+                          .mode(0o600)
+                          .open(&tmp)
+                          .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
+                      f.write_all(json.as_bytes())
+                          .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
+                  }
+                  #[cfg(not(unix))]
+                  fs::write(&tmp, json).map_err(|e| format!("写 {}: {e}", tmp.display()))?;
+                  fs::rename(&tmp, &path).map_err(|e| format!("rename → {}: {e}", path.display()))
+              }
+
+              /// 配置域判定：路径位于用户配置根内（含 plugins/、settings.json）即 true。
+              /// 文件树/读写命令据此拒绝——用户配置域不是工作区数据，外置插件不可经 files 服务触达。
+              /// `root` 由调用方传入（App 态为 app_studywiki_dir），纯函数便于测试。
+
+            note: |
+                本次变更加入了 settings 唯一读写实现：坏配置 fail-loud，写入走目录、临时文件、0600、fsync 和原子 rename，保护用户密钥配置。
+
       - path: src-tauri/src/lib.rs
         note: 暴露 endpoint CRUD、探测和 chat 命令，并接入插件服务。
+        changes:
+          - snippet: |
+              pub fn app_builder() -> tauri::Builder<tauri::Wry> {
+                  configure_window_lifecycle(
+                      tauri::Builder::<tauri::Wry>::new().plugin(tauri_plugin_dialog::init()),
+                  )
+                  .setup(|app| {
+                      // 用户配置根一次性迁移：老 app_config_dir 的插件清单/目录搬入 ~/.studywiki。
+                      config::migrate_legacy(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+                      Ok(())
+                  })
+                  .invoke_handler(tauri::generate_handler![
+                      read_tree,
+                      read_text_file,
+                      grep_files,
+                      write_text_file,
+                      read_binary_file,
+                      write_binary_file,
+                      authorize_read_path,
+                      agent_session_paths,
+                      agent_session_path,
+                      read_agent_session_file,
+                      write_agent_session_file,
+                      append_session_event,
+                      delete_session_file,
+                      windows::create_window,
+                      windows::get_window_state,
+                      windows::set_window_root,
+                      windows::set_close_guard_ready,
+                      windows::read_manifest,
+                      windows::write_manifest,
+                      plugins::list_plugins,
+                      plugins::read_plugin_module,
+                      plugins::remove_plugin,
+                      plugins::snapshot_plugin_version,
+                      plugins::list_plugin_versions,
+                      plugins::restore_plugin_version,
+                      plugins::install_plugin,
+                      plugins::import_plugin,
+                      llm::llm_list_presets,
+                      llm::llm_list_endpoints,
+                      llm::llm_upsert_endpoint,
+                      llm::llm_remove_endpoint,
+                      llm::llm_reveal_key,
+                      llm::llm_probe,
+                      llm::llm_set_default_model,
+                      llm::agent_set_default_approval_mode,
+                      llm::llm_chat,
+                      llm::llm_chat_stream,
+                      llm::llm_chat_abort
+                  ])
+              }
+
+            note: |
+                本次变更把模型配置、探测和 chat 命令统一登记进 Tauri invoke 面，使插件只能通过宿主服务触达模型能力。
+
   - group: 推理服务与宿主 facade
     attention: must-read
     why: HTTP 出口、错误归一和前端三码是跨进程契约。
     files:
       - path: src-tauri/src/llm.rs
         note: 提供厂商预设、OpenAI 兼容探测与非流式 chat，归一网络与协议错误。
+        changes:
+          - snippet: |
+              fn probe_with(agent: &ureq::Agent, ep: &Endpoint) -> Result<u64, LlmError> {
+                  let url = join_url(&ep.base_url, "models");
+                  let start = Instant::now();
+                  with_auth(agent.get(&url), ep)
+                      .call()
+                      .map_err(map_transport)?;
+                  Ok(start.elapsed().as_millis() as u64)
+              }
+
+              /// base64 数据的解码字节估算（向下取整，仅用于大小门禁）。
+              fn decoded_base64_len(data: &str) -> u64 {
+                  data.len() as u64 * 3 / 4
+              }
+
+              /// 附件大小硬上限：单件与聚合（inline 按解码估算 / path 读 metadata），超限
+              /// UNSUPPORTED_CONTENT 明确报错；url 来源不计（由 provider 端拉取，客户端不下载）。
+              fn ensure_attachment_size(
+                  req: &ChatRequest,
+                  max_per_item: u64,
+                  max_total: u64,
+              ) -> Result<(), LlmError> {
+                  let mut total: u64 = 0;
+                  for message in &req.messages {
+                      let MessageContent::Parts(parts) = &message.content else {
+                          continue;
+                      };
+                      for part in parts {
+                          let size = match part {
+                              ContentPart::Text { .. } => continue,
+                              ContentPart::Image { source } | ContentPart::Audio { source } => match source {
+                                  MediaSource::Inline { data, .. } => decoded_base64_len(data),
+                                  MediaSource::Path { path } => {
+                                      std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+                                  }
+                                  MediaSource::Url { .. } => 0,
+                              },
+                          };
+                          if size > max_per_item {
+                              return Err(LlmError::new(
+                                  "UNSUPPORTED_CONTENT",
+                                  format!("附件超过大小上限 {max_per_item} 字节（不做压缩，请压缩或分段后再试）"),
+                              ));
+                          }
+                          total += size;
+                          if total > max_total {
+                              return Err(LlmError::new(
+                                  "UNSUPPORTED_CONTENT",
+                                  format!("单请求附件总量超过上限 {max_total} 字节"),
+                              ));
+                          }
+                      }
+                  }
+                  Ok(())
+              }
+
+              /// 模型能力守门：消息里的媒体类 part 必须有对应模型能力；纯文本不受影响。
+              /// TS 侧同类门禁保留，本函数是 Rust 出口的最后防线。
+              fn ensure_media_caps(req: &ChatRequest, ep: &Endpoint) -> Result<(), LlmError> {
+                  let has_cap = |wanted: &str| {
+                      ep.models.iter().any(|model| {
+                          model.id == req.model && model.capabilities.iter().any(|cap| cap == wanted)
+                      })
+                  };
+                  for message in &req.messages {
+                      let MessageContent::Parts(parts) = &message.content else {
+                          continue;
+                      };
+                      for part in parts {
+                          let (kind, capability) = match part {
+                              ContentPart::Image { .. } => ("图片", "vision"),
+                              ContentPart::Audio { .. } => ("音频", "audio"),
+                              ContentPart::Text { .. } => continue,
+                          };
+                          if !has_cap(capability) {
+                              return Err(LlmError::new(
+                                  "UNSUPPORTED_CONTENT",
+                                  format!("当前模型缺少 {capability} 能力，不支持{kind}内容"),
+                              ));
+                          }
+                      }
+                  }
+                  Ok(())
+              }
+
+              /// 能力门禁后的非流式 chat：供命令与集成测试共用，确保媒体被拒时不建立请求。
+              fn chat_checked(
+                  agent: &ureq::Agent,
+                  ep: &Endpoint,
+                  req: &ChatRequest,
+                  root_check: &dyn Fn(&str) -> bool,
+              ) -> Result<ChatResponse, LlmError> {
+                  ensure_attachment_size(req, MAX_ATTACHMENT_BYTES, MAX_REQUEST_ATTACHMENT_BYTES)?;
+                  ensure_media_caps(req, ep)?;
+                  chat_with(agent, ep, req, root_check)
+              }
+
+              /// 非流式 chat：POST chat/completions，解析 choices[0].message.content（必须是字符串）。
+              fn chat_with(
+                  agent: &ureq::Agent,
+                  ep: &Endpoint,
+                  req: &ChatRequest,
+                  root_check: &dyn Fn(&str) -> bool,
+              ) -> Result<ChatResponse, LlmError> {
+                  let url = join_url(&ep.base_url, "chat/completions");
+                  let body = build_chat_body(req, false, root_check)?;
+                  // ureq 未开 json feature（依赖白名单零新增）：手工序列化 + Content-Type 头。
+                  let resp = with_auth(agent.post(&url), ep)
+                      .set("Content-Type", "application/json")
+                      .send_bytes(body.to_string().as_bytes())
+                      .map_err(map_transport)?;
+                  let wire: WireChat = serde_json::from_reader(resp.into_reader()).map_err(|e| {
+                      LlmError::new(
+                          "BAD_RESPONSE",
+                          format!("响应不是合法 chat/completions 回包：{e}"),
+                      )
+                  })?;
+                  let choice = wire
+                      .choices
+                      .first()
+                      .ok_or_else(|| LlmError::new("BAD_RESPONSE", "choices 为空"))?;
+                  let content = choice
+                      .message
+                      .content
+                      .as_str()
+                      .ok_or_else(|| LlmError::new("BAD_RESPONSE", "content 不是字符串（多模态分段暂不支持）"))?
+                      .to_string();
+                  Ok(ChatResponse {
+                      content,
+                      finish_reason: choice.finish_reason.clone(),
+                      usage: wire.usage,
+                  })
+              }
+
+              /// 按 id 找 endpoint；缺席 → ENDPOINT_UNKNOWN。
+              fn find_endpoint(s: &Settings, id: &str) -> Result<Endpoint, LlmError> {
+                  s.endpoints
+                      .iter()
+                      .find(|e| e.id == id)
+                      .cloned()
+                      .ok_or_else(|| LlmError::new("ENDPOINT_UNKNOWN", format!("endpoint 不存在：{id}")))
+              }
+
+              /// upsert 本体：先校验（INVALID_CONFIG），再按 id 替换或追加。
+              /// key 语义由 dirty 标记区分（编辑表单回填掩码，\“没动\”与\“删空\”在 wire 上
+              /// 曾无法区分）：apiKeyDirty false/缺省且空 apiKey = 保留已存 key（安全默认，
+              /// 避免"改个名字顺手清掉密钥"）；dirty true = 按传入值更新，空即显式清空。
+              fn upsert_into(s: &mut Settings, mut e: Endpoint) -> Result<(), LlmError> {
+                  config::validate_endpoint(&e).map_err(|m| LlmError::new("INVALID_CONFIG", m))?;
+                  if let Some(slot) = s.endpoints.iter_mut().find(|x| x.id == e.id) {
+                      if !e.api_key_dirty && e.api_key.is_empty() {
+                          e.api_key = slot.api_key.clone();
+                      }
+                      *slot = e;
+                  } else {
+                      s.endpoints.push(e);
+                  }
+                  Ok(())
+              }
+
+              /// 按 id 返回完整 apiKey 明文（编辑态眼睛揭示用；纯函数便于测试）。
+              fn reveal_key(s: &Settings, id: &str) -> Result<String, LlmError> {
+                  Ok(find_endpoint(s, id)?.api_key)
+              }
+
+              /// 默认模型本体：Some(id) 须是任一 endpoint 已声明模型（INVALID_CONFIG）；None 清除。
+              fn set_default_into(s: &mut Settings, model: Option<String>) -> Result<(), LlmError> {
+                  if let Some(id) = &model {
+                      let known = s
+                          .endpoints
+                          .iter()
+                          .any(|e| e.models.iter().any(|m| &m.id == id));
+                      if !known {
+                          return Err(LlmError::new("INVALID_CONFIG", format!("未知模型：{id}")));
+                      }
+                  }
+                  s.default_model = model;
+                  Ok(())
+              }
+
+              /// 返回厂商预设表（前端唯一拿 baseUrl 的通道）。
+
+            note: |
+                本次变更加入了探测、附件大小门禁和 endpoint CRUD 前置校验，把协议合法性与密钥边界集中在 Rust 唯一联网层。
+
       - path: src/host/llm.ts
         note: 暴露 list、upsert、remove、probe、chat，并把错误路由为 MODEL_*。
+        changes:
+          - snippet: |
+              /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
+               * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
+               * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */
+              export class LlmService {
+                readonly #deps: LlmDeps;
+
+                constructor(deps: LlmDeps = defaultLlmDeps) {
+                  if (deps !== defaultLlmDeps && !deps.createChannel) {
+                    console.warn(
+                      "[llm] deps 未提供 createChannel，回落真实 Tauri Channel——测试环境请在 deps 注入假工厂",
+                    );
+                  }
+                  this.#deps = { ...defaultLlmDeps, ...deps };
+                }
+
+                /** Single IPC seam; rejections normalize into LlmError(code). */
+                async #call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+                  try {
+                    return (await this.#deps.invoke(cmd, args)) as T;
+                  } catch (e) {
+                    const shape = e as { code?: unknown; message?: unknown };
+                    if (shape && typeof shape.code === "string") {
+                      throw new LlmError(shape.code, typeof shape.message === "string" ? shape.message : shape.code);
+                    }
+                    throw new LlmError("BAD_RESPONSE", e instanceof Error ? e.message : String(e));
+                  }
+                }
+
+                /** 厂商预设表（baseUrl 只在 Rust 侧定义）。 */
+                listPresets(): Promise<LlmPreset[]> {
+                  return this.#call<LlmPreset[]>("llm_list_presets");
+                }
+
+                /** 脱敏 endpoint 列表 + 默认模型。 */
+                listEndpoints(): Promise<RedactedSettings> {
+                  return this.#call<RedactedSettings>("llm_list_endpoints");
+                }
+
+                /** 新增或按 id 覆盖 endpoint（仅内置插件面；校验失败 INVALID_CONFIG）。 */
+                upsertEndpoint(endpoint: EndpointInput): Promise<void> {
+                  return this.#call<void>("llm_upsert_endpoint", { endpoint });
+                }
+
+                /** 按 id 删除 endpoint（缺席 ENDPOINT_UNKNOWN）。 */
+                removeEndpoint(id: string): Promise<void> {
+                  return this.#call<void>("llm_remove_endpoint", { id });
+                }
+
+                /** 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达；未知模型 INVALID_CONFIG）。 */
+                setDefaultModel(model: string | null): Promise<void> {
+                  return this.#call<void>("llm_set_default_model", { model });
+                }
+
+                /** 设置新建 agent 会话的 durable 审批模式；当前会话不跟随改写。 */
+                setDefaultAgentApprovalMode(mode: "ask" | "auto"): Promise<void> {
+                  return this.#call<void>("agent_set_default_approval_mode", { mode });
+                }
+
+                /** 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；
+                 * 仅内置插件面——guard 外置白名单不含本方法）。 */
+                revealKey(id: string): Promise<string> {
+                  return this.#call<string>("llm_reveal_key", { id });
+                }
+
+                /** 探测 endpoint（GET /models），成功返回延迟 ms。 */
+                probe(id: string): Promise<number> {
+                  return this.#call<number>("llm_probe", { id });
+                }
+
+                /** 解析模型归属 endpoint：只路由 chat 类 endpoint，asr 配置不得误入推理命令。
+                 * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
+                async #route(model?: string): Promise<{ endpointId: string; model: string; entry: ModelEntry }> {
+                  const settings = await this.listEndpoints();
+                  const resolved = model ?? settings.defaultModel;
+                  if (!resolved) {
+                    throw new LlmError("MODEL_UNSPECIFIED", "未指定 model 且未配置默认模型");
+                  }
+                  const owners = settings.endpoints.filter(
+                    (e) => e.kind === "chat" && e.models.some((m) => m.id === resolved),
+                  );
+                  if (owners.length === 0) {
+                    throw new LlmError("MODEL_UNKNOWN", `未找到模型：${resolved}`);
+                  }
+                  if (owners.length > 1) {
+                    throw new LlmError("MODEL_AMBIGUOUS", `模型 ${resolved} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
+                  }
+                  const entry = owners[0].models.find((m) => m.id === resolved)!;
+                  return { endpointId: owners[0].id, model: resolved, entry };
+                }
+
+                /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
+                 * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）/
+                 *   tools 不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
+                async chat(req: ChatInput): Promise<ChatResult> {
+                  const { endpointId, model, entry } = await this.#route(req.model);
+                  if (req.tools?.length && !entry.capabilities.includes("tools")) {
+                    throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持工具调用");
+                  }
+                  if (req.signal) {
+                    return await this.#consumeChatStream(await this.chatStream(req), req.signal);
+                  }
+                  return this.#call<ChatResult>("llm_chat", {
+                    req: {
+                      endpointId,
+                      model,
+                      messages: req.messages,
+                      ...(req.tools?.length ? { tools: req.tools } : {}),
+                      ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
+                      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+                    },
+                  });
+                }
+
+            note: |
+                本次变更加入了插件可见的 LLM facade：endpoint 管理和 chat 走同一 IPC 缝，先路由模型并检查能力，再执行同步推理。
+
   - group: 设置面板入口
     attention: must-read
     why: 用户配置、能力位和默认模型的语义都从模块入口进入。
     files:
       - path: src/plugins/llm-settings/index.ts
         note: 渲染表单、探测、保存与删除流程。
+        changes:
+          - snippet: |
+              /** 表单态：厂商预设置顶（决定其余字段的第一选择）→ 字段回填 → 模型行编辑 → 校验保存。 */
+              async function renderForm(
+                ctx: Context,
+                presets: LlmPreset[],
+                rerender: () => Promise<void>,
+                initial?: EndpointDraft,
+                endpoint?: RedactedEndpoint,
+              ): Promise<void> {
+                const overlay = document.querySelector(".llm-panel");
+                if (!overlay) return;
+                const box = overlay.querySelector(".plugin-panel-box") as HTMLElement;
+                let draft = initial ?? blankDraft();
+                box.textContent = "";
+                const title = document.createElement("h3");
+                title.className = "plugin-panel-title";
+                title.textContent = initial ? "编辑 endpoint" : "新增 endpoint";
+                const form = document.createElement("form");
+                form.className = "llm-form";
+                // 顶部：厂商预设 + 类型
+                const top = document.createElement("div");
+                top.className = "llm-grid";
+                const vendorField = document.createElement("div");
+                vendorField.className = "llm-field";
+                const vendorLabel = fieldLabel("厂商预设");
+                const vendor = document.createElement("select");
+                vendor.name = "vendor";
+                for (const p of presets) {
+                  const opt = document.createElement("option");
+                  opt.value = p.vendor;
+                  opt.textContent = p.name;
+                  vendor.append(opt);
+                }
+                const custom = document.createElement("option");
+                custom.value = CUSTOM_VENDOR;
+                custom.textContent = "自定义（OpenAI 兼容）";
+                vendor.append(custom);
+                if (initial) {
+                  vendor.disabled = true;
+                  vendor.title = "编辑态不可切换厂商；如需换预设请删除后新增";
+                }
+                vendorField.append(vendorLabel, vendor);
+                const kindField = document.createElement("div");
+                kindField.className = "llm-field";
+                const kindLabel = fieldLabel("类型");
+                const kind = document.createElement("select");
+                kind.name = "kind";
+                for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
+                  const opt = document.createElement("option");
+                  opt.value = value;
+                  opt.textContent = text;
+                  kind.append(opt);
+                }
+                kind.value = draft.kind;
+                kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
+                kindField.append(kindLabel, kind);
+                top.append(vendorField, kindField);
+                form.append(top);
+                if (!initial) {
+                  const hint = document.createElement("p");
+                  hint.className = "llm-hint";
+                  hint.textContent = "选择预设自动填入 id / 名称 / baseUrl 与模型清单，只需补 apiKey；切「自定义」则全部手填。";
+                  form.append(hint);
+                }
+                const setField = (field: "id" | "name" | "baseUrl" | "apiKey", value: string): void => {
+                  if (field === "id") draft.id = value;
+                  else if (field === "name") draft.name = value;
+                  else if (field === "baseUrl") draft.baseUrl = value;
+                  else draft.apiKey = value;
+                };
+                const error = document.createElement("div");
+                error.className = "llm-error";
+                const cancel = document.createElement("button");
+                cancel.type = "button";
+                cancel.className = "btn btn-ghost";
+                cancel.textContent = "取消";
+                cancel.addEventListener("click", () => void rerender());
+                const save = document.createElement("button");
+                save.type = "submit";
+                save.className = "btn btn-primary";
+                save.textContent = "保存";
+                const foot = document.createElement("div");
+                foot.className = "llm-form-foot";
+                foot.append(error, cancel, save);
+                form.append(foot);
+
+                // 动态区：字段网格 + 模型 fieldset（vendor change / 模型增删触发整体重建）
+                let zone: HTMLElement | null = null;
+                let keyRevealed = false;
+                let editedKey: string | null = null;
+                let revealedStoredKey: string | null = null;
+                const drawFields = (): void => {
+                  zone?.remove();
+                  zone = document.createElement("div");
+                  zone.dataset.dyn = "";
+                  const grid = document.createElement("div");
+                  grid.className = "llm-grid";
+                  for (const [label, name, value, wide] of [
+                    ["id", "id", draft.id, false],
+                    ["名称", "name", draft.name, false],
+                    ["baseUrl", "baseUrl", draft.baseUrl, true],
+                    ["apiKey", "apiKey", draft.apiKey, true],
+                  ] as const) {
+                    const f = document.createElement("div");
+                    f.className = wide ? "llm-field llm-field-wide" : "llm-field";
+                    const l = fieldLabel(label);
+                    const input = document.createElement("input");
+                    input.name = name;
+                    input.value = value;
+                    if (name === "id" && initial) {
+                      // 编辑态锁 id：改 id 等于"删旧建新"，显式走删除动作更诚实。
+                      input.disabled = true;
+                      input.title = "id 不可改；如需改名请删除后重建";
+                    }
+                    if (name === "id" || name === "baseUrl") input.classList.add("llm-mono");
+                    if (name === "apiKey") {
+                      input.autocomplete = "off";
+                      input.placeholder = initial
+                        ? "掩码仅展示；点眼睛查看或编辑"
+                        : "粘贴厂商控制台签发的 API Key（自托管可留空）";
+                      const row = document.createElement("div");
+                      row.className = "llm-key-row";
+                      row.append(input);
+                      let eye: HTMLButtonElement | null = null;
+                      const keyHint = document.createElement("span");
+                      keyHint.className = "llm-hint llm-key-hint";
+                      const syncKeyDisplay = (): void => {
+                        const hasStoredKey = Boolean(initial && endpoint?.hasKey);
+                        input.readOnly = hasStoredKey && !keyRevealed;
+                        if (hasStoredKey) {
+                          input.value = keyRevealed
+                            ? editedKey ?? revealedStoredKey ?? ""
+                            : editedKey !== null ? keyPreview(editedKey) : endpoint!.keyPreview;
+                        }
+                        input.title = keyRevealed ? "编辑明文 Key" : "掩码仅展示；点击眼睛查看或编辑";
+                        if (hasStoredKey && editedKey !== null) {
+                          keyHint.textContent = keyRevealed
+                            ? "正在编辑新 Key；保存会替换旧 key。仅保存在本机 ~/.studywiki/settings.json（0600）"
+                            : `已修改待保存：${editedKey === "" ? "已清空" : keyPreview(editedKey)}；切回掩码不会丢失修改。`;
+                        } else if (keyRevealed) {
+                          keyHint.textContent = "已揭示旧 key；编辑后保存替换，未编辑保存保留。仅保存在本机 ~/.studywiki/settings.json（0600）";
+                        } else {
+                          keyHint.textContent = "掩码仅展示，不能编辑；点眼睛查看或编辑。仅保存在本机 ~/.studywiki/settings.json（0600）";
+                        }
+                        if (eye) {
+                          eye.setAttribute("aria-label", keyRevealed ? "隐藏密钥" : "显示密钥");
+                          eye.title = keyRevealed ? "隐藏完整密钥" : "显示/隐藏完整密钥";
+                        }
+                      };
+                      if (initial && endpoint?.hasKey) {
+                        eye = labelButton("eye", "", { className: "btn btn-ghost icon-btn", ariaLabel: "显示密钥" });
+                        eye.type = "button";
+                        eye.dataset.action = "toggle-key";
+                        eye.title = "显示/隐藏完整密钥";
+                        eye.addEventListener("click", () => {
+                          void (async () => {
+                            if (keyRevealed) {
+                              keyRevealed = false;
+                            } else {
+                              if (editedKey === null) {
+                                revealedStoredKey = await ctx.llm.revealKey(endpoint.id);
+                              }
+                              keyRevealed = true;
+                            }
+                            syncKeyDisplay();
+                          })();
+                        });
+                        row.append(eye);
+                        syncKeyDisplay();
+                      } else {
+                        syncKeyDisplay();
+                      }
+                      f.append(l, row, keyHint);
+                    } else {
+                      f.append(l, input);
+                    }
+                    input.addEventListener("input", () => {
+                      if (name === "apiKey" && initial && endpoint?.hasKey) {
+                        if (!keyRevealed) return;
+                        editedKey = input.value;
+                      }
+                      setField(name, input.value);
+                    });
+                    grid.append(f);
+                  }
+                  zone.append(grid);
+                  const fieldset = document.createElement("fieldset");
+                  fieldset.className = "llm-fieldset";
+                  const legend = document.createElement("legend");
+                  legend.textContent = "模型（随预设带入，可增删改）";
+                  fieldset.append(legend);
+                  for (const [i, m] of draft.models.entries()) {
+                    const row = document.createElement("div");
+                    row.className = "llm-model-row";
+                    const id = document.createElement("input");
+                    id.classList.add("llm-mono");
+                    id.value = m.id;
+                    id.placeholder = "模型 id";
+                    id.addEventListener("input", () => (m.id = id.value));
+                    row.append(id);
+                    for (const { value, text } of CAPABILITY_CHECKS) {
+                      const check = document.createElement("input");
+                      check.type = "checkbox";
+                      check.name = value;
+                      check.checked = m.capabilities.includes(value);
+                      check.addEventListener("change", () => {
+                        const withoutCapability = m.capabilities.filter((capability) => capability !== value);
+                        m.capabilities = check.checked ? [...withoutCapability, value] : withoutCapability;
+                      });
+                      const label = document.createElement("label");
+                      label.className = "llm-vision";
+                      label.append(check, document.createTextNode(text));
+                      row.append(label);
+                    }
+                    const del = document.createElement("button");
+                    del.type = "button";
+                    del.className = "btn btn-ghost";
+                    del.textContent = "×";
+                    del.addEventListener("click", () => {
+                      draft.models.splice(i, 1);
+                      drawFields();
+                    });
+                    row.append(del);
+                    fieldset.append(row);
+                  }
+                  const addModel = document.createElement("button");
+                  addModel.type = "button";
+                  addModel.className = "llm-model-add";
+                  addModel.textContent = "＋ 添加模型";
+                  addModel.addEventListener("click", () => {
+                    draft.models.push({ id: "", capabilities: ["text"] });
+                    drawFields();
+                  });
+                  fieldset.append(addModel);
+                  zone.append(fieldset);
+                  form.insertBefore(zone, foot);
+                };
+
+                const refreshFields = (): void => {
+                  draft =
+                    vendor.value === CUSTOM_VENDOR
+                      ? blankDraft()
+                      : instantiatePreset(presets.find((p) => p.vendor === vendor.value)!);
+                  kind.value = draft.kind;
+                  drawFields();
+                };
+                vendor.addEventListener("change", refreshFields);
+
+                form.addEventListener("submit", (e) => {
+                  e.preventDefault();
+                  // 提交时从 DOM 收值（对程序化赋值与手动输入同样稳健）；模型行走闭包编辑态。
+                  for (const name of ["id", "name", "baseUrl", "apiKey"] as const) {
+                    const input = form.querySelector<HTMLInputElement>(`[name=${name}]`);
+                    if (input) setField(name, input.value);
+                  }
+                  if (initial && endpoint?.hasKey) {
+                    draft.apiKey = keyRevealed && editedKey === null
+                      ? revealedStoredKey ?? ""
+                      : editedKey ?? "";
+                  }
+                  const problem = validateDraft(draft);
+                  if (problem) {
+                    error.textContent = problem;
+                    return;
+                  }
+                  error.textContent = "";
+                  // key 保存值独立于显示态：掩码永远只读；只有明文编辑产生的 editedKey 才替换。
+                  const keyDirty = !initial || !endpoint?.hasKey || editedKey !== null;
+                  const payload: EndpointInput = {
+                    ...draft,
+                    // 新增态原样传（空 key 合法）；编辑态未动掩码 = 保留（空 + 无 dirty）。
+                    apiKey: keyDirty || !initial ? draft.apiKey : "",
+                  };
+                  if (keyDirty) payload.apiKeyDirty = true;
+                  void ctx.llm
+                    .upsertEndpoint(payload)
+                    .then(() => rerender())
+                    .catch((err) => (error.textContent = errorMessage(err)));
+                });
+
+                vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
+                if (initial) drawFields();
+                else refreshFields();
+                box.append(title, form);
+              }
+
+            note: |
+                本次变更加入了新增/编辑共用表单状态机，用 apiKeyDirty 区分保留旧密钥和明文替换，提交前复用与 Rust 一致的校验。
+
       - path: src/plugins/llm-settings/model.ts
         note: 预设实例化、表单状态与提交模型。
+        changes:
+          - snippet: |
+              /** 预设 → 可编辑草稿：id/name/vendor 派生，key 留空，模型深拷贝防改坏预设表。
+               * @param p ctx.llm.listPresets 返回的一条预设。
+               * @returns 可直接进表单编辑的草稿。 */
+              export function instantiatePreset(p: PresetLike): EndpointDraft {
+                return {
+                  id: p.vendor,
+                  name: p.name,
+                  kind: "chat",
+                  baseUrl: p.baseUrl,
+                  apiKey: "",
+                  models: p.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
+                };
+              }
+
+            note: |
+                本次变更加入了厂商预设实例化：新 endpoint 用 vendor 作 id、密钥留空并浅拷贝能力数组，避免预设表被表单编辑污染。
+
+          - snippet: |
+              /** 草稿校验：与 Rust validate_endpoint 同规则；错误消息点名字段（中文内联展示）。
+               * @param d 表单当前草稿。
+               * @returns null = 合法；否则返回错误消息。空 apiKey 合法（自托管/后填）。 */
+              export function validateDraft(d: EndpointDraft): string | null {
+                if (!d.id.trim()) return "id 不能为空";
+                if (!d.name.trim()) return "name 不能为空";
+                if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
+                  return "baseUrl 必须以 http:// 或 https:// 开头";
+                }
+                if (d.models.length === 0) return "至少要有一个模型";
+                const seen = new Set<string>();
+                for (const m of d.models) {
+                  if (!m.id.trim()) return "模型 id 不能为空";
+                  if (seen.has(m.id)) return `模型 id 重复：${m.id}`;
+                  seen.add(m.id);
+                }
+                return null;
+              }
+
+            note: |
+                本次变更加入了前端草稿校验，与 Rust 规则同形并输出中文字段错误；空 key 允许保存以兼容自托管和稍后补密钥。
+
   - group: 测试与伴生边界
     attention: skim
     why: 行为边界和分层由测试与登记文件钉住。

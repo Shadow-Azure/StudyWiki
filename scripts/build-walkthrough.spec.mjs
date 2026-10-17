@@ -48,6 +48,11 @@ codeMap:
     files:
       - path: ${sourcePath}
         note: 新增常量
+        changes:
+          - snippet: |
+              const covered = 1;
+            note: |
+              归档页注解：入口常量是本次变更的落点。
   - group: 附带
     attention: skim
     why: null
@@ -223,6 +228,8 @@ describe("build-walkthrough", () => {
     expect(changePage).toContain('<details class="map-group skim">');
     expect(changePage).toContain("核心变化");
     expect(changePage).toContain(">必读</span>");
+    expect(changePage).toContain("检视注解：");
+    expect(changePage).toContain("归档页注解：入口常量是本次变更的落点。");
     expect(changePage).toContain(">可扫读</span>");
     expect(changePage.indexOf('<section class="map-group must-read">'))
       .toBeLessThan(changePage.indexOf('<details class="map-group skim">'));

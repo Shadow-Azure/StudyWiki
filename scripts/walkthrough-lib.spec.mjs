@@ -113,7 +113,11 @@ function validChange() {
         group: "实现",
         attention: "must-read",
         why: "核心变化",
-        files: [{ path: "src/demo.ts", note: "新增常量" }],
+        files: [{
+        path: "src/demo.ts",
+        note: "新增常量",
+        changes: [{ snippet: "const covered = 1;", note: "本次新增的入口常量。" }],
+      }],
       },
       {
         group: "机械",
@@ -262,6 +266,11 @@ codeMap:
     files:
       - path: src/demo.ts
         note: 新增常量
+        changes:
+          - snippet: |
+              const covered = 1;
+            note: |
+              本次新增的入口常量。
   - group: 机械
     attention: skip
     why: null
@@ -480,6 +489,58 @@ describe("walkthrough-lib", () => {
     );
   });
 
+  it("must-read 组的源代码文件必须带 changes 注解；非源码文件豁免", () => {
+    const root = tempRoot("walkthrough-lib-annot-");
+    writeValidSite(root);
+    // 默认夹具已带注解 → 绿
+    expect(validateSchema(parseSite(root)).some((e) => e.includes("changes 检视注解"))).toBe(false);
+    // 删掉注解 → 红
+    const stripped = `kind: change
+issue: demo-change
+title: Demo change
+scale:
+  files: 2
+  additions: 15
+  deletions: 8
+feature: |
+  功能行为变化。
+userFlow:
+  - 打开演示页面
+architectural: |
+  无。
+codeMap:
+  - group: 实现
+    attention: must-read
+    why: 核心变化
+    files:
+      - path: src/demo.ts
+        note: 新增常量
+  - group: 机械
+    attention: skip
+    why: null
+    files:
+      - path: pnpm-lock.yaml
+        note: 锁文件
+reviewGuide:
+  order:
+    - 先读变更地图
+  risks:
+    - 风险一
+  acceptance:
+    - item: 演示可用
+      evidence: pnpm exec vitest 通过
+verification:
+  - pnpm exec vitest run scripts/walkthrough-lib.spec.mjs
+touches: [file:src/demo.ts]
+`;
+    write(root, "walkthrough/changes/demo-change.yaml", stripped);
+    expect(validateSchema(parseSite(root)).some((e) => e.includes("must-read 组的源代码文件必须带 changes 检视注解"))).toBe(true);
+    // 非源码文件豁免：换成 walkthrough 内容页路径 → 不红
+    const nonSource = stripped.replace("      - path: src/demo.ts\n        note: 新增常量", "      - path: walkthrough/changes/other.yaml\n        note: 内容页");
+    write(root, "walkthrough/changes/demo-change.yaml", nonSource);
+    expect(validateSchema(parseSite(root)).some((e) => e.includes("changes 检视注解"))).toBe(false);
+  });
+
   it("codeMap 校验 attention 封闭集合、why 可空与机械路径不得 must-read", () => {
     const make = (codeMap) => {
       const site = emptySite();
@@ -654,6 +715,41 @@ describe("walkthrough-lib", () => {
     expect(errors[0]).toContain("walkthrough/files/src/demo.ts.yaml");
     expect(errors[1]).toContain("src/gone.ts");
     expect(errors[1]).toContain("walkthrough/features/demo.yaml");
+  });
+
+  it("checkAnchors 校验 changes 注解：存在可定位绿、不可定位红、删除路径跳过", () => {
+    const root = tempRoot("studywiki-walkthrough-change-anchors-");
+    write(root, "src/demo.ts", SOURCE);
+    write(root, "src/bad.ts", "const unrelated = true;\n");
+    const site = emptySite();
+    site.changes.set("demo-change", {
+      codeMap: [{
+        group: "实现",
+        attention: "must-read",
+        why: "核心变化",
+        files: [
+          {
+            path: "src/demo.ts",
+            note: "有效注解",
+            changes: [{ snippet: "const covered = 1;", note: "绿态锚点。" }],
+          },
+          {
+            path: "src/bad.ts",
+            note: "坏注解",
+            changes: [{ snippet: "not present", note: "红态锚点。" }],
+          },
+          {
+            path: "src/gone.ts",
+            note: "历史文件",
+            changes: [{ snippet: "历史片段不再要求当前命中", note: "历史归档语义。" }],
+          },
+        ],
+      }],
+    });
+
+    expect(checkAnchors(root, site)).toEqual([
+      "src/bad.ts: changes 注解 snippet 无法在源码中定位（walkthrough/changes/demo-change.yaml codeMap src/bad.ts changes[0]）",
+    ]);
   });
 
   it("checkFilePages 缺页、孤儿页和 summary 漂移都红，vendor 豁免", () => {

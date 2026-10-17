@@ -61,6 +61,11 @@ export const MECHANICAL_PATTERNS = [
 const ACTIVE_ISSUE_STATUSES = new Set(["in-progress", "done"]);
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** 源代码路径（must-read 组必须带 changes 检视注解的范围）。 */
+export function isReviewableSourcePath(file) {
+  return typeof file === "string" && /^(?:src|scripts|src-tauri)\//u.test(file) && !isMechanicalPath(file);
+}
+
 /** 判断仓库相对路径是否命中机械归类规则。 */
 export function isMechanicalPath(file) {
   return typeof file === "string" && MECHANICAL_PATTERNS.some((pattern) => pattern.test(file));
@@ -302,6 +307,14 @@ function validateCodeMap(codeMap, label, errors) {
         isMechanicalPath(file.path)
       ) {
         push(errors, fileLabel, `机械变更不得标 must-read: ${file.path}`);
+      }
+      if (
+        group.attention === "must-read" &&
+        isNonEmptyString(file.path) &&
+        isReviewableSourcePath(file.path) &&
+        (!Array.isArray(file.changes) || file.changes.length === 0)
+      ) {
+        push(errors, fileLabel, `must-read 组的源代码文件必须带 changes 检视注解: ${file.path}`);
       }
     });
   });  // changes（hunk 注解）形状校验：可选，出现则必须是 {snippet,note} 列表。
@@ -634,6 +647,28 @@ export function checkAnchors(root, site) {
           checkAnchor(root, source, segment.snippet, `${label} segments[${index}]`, cache, errors);
         }
       });
+    }
+  }
+  // 变更页 changes 是历史检视注解：path 已不在当前树时按“历史归档”跳过；
+  // 仍存在的源文件必须保证 snippet 可定位，防止注解漂移成无锚文本。
+  for (const [slug, change] of site.changes) {
+    const label = pagePath("change", slug);
+    if (!isObject(change) || !Array.isArray(change.codeMap)) continue;
+    for (const group of change.codeMap) {
+      if (!isObject(group) || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (!isObject(file) || !isNonEmptyString(file.path)) continue;
+        if (!existsSync(path.join(root, file.path))) continue;
+        if (!Array.isArray(file.changes)) continue;
+        file.changes.forEach((entry, index) => {
+          const changeLabel = `${label} codeMap ${file.path} changes[${index}]`;
+          if (!isObject(entry) || !isNonEmptyString(entry.snippet)) return;
+          const loaded = readSource(root, file.path, cache);
+          if (loaded.error || locateSnippet(loaded.text, entry.snippet) === null) {
+            push(errors, file.path, `changes 注解 snippet 无法在源码中定位（${changeLabel}）`);
+          }
+        });
+      }
     }
   }
   for (const [slug, feature] of site.features) {
