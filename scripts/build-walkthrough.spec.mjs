@@ -512,6 +512,8 @@ touches: []
     expect(review).toContain("export const changed = 2;");
     expect(review).toContain("这是本次修改的那行。");
     expect(review).toContain("attention-must-read");
+    // 可选 design 字段渲染（本夹具未写 design，补一个再建断言略重——用归档页夹具已覆盖 schema；此处断言无 design 不渲染标题）
+    expect(review).not.toContain("<h2>方案设计</h2>");
     // 目录行聚合 attention 计数徽章（颜色与文件徽章一致）
     expect(review).toContain('attention-badge attention-must-read">1 must-read</span>');
     // 分组图例在路径树上方：组名、attention 与 why 保留，但不作为文件容器。

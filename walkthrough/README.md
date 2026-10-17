@@ -53,6 +53,10 @@
 
 `--review` 变更区先渲染 must-read/skim/skip 的分组图例（组名、attention 与 why），再渲染源码目录嵌套的纯 HTML `<details>` 路径树；目录与文件初始都收起。must-read 组中处于 diff 内的 reviewable 源码文件展开为 changes snippet 锚定的逐段 diff，区间外 diff 行折叠到“其余变更行”；skim/skip 文件只显示统计与文件级 note，不渲染 hunk。
 
+## 变更页叙事质量
+
+变更页的叙事层（功能/用户操作路径/架构变化/方案设计 `design` 字段/图示/逐段注解的写法）**质量唯一 home 是 skill**：[.agents/skills/walkthrough-change-metadata-gen/SKILL.md](../.agents/skills/walkthrough-change-metadata-gen/SKILL.md)。门禁只看护机械面（锚点/覆盖率/schema/对账）；写得通不通俗、图配得好不好，由该 skill 的生成纪律约束。生成或更新 changes 页元数据时必须使用该 skill。
+
 ## 门禁
 
 `node scripts/verify-walkthrough.mjs` 执行静态 1-7，diff 模式追加 8-12：

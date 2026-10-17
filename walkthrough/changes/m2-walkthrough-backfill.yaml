@@ -111,27 +111,51 @@ codeMap:
                 单文件先定位全部 changes 锚点，再渲染逐段 diff；注解骨架外的变更行收进折叠区，避免漏报也不淹没核心讲解。
           - snippet: |
               function renderReviewPage(site, review, root) {
-                const { base } = review;
-                const diff = collectReviewDiff(root, base);
-                const byPath = new Map(diff.files.map((file) => [file.path, file]));
-                const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
-                const page = site.changes.get(slug);
-                const current = "review.html";
-                const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
-                const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
-                const scale = page.scale ?? {};
-                const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
-                const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
-                const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
-                const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
+              const { base } = review;
+              const diff = collectReviewDiff(root, base);
+              const byPath = new Map(diff.files.map((file) => [file.path, file]));
+              const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
+              const page = site.changes.get(slug);
+              const current = "review.html";
+              const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
+              const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
+              const scale = page.scale ?? {};
+              const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
+              const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
+              const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
+              const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
+              const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
 
-                const rank = { "must-read": 0, skim: 1, skip: 2 };
-                const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
-                const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
-                const rest = diff.files.filter((file) => !covered.has(file.path));
-                const restHtml = rest.length
+              const rank = { "must-read": 0, skim: 1, skip: 2 };
+              const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
+              const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
+              const rest = diff.files.filter((file) => !covered.has(file.path));
             note: |
                 检视页从基线采集 diff，探测当前变更页，并按 must-read/skim/skip 排序；已归位文件进入路径树，其余文件单独折叠列出。
+          - snippet: |
+              const attentionCounts = (current) => {
+                const totals = new Map();
+                const add = (attention) => totals.set(attention, (totals.get(attention) ?? 0) + 1);
+                for (const file of current.files) {
+                  if (metadata.get(file).file) add(metadata.get(file).group.attention);
+                }
+                for (const child of current.dirs.values()) {
+                  for (const [attention, value] of attentionCounts(child)) totals.set(attention, (totals.get(attention) ?? 0) + value);
+                }
+                return totals;
+              };
+            note: |
+              目录行聚合子树的 attention 计数：直属文件直接累计，子目录递归合并；徽章复用文件行三色体系。
+          - snippet: |
+              const attentionChips = (current) => {
+                const counts = attentionCounts(current);
+                return ["must-read", "skim", "skip"]
+                  .filter((attention) => (counts.get(attention) ?? 0) > 0)
+                  .map((attention) => `<span class="attention-badge attention-${attention}">${counts.get(attention)} ${attention}</span>`)
+                  .join("");
+              };
+            note: |
+              徽章只显示数量大于零的类型，顺序固定 must-read → skim → skip。
           - snippet: |
               #!/usr/bin/env node
               // Walkthrough 静态站生成器：装载并校验站点 YAML，构建期定位真实源码锚点，
@@ -355,7 +379,7 @@ codeMap:
                   : '<p class="meta">无登记风险。</p>';
                 const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
                 const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
-                const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section><section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
+                const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section>${page.design ? `<section><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
                 return renderPage({
                   title: page.title,
                   current,

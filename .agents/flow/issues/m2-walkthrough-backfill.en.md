@@ -24,6 +24,7 @@ scope:
   - docs/development.md
   - docs/development.en.md
   - docs/development.i18n.yaml
+  - .agents/skills/walkthrough-change-metadata-gen/**
   - .agents/flow/issues/m2-walkthrough-backfill.*
   - .agents/flow/issues/m2-walkthrough-site.*
   - .agents/notes/implemented/process/2026-10-15-walkthrough-site.*

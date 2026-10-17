@@ -543,7 +543,7 @@ function renderChangePage(issue, page, current, site) {
     : '<p class="meta">无登记风险。</p>';
   const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
   const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
-  const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section><section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
+  const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section>${page.design ? `<section><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
   return renderPage({
     title: page.title,
     current,
@@ -893,6 +893,7 @@ function renderReviewPage(site, review, root) {
   const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
   const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
   const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
+  const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
 
   const rank = { "must-read": 0, skim: 1, skip: 2 };
   const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
@@ -906,7 +907,7 @@ function renderReviewPage(site, review, root) {
     ? `<section><h2>检视指引</h2><h3>建议阅读顺序</h3><ol>${page.reviewGuide.order.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ol><h3>风险点</h3><ul>${page.reviewGuide.risks.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul><h3>验收对照</h3><table><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${page.reviewGuide.acceptance.map((row) => `<tr><td>${renderMarkdown(row.item)}</td><td>${renderMarkdown(row.evidence)}</td></tr>`).join("")}</tbody></table></section>`
     : "";
   const verification = `<section><h2>验证证据</h2><ul>${(page.verification ?? []).map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul></section>`;
-  const content = `<h1>本 PR 检视：${escapeHtml(page.title ?? slug)}</h1>${meta}${flowSection}${userFlow}${archSection}${codeSection}${guide}${verification}`;
+  const content = `<h1>本 PR 检视：${escapeHtml(page.title ?? slug)}</h1>${meta}${flowSection}${userFlow}${archSection}${designSection}${codeSection}${guide}${verification}`;
   return renderPage({
     title: `本 PR 检视 · ${page.title ?? slug}`,
     current,

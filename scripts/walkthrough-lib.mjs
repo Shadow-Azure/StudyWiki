@@ -35,6 +35,7 @@ const CHANGE_KEYS = new Set([
   "feature",
   "userFlow",
   "architectural",
+  "design",
   "codeMap",
   "reviewGuide",
   "verification",
@@ -471,6 +472,9 @@ export function validateSchema(site) {
     requireString(change.feature, "feature", label, errors);
     requireNonEmptyStringArray(change.userFlow, "userFlow", label, errors);
     requireString(change.architectural, "architectural", label, errors);
+    if (change.design !== undefined && typeof change.design !== "string") {
+      push(errors, label, "design 必须是字符串（markdown 方案设计说明）");
+    }
     validateCodeMap(change.codeMap, label, errors);
     validateReviewGuide(change.reviewGuide, label, errors);
     requireNonEmptyStringArray(change.verification, "verification", label, errors);

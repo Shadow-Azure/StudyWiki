@@ -1,6 +1,6 @@
 // 门禁自测试：walkthrough 纯函数库——站点装载、schema、锚点、对账与覆盖率。
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -489,6 +489,17 @@ describe("walkthrough-lib", () => {
     expect(validateSchema(badUserFlow)).toContain(
       "walkthrough/changes/demo-change.yaml: userFlow 必须是非空字符串数组",
     );
+  });
+
+  it("change 可选 design 字段：markdown 字符串放行，非字符串红", () => {
+    const root = tempRoot("walkthrough-lib-design-");
+    writeValidSite(root);
+    const good = readFileSync(path.join(root, "walkthrough/changes/demo-change.yaml"), "utf8") + "design: |\n  方案说明。\n";
+    write(root, "walkthrough/changes/demo-change.yaml", good);
+    expect(validateSchema(parseSite(root)).some((e) => e.includes("design"))).toBe(false);
+    const bad = readFileSync(path.join(root, "walkthrough/changes/demo-change.yaml"), "utf8").replace("design: |\n  方案说明。\n", "design: 42\n");
+    write(root, "walkthrough/changes/demo-change.yaml", bad);
+    expect(validateSchema(parseSite(root)).some((e) => e.includes("design 必须是字符串"))).toBe(true);
   });
 
   it("must-read 组的源代码文件必须带 changes 注解；非源码文件豁免", () => {
