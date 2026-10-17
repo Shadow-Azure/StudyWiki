@@ -41,17 +41,21 @@
 | `reviewGuide` | map：`order`（非空字符串数组，建议阅读顺序）、`risks`（字符串数组，可为空）、`acceptance`（非空数组，项恰为 `item` 与 `evidence` 两个非空字符串）。 |
 | `verification` | 非空字符串数组：实际跑过的门禁/测试。 |
 
-`codeMap` 每项恰为 `group`（非空字符串）、`attention`、`why`（字符串或 `null`，空理由写 `why: null`）、`files`（非空数组，项恰为 `path` 与 `note` 两个非空字符串）。`attention` 是封闭集合：`must-read`（必读者，渲染展开置顶）、`skim`（可扫读，默认折叠灰显）、`skip`（可跳过，默认折叠）。机械路径（`*.i18n.yaml`、`docs/commands.*` 生成区、`pnpm-lock.yaml`；规则的唯一 home 是 `walkthrough-lib.mjs` 导出的 `MECHANICAL_PATTERNS`，`.github/workflows/` 刻意不算机械）不得出现在 `must-read` 组，出现即红。
+`codeMap` 每项恰为 `group`（非空字符串）、`attention`、`why`（字符串或 `null`，空理由写 `why: null`）、`files`（非空数组）。file 项恰为 `path` 与 `note` 两个非空字符串；`changes` 可选，必须是 `{snippet, note}` 列表。`attention` 是封闭集合：`must-read`（必读者，进入逐段注解骨架）、`skim`（可扫读，只给规模与文件级注解）、`skip`（可跳过）。must-read 组中的 reviewable 源码文件必须带非空 `changes`；机械路径（`*.i18n.yaml`、`docs/commands.*` 生成区、`pnpm-lock.yaml`；规则的唯一 home 是 `walkthrough-lib.mjs` 导出的 `MECHANICAL_PATTERNS`，`.github/workflows/` 刻意不算机械）不得标 must-read。
 
-`features.yaml` 顶层只允许 `features`；每个登记项只允许非空 `slug`、`title`、`summary`、`issue`，并与 `walkthrough/features/` 页一一对应（issue 存在性由变更对账兜底），骨架固定用 `{features: []}`。`manifest.json` 顶层只允许 `bootstrap`（boolean）与 `lineCoverage`；后者只允许 `threshold`（0 到 1）与 `exemptions`（源路径到非空理由的 map）。
+`features.yaml` 顶层只允许 `features`；每个登记项只允许非空 `slug`、`title`、`summary`、`issue`，并与 `walkthrough/features/` 页一一对应（issue 存在性由变更对账兜底），骨架固定用 `{features: []}`。`manifest.json` 顶层只允许 `bootstrap`（boolean）、`lineCoverage` 与 `reviewCoverage`。`lineCoverage` 只允许 `threshold`（0 到 1）与 `exemptions`（源路径到非空理由的 map）；`reviewCoverage` 是 0 到 1 的数字，缺省 `0.9`。
 
 ## 锚点机制
 
 `snippet` 只是定位器：构建与校验时对源文和锚点逐行 `trimEnd` 后做大小敏感子串匹配，取首次命中，允许多个 segment 重叠。展示内容永远读取构建期目标文件的真实代码并带行号；命中失败红，多处命中取首次并可在构建日志观察，讲解文字本身靠变更门禁保鲜。
 
-## 十条门禁
+## Review 路径树
 
-`node scripts/verify-walkthrough.mjs` 执行静态 1-6，diff 模式追加 8-10，规则 7 由构建成功单独证明：
+`--review` 变更区先渲染 must-read/skim/skip 的分组图例（组名、attention 与 why），再渲染源码目录嵌套的纯 HTML `<details>` 路径树；目录与文件初始都收起。must-read 组中处于 diff 内的 reviewable 源码文件展开为 changes snippet 锚定的逐段 diff，区间外 diff 行折叠到“其余变更行”；skim/skip 文件只显示统计与文件级 note，不渲染 hunk。
+
+## 门禁
+
+`node scripts/verify-walkthrough.mjs` 执行静态 1-7，diff 模式追加 8-12：
 
 1. schema、kind、必填字段、类型和键集合封闭校验。
 2. 全部 feature/ref 与 file segment 锚点定位。
@@ -63,12 +67,14 @@
 8. PR diff 中每个 `src/**` 或 `src-tauri/src/**` 源文件，其文件页必须在同一 diff 更新。
 9. PR diff 中全部强制源文件必须被某个变更页 `touches` 的 `file:` 引用覆盖。
 10. scale 与语义路径对账只约束本 PR 新建的变更页（`--diff-filter=A`，base 无该文件），且 scale totals 对账仅在恰好新增一个变更页时执行——`scale.files` 必须恰好等于 `git diff --numstat` 行数，`scale.additions`/`deletions` 允许相对实际值 ±10% 容差（单页 PR 是未来常态，反过期目的保住；bootstrap 型多页大 PR 的页面各自描述历史 PR，totals 结构上不可满足，退化为仅覆盖检查）。codeMap 语义覆盖对所有新增变更页全局生效：`codeMap.files` 必须覆盖 diff 中全部语义路径（命中 `MECHANICAL_PATTERNS` 的机械路径与 `walkthrough/` 站点源自身豁免覆盖义务）。仅被修改的历史变更页只做 schema 静态检查——它们描述的是自己的历史 PR，scale 与本 diff 无关也不该相等。
+11. must-read 组 reviewable 源码文件的每条 changes snippet 锚定的 after 区间不超过 20 行；目标是把注解压回可逐段扫读的骨架。
+12. must-read 组 reviewable 源码文件集合的注解覆盖率达到 `reviewCoverage`：分母是 numstat 中这些文件的 additions 合计，分子是 changes snippet 在当前源码中锚定 after 区间的并集行数；无注解文件计入分母，定位失败由锚点门禁红且此处按 0 计。
 
 PR 还须让 flow issue scope 包含触到的 `walkthrough/**`；正式接线后命令与 CI 路由由根 `AGENTS.md` 和 `docs/AGENTS.md` 登记。
 
 ## Bootstrap 降级
 
-`manifest.json` 当前置 `bootstrap: true`：规则 3 文件页对账、规则 5 变更对账、规则 6 行覆盖率的失败只输出 `WARN`，不改变 verify 结果；schema、锚点、功能登记、构建与 diff 规则仍硬红。移除条件是五层内容完成回填且维护者扫读合格；随后删除 `bootstrap` 标志或置 `false`，三条欠账立即转红，新增源文件不再能靠降级通过。
+`manifest.json` 当前置 `bootstrap: true`：规则 3 文件页对账、规则 5 变更对账、规则 6 行覆盖率的失败只输出 `WARN`，不改变 verify 结果；schema、锚点、功能登记、构建、diff 规则与 review 逐段/覆盖率规则仍硬红。移除条件是五层内容完成回填且维护者扫读合格；随后删除 `bootstrap` 标志或置 `false`，三条欠账立即转红，新增源文件不再能靠降级通过。
 
 ## 机械与语义分工
 

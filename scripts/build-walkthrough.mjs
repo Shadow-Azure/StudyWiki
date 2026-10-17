@@ -11,7 +11,7 @@ import path from "node:path";
 import { posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import MarkdownIt from "markdown-it";
-import { checkAnchors, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+import { checkAnchors, isReviewableSourcePath, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
 import { parseFlowDocument } from "./flow-lib.mjs";
 import { SCAN_ROOTS } from "./gen-code-map.mjs";
 import { collectReviewDiff, hunkForRange } from "./walkthrough-review.mjs";
@@ -333,6 +333,7 @@ ol.user-flow li { margin:5px 0 }
 .attention-badge { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.08em; padding:1px 9px; border-radius:99px; vertical-align:middle; margin-left:8px }
 .attention-must-read .attention-badge { color:#cf222e; border:1px solid color-mix(in srgb,#cf222e 45%,transparent) } .attention-skim .attention-badge { color:var(--muted); border:1px solid var(--line-strong) } .attention-skip .attention-badge { color:var(--faint); border:1px solid var(--line) }
 .attention-skim .diff-file,.attention-skip .diff-file { opacity:.86 }
+.review-tree { display:grid; gap:8px } .tree-legend { display:grid; gap:10px; margin-bottom:12px } .review-dir { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden } .review-dir > summary { padding:8px 12px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-dir[open] > summary { border-bottom:1px solid var(--line) } .review-dir > details { margin:6px } .review-file > summary { display:flex; gap:8px; align-items:center; padding:7px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-wrap:anywhere } .review-file > summary .meta { margin-left:auto } .review-file[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0 } .review-file-body { padding:0 10px 10px } .changes-segment { margin:8px 0; border:1px solid var(--line); border-radius:10px; overflow:hidden } .diff-rest-lines > summary { padding:8px 10px; cursor:pointer; color:var(--muted); font-size:13px } .diff-rest-lines > summary + .diff-pre { border-top:1px solid var(--line) }
 .diff-note { margin:0; border-left:3px solid var(--accent); border-radius:0 }
 table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top } th { color:var(--muted); font-size:12.5px }
 @media (max-width:860px) {
@@ -692,7 +693,124 @@ function execGit(root, argv) {
   return execFileSync("git", argv, { cwd: root, encoding: "utf8" });
 }
 
-/** 渲染 PR 检视页：v2 叙事区 + 真实 before/after diff 区（must-read 组展开）。 */
+/** 渲染 review 路径树上方的分组图例：只保留组名、attention 与 why。 */
+function renderReviewLegend(groups) {
+  if (groups.length === 0) return "";
+  return `<div class="tree-legend">${groups.map((group) => `<section class="codemap-group attention-${escapeHtml(group.attention)}"><h3>${escapeHtml(group.group)} <span class="attention-badge">${escapeHtml(group.attention)}</span></h3><p class="meta">${renderMarkdown(group.why ?? "")}</p></section>`).join("")}</div>`;
+}
+
+/** 渲染 diff 行；after 行号优先，删除行保留 before 行号。 */
+function renderReviewDiffLine(line) {
+  const sign = line.type === "add" ? "+" : line.type === "del" ? "−" : " ";
+  const no = line.newNo ?? line.oldNo ?? "";
+  return `<span class="diff-line diff-${line.type}"><span class="line-number">${no}</span><span class="diff-sign">${sign}</span><span class="diff-text">${escapeHtml(line.text)}</span></span>`;
+}
+
+/** 计算某 after 区间内的 add/ctx diff 行；删除行保留在“其余变更行”里。 */
+function diffLinesForRange(lines, range) {
+  const selected = new Set();
+  lines.forEach((line, index) => {
+    if (line.newNo === null || line.newNo < range.start || line.newNo > range.end) return;
+    selected.add(line);
+  });
+  return lines.filter((line) => selected.has(line));
+}
+
+/** 找删除行之后的第一条 after 侧行号。 */
+function nextAfterLine(lines, deletion) {
+  const index = lines.indexOf(deletion);
+  return lines.slice(index + 1).find((line) => line.newNo !== null)?.newNo ?? null;
+}
+
+/** 渲染一个 changes 锚定段：完整 after 骨架 + 段内 add/ctx 着色 + 段下注解。 */
+function renderChangesSegment(root, file, change, located) {
+  const lines = file.hunks.flatMap((hunk) => hunk.lines);
+  const selected = new Set(diffLinesForRange(lines, located));
+  const sourceLines = existsSync(path.join(root, file.path))
+    ? readFileSync(path.join(root, file.path), "utf8").replace(/\r\n?/g, "\n").split("\n")
+    : [];
+  const rows = [];
+  for (let lineNo = located.start; lineNo <= located.end; lineNo += 1) {
+    for (const line of lines) {
+      if (line.type === "del" && line.newNo === null && selected.has(line) &&
+          !rows.includes(line) && nextAfterLine(lines, line) === lineNo) {
+        rows.push(line);
+      }
+    }
+    const diffLine = lines.find((line) => line.newNo === lineNo);
+    rows.push(diffLine ?? { type: "ctx", text: sourceLines[lineNo - 1] ?? "", oldNo: lineNo, newNo: lineNo });
+  }
+  const range = located.start === located.end ? `L${located.start}` : `L${located.start}-L${located.end}`;
+  const segmentLines = rows.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("");
+  return `<div class="changes-segment" data-path="${escapeHtml(file.path)}" data-start="${located.start}" data-end="${located.end}"><div class="hunk-head meta">${escapeHtml(range)} · ${located.end - located.start + 1} 行</div><pre class="diff-pre">${segmentLines}</pre><aside class="note diff-note">${renderMarkdown(change.note)}</aside></div>`;
+}
+
+/** 渲染单文件逐段注解 diff；未纳入注解骨架的 diff 行折叠到尾部。 */
+function renderSegmentedDiff(file, entry, root) {
+  const sourceText = existsSync(path.join(root, file.path)) ? readFileSync(path.join(root, file.path), "utf8") : "";
+  const segments = (entry.changes ?? []).map((change) => ({
+    change,
+    located: sourceText ? locateSnippet(sourceText, change.snippet) : null,
+  })).filter((segment) => segment.located);
+  const lines = file.hunks.flatMap((hunk) => hunk.lines);
+  const selected = new Set();
+  for (const segment of segments) {
+    for (const line of diffLinesForRange(lines, segment.located)) selected.add(line);
+  }
+  const rest = lines.filter((line) => !selected.has(line));
+  const restHtml = rest.length === 0 ? "" : `<details class="diff-rest-lines"><summary>其余变更行（${rest.length}）</summary><pre class="diff-pre">${rest.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("")}</pre></details>`;
+  return segments.map((segment) => renderChangesSegment(root, file, segment.change, segment.located)).join("") + restHtml;
+}
+
+/** 用 groups 中的文件元数据建立嵌套路径树。 */
+function buildReviewTree(groups, byPath) {
+  const root = { dirs: new Map(), files: [] };
+  const metadata = new Map();
+  for (const group of groups) {
+    for (const entry of group.files ?? []) {
+      if (metadata.has(entry.path)) continue;
+      metadata.set(entry.path, { entry, group, file: byPath.get(entry.path) });
+      let node = root;
+      for (const part of entry.path.split("/").slice(0, -1)) {
+        if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+        node = node.dirs.get(part);
+      }
+      node.files.push(entry.path);
+    }
+  }
+  return { root, metadata };
+}
+
+/** 渲染 review 专属文件正文：must-read reviewable 文件展开逐段 diff，其余只分诊。 */
+function renderReviewFileBody(metadata, site, root) {
+  const { entry, group, file } = metadata;
+  const stats = file ? `<span class="meta">+${file.additions} −${file.deletions}</span>` : "";
+  const note = `<div class="meta">${renderMarkdown(entry.note ?? "")}</div>`;
+  const segmented = group.attention === "must-read" && file && isReviewableSourcePath(entry.path) && file.hunks.length > 0
+    ? renderSegmentedDiff(file, entry, root)
+    : "";
+  return `<div class="review-file-body">${stats}${note}${segmented}</div>`;
+}
+
+/** review 变更区路径树：目录与文件均用纯 HTML details，初始全部收起。 */
+function renderReviewFileTree(groups, byPath, site, root) {
+  const { root: tree, metadata } = buildReviewTree(groups, byPath);
+  const count = (node) => node.files.length + [...node.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+  const render = (node) => {
+    const dirs = [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) =>
+      `<details class="review-dir"><summary>${escapeHtml(name)}/ (${count(child)})</summary>${render(child)}</details>`).join("");
+    const files = node.files.sort().map((file) => {
+      const meta = metadata.get(file);
+      const href = site.filePages.has(file) ? `<a href="${relativeHref("review.html", `files/${file}.html`)}"><code>${escapeHtml(file)}</code></a>` : `<code>${escapeHtml(file)}</code>`;
+      const stats = meta.file ? `<span class="meta">+${meta.file.additions} −${meta.file.deletions}</span>` : "";
+      return `<details class="review-file attention-${escapeHtml(meta.group.attention)}"><summary>${href}<span class="attention-badge">${escapeHtml(meta.group.attention)}</span>${stats}</summary>${renderReviewFileBody(meta, site, root)}</details>`;
+    }).join("");
+    return dirs + files;
+  };
+  return `<section class="review-tree">${render(tree)}</section>`;
+}
+
+/** 渲染 PR 检视页：v2 叙事区 + 分组图例、折叠路径树与 must-read 逐段注解 diff。 */
 function renderReviewPage(site, review, root) {
   const { base } = review;
   const diff = collectReviewDiff(root, base);
@@ -711,25 +829,11 @@ function renderReviewPage(site, review, root) {
   const rank = { "must-read": 0, skim: 1, skip: 2 };
   const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
   const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
-  const groupHtml = groups.map((group) => {
-    const files = (group.files ?? []).map((entry) => {
-      const file = byPath.get(entry.path);
-      const stats = file ? `+${file.additions} −${file.deletions}` : "本 PR 未改动";
-      const status = file ? (file.status === "A" ? "新增" : file.status === "D" ? "删除" : "修改") : "";
-      const link = site.filePages.has(entry.path) ? `<a href="${relativeHref(current, `files/${entry.path}.html`)}">${escapeHtml(entry.path)}</a>` : `<code>${escapeHtml(entry.path)}</code>`;
-      let body = "";
-      if (group.attention === "must-read" && file && file.hunks.length > 0) {
-        body = renderDiffHunks(file, entry, site, root);
-      }
-      return `<div class="diff-file"><h4>${link} <span class="meta">${escapeHtml(status)} ${escapeHtml(stats)}</span></h4><div class="meta">${renderMarkdown(entry.note ?? "")}</div>${body}</div>`;
-    }).join("");
-    return `<section class="codemap-group attention-${escapeHtml(group.attention)}"><h3>${escapeHtml(group.group)} <span class="attention-badge">${escapeHtml(group.attention)}</span></h3><p class="meta">${renderMarkdown(group.why ?? "")}</p>${files}</section>`;
-  }).join("");
   const rest = diff.files.filter((file) => !covered.has(file.path));
   const restHtml = rest.length
     ? `<details class="diff-rest"><summary>未归类的其余变更文件（${rest.length}）</summary><ul class="touch-list">${rest.map((file) => `<li><code>${escapeHtml(file.path)}</code> <span class="meta">+${file.additions} −${file.deletions}</span></li>`).join("")}</ul></details>`
     : "";
-  const codeSection = `<section><h2>代码变更（before/after）</h2>${groupHtml}${restHtml}</section>`;
+  const codeSection = `<section><h2>代码变更（路径树）</h2>${renderReviewLegend(groups)}${renderReviewFileTree(groups, byPath, site, root)}${restHtml}</section>`;
   const guide = page.reviewGuide
     ? `<section><h2>检视指引</h2><h3>建议阅读顺序</h3><ol>${page.reviewGuide.order.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ol><h3>风险点</h3><ul>${page.reviewGuide.risks.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul><h3>验收对照</h3><table><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${page.reviewGuide.acceptance.map((row) => `<tr><td>${renderMarkdown(row.item)}</td><td>${renderMarkdown(row.evidence)}</td></tr>`).join("")}</tbody></table></section>`
     : "";
@@ -742,30 +846,6 @@ function renderReviewPage(site, review, root) {
     breadcrumb: renderBreadcrumb(current, [{ label: "首页", href: "index.html" }, { label: "本 PR 检视" }]),
     content,
   });
-}
-
-/** 渲染单文件的 diff hunks：+ 绿 / − 红 / 上下文灰，变更注解挂到所属 hunk 下方。 */
-function renderDiffHunks(file, entry, site, root) {
-  const sourceText = existsSync(path.join(root, file.path)) ? readFileSync(path.join(root, file.path), "utf8") : "";
-  const notes = (entry.changes ?? []).map((change) => {
-    const located = sourceText ? locateSnippet(sourceText, change.snippet) : null;
-    return { note: change.note, hunkIndex: located ? hunkForRange(file.hunks, located) : -1 };
-  });
-  const looseNotes = notes.filter((note) => note.hunkIndex === -1);
-  const headerNotes = looseNotes.length
-    ? looseNotes.map((note) => `<aside class="note diff-note">${renderMarkdown(note.note)}</aside>`).join("")
-    : "";
-  const hunks = file.hunks.map((hunk, index) => {
-    const lines = hunk.lines.map((line) => {
-      const sign = line.type === "add" ? "+" : line.type === "del" ? "−" : " ";
-      const no = line.newNo ?? line.oldNo ?? "";
-      return `<span class="diff-line diff-${line.type}"><span class="line-number">${no}</span><span class="diff-sign">${sign}</span><span class="diff-text">${escapeHtml(line.text)}</span></span>`;
-    }).join("");
-    const attached = notes.filter((note) => note.hunkIndex === index);
-    const attachedHtml = attached.map((note) => `<aside class="note diff-note">${renderMarkdown(note.note)}</aside>`).join("");
-    return `<div class="hunk"><div class="hunk-head meta">@@ 旧 ${hunk.oldStart} → 新 ${hunk.newStart} @@</div><pre class="diff-pre">${lines}</pre>${attachedHtml}</div>`;
-  }).join("");
-  return `${headerNotes}${hunks}`;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

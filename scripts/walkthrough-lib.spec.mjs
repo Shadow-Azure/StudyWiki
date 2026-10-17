@@ -7,6 +7,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   checkAnchors,
   checkChanges,
+  checkChangesSegments,
+  checkReviewCoverage,
   checkDiff,
   checkDiffScale,
   checkFilePages,
@@ -1043,5 +1045,93 @@ touches: [file:src/demo.ts]
     expect(
       checkDiffScale(diff, site, [{ additions: 1, deletions: 1 }], added),
     ).toEqual(["numstat 每项必须是 {additions, deletions, path}"]);
+  });
+});
+
+describe("review segment gates", () => {
+  function reviewSite() {
+    const site = emptySite();
+    site.changes.set("demo-change", {
+      kind: "change",
+      issue: "demo-change",
+      title: "Demo change",
+      codeMap: [{
+        group: "实现",
+        attention: "must-read",
+        why: "核心",
+        files: [{
+          path: "src/demo.ts",
+          note: "核心文件",
+          changes: [{
+            snippet: "const value1 = 1;\nconst value2 = 2;\nconst value3 = 3;\n",
+            note: "前三行。",
+          }],
+        }],
+      }],
+    });
+    return site;
+  }
+
+  function writeDemoSource(root, count = 120) {
+    write(root, "src/demo.ts", Array.from({ length: count }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n") + "\n");
+  }
+
+  it("checkChangesSegments 只约束 must-read reviewable 源码片段且红值精确", () => {
+    const root = tempRoot("studywiki-changes-segments-");
+    writeDemoSource(root);
+    const site = reviewSite();
+    expect(checkChangesSegments(root, site, ["demo-change"])).toEqual([]);
+
+    const lines = Array.from({ length: 21 }, (_, index) => `const over${index + 1} = ${index + 1};`).join("\n") + "\n";
+    site.changes.get("demo-change").codeMap[0].files[0].changes[0].snippet = lines;
+    expect(checkChangesSegments(root, site, ["demo-change"])).toEqual([
+      "changes 注解每段不超过 20 行: src/demo.ts changes[0] (21 行)",
+    ]);
+  });
+
+  it("checkReviewCoverage 用锚定区间并集对 numstat additions 达到阈值", () => {
+    const root = tempRoot("studywiki-review-coverage-");
+    writeDemoSource(root);
+    const site = reviewSite();
+    site.manifest = { lineCoverage: { threshold: 0.5, exemptions: {} } };
+    const numstat = [{ additions: 100, deletions: 0, path: "src/demo.ts" }];
+    expect(checkReviewCoverage(root, site, numstat, ["demo-change"])).toEqual([
+      "逐段注解覆盖率 <90%（实际 3.00%）",
+    ]);
+
+    const files = site.changes.get("demo-change").codeMap[0].files;
+    files[0].changes = [
+      { snippet: Array.from({ length: 50 }, (_, i) => `const value${i + 1} = ${i + 1};`).join("\n") + "\n", note: "前 50 行" },
+      { snippet: Array.from({ length: 46 }, (_, i) => `const value${i + 50} = ${i + 50};`).join("\n") + "\n", note: "重叠到 95 行" },
+    ];
+    expect(checkReviewCoverage(root, site, numstat, ["demo-change"])).toEqual([]);
+
+    files[0].changes = [files[0].changes[0], { snippet: "const value50 = 50;\n", note: "重叠行" }];
+    expect(checkReviewCoverage(root, site, numstat, ["demo-change"])).toEqual([
+      "逐段注解覆盖率 <90%（实际 50.00%）",
+    ]);
+  });
+
+  it("checkReviewCoverage 缺省阈值 0.9、坏值红，并把无注解 must-read 源码计为 0", () => {
+    const root = tempRoot("studywiki-review-coverage-threshold-");
+    writeDemoSource(root);
+    const site = reviewSite();
+    const numstat = [{ additions: 100, deletions: 0, path: "src/demo.ts" }];
+    site.manifest = { lineCoverage: { threshold: 0.5, exemptions: {} } };
+    site.changes.get("demo-change").codeMap[0].files[0].changes = [];
+    expect(checkReviewCoverage(root, site, numstat, ["demo-change"])).toEqual([
+      "逐段注解覆盖率 <90%（实际 0.00%）",
+    ]);
+
+    site.changes.get("demo-change").codeMap[0].files[0].changes = [{
+      snippet: Array.from({ length: 90 }, (_, i) => `const value${i + 1} = ${i + 1};`).join("\n") + "\n",
+      note: "正好 90%",
+    }];
+    expect(checkReviewCoverage(root, site, numstat, ["demo-change"])).toEqual([]);
+
+    site.manifest.reviewCoverage = 1.1;
+    expect(checkReviewCoverage(root, site, numstat, ["demo-change"])).toEqual([
+      "walkthrough/manifest.json: reviewCoverage 必须是 0 到 1 的数字",
+    ]);
   });
 });

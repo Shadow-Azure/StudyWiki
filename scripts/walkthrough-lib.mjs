@@ -11,7 +11,7 @@ const OVERVIEW_SECTION_KEYS = new Set(["heading", "body", "images"]);
 const SECTION_KEYS = new Set(["heading", "body", "images", "generated"]);
 const FEATURE_INDEX_KEYS = new Set(["features"]);
 const FEATURE_INDEX_ITEM_KEYS = new Set(["slug", "title", "summary", "issue"]);
-const MANIFEST_KEYS = new Set(["bootstrap", "lineCoverage"]);
+const MANIFEST_KEYS = new Set(["bootstrap", "lineCoverage", "reviewCoverage"]);
 const LINE_COVERAGE_KEYS = new Set(["threshold", "exemptions"]);
 const FILE_PAGE_KEYS = new Set(["kind", "source", "summary", "segments"]);
 const SEGMENT_KEYS = new Set(["snippet", "note"]);
@@ -205,6 +205,13 @@ function validateManifest(site, errors) {
   if (!validateKeys(manifest, MANIFEST_KEYS, label, errors)) return;
   if (manifest.bootstrap !== undefined && typeof manifest.bootstrap !== "boolean") {
     push(errors, label, "bootstrap 必须是 boolean");
+  }
+  if (
+    manifest.reviewCoverage !== undefined &&
+    (typeof manifest.reviewCoverage !== "number" || !Number.isFinite(manifest.reviewCoverage) ||
+      manifest.reviewCoverage < 0 || manifest.reviewCoverage > 1)
+  ) {
+    push(errors, label, "reviewCoverage 必须是 0 到 1 的数字");
   }
   const coverage = manifest.lineCoverage;
   if (!isObject(coverage)) {
@@ -842,6 +849,121 @@ export function checkLineCoverage(root, site) {
     }
   }
   return errors;
+}
+
+/** 计算注解 snippet 的 after 内容行数（块标量的一个空尾行不计）。 */
+function snippetLineCount(snippet) {
+  const lines = String(snippet).replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd());
+  if (lines.at(-1) === "") lines.pop();
+  return lines.length;
+}
+
+/**
+ * --diff 档逐段上限：must-read 组 reviewable 源码文件的每条 changes 注解
+ * 在 after 源码中最多锚定 20 行；skim/skip 与非源码路径不进入注意力骨架。
+ * @param {string} root - 仓库根目录（与覆盖率对账共用调用缝）。
+ * @param {object} site - 站点索引。
+ * @param {string[]} targetSlugs - 本轮 review 关注的变更页 slug。
+ * @returns {string[]} 错误列表。
+ */
+export function checkChangesSegments(root, site, targetSlugs) {
+  if (root !== null && root !== undefined && typeof root !== "string") {
+    return ["root 必须是字符串"];
+  }
+  if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+  const errors = [];
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (!isObject(file) || !isReviewableSourcePath(file.path) || !Array.isArray(file.changes)) continue;
+        file.changes.forEach((change, index) => {
+          if (!isObject(change) || typeof change.snippet !== "string") return;
+          const count = snippetLineCount(change.snippet);
+          if (count > 20) {
+            errors.push(`changes 注解每段不超过 20 行: ${file.path} changes[${index}] (${count} 行)`);
+          }
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * --diff 档注解覆盖率：must-read 组 reviewable 源码文件按 numstat additions
+ * 汇总分母；各文件 changes snippet 在当前源码中的 after 区间取并集作分子。
+ * 定位失败由锚点门禁单独红，这里按 0 计；无 additions 分母时不需要覆盖。
+ * @param {string} root - 仓库根目录。
+ * @param {object} site - 站点索引。
+ * @param {Array<{additions:number, deletions:number, path:string}>} numstat - 注入的 numstat。
+ * @param {string[]} targetSlugs - 本轮 review 关注的变更页 slug。
+ * @returns {string[]} 错误列表。
+ */
+export function checkReviewCoverage(root, site, numstat, targetSlugs) {
+  if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+  if (!Array.isArray(numstat)) return ["numstat 必须是数组"];
+  if (
+    numstat.some((row) =>
+      !isObject(row) ||
+      typeof row.additions !== "number" ||
+      typeof row.deletions !== "number" ||
+      typeof row.path !== "string"
+    )
+  ) {
+    return ["numstat 每项必须是 {additions, deletions, path}"];
+  }
+  const configured = isObject(site.manifest) ? site.manifest.reviewCoverage : undefined;
+  const threshold = configured ?? 0.9;
+  if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    return ["walkthrough/manifest.json: reviewCoverage 必须是 0 到 1 的数字"];
+  }
+
+  const targetPaths = new Set();
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (isObject(file) && isReviewableSourcePath(file.path)) targetPaths.add(normalizePath(file.path));
+      }
+    }
+  }
+
+  const additionsByPath = new Map(numstat.map((row) => [normalizePath(row.path), row.additions]));
+  const denominator = [...targetPaths].reduce((sum, file) => sum + Math.max(0, additionsByPath.get(file) ?? 0), 0);
+  if (denominator === 0) return [];
+
+  const cache = new Map();
+  const covered = new Set();
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (!isObject(file) || !isReviewableSourcePath(file.path) || !Array.isArray(file.changes)) continue;
+        const source = normalizePath(file.path);
+        if (!targetPaths.has(source)) continue;
+        const loaded = readSource(root, source, cache);
+        if (loaded.error) continue;
+        for (const change of file.changes) {
+          if (!isObject(change) || typeof change.snippet !== "string") continue;
+          const located = locateSnippet(loaded.text, change.snippet);
+          if (!located) continue;
+          for (let line = located.start; line <= located.end; line += 1) covered.add(`${source}:${line}`);
+        }
+      }
+    }
+  }
+  const ratio = covered.size / denominator;
+  if (ratio >= threshold) return [];
+  const actual = `${(ratio * 100).toFixed(2)}%`;
+  const expected = `${threshold * 100}%`;
+  return [`逐段注解覆盖率 <${expected}（实际 ${actual}）`];
 }
 
 /** 归一化 git 输出中的路径分隔符。 */

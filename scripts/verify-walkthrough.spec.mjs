@@ -1,6 +1,6 @@
 // 门禁自测试：verify-walkthrough 薄壳——bootstrap 降级、永久红规则与 diff 注入。
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -202,6 +202,108 @@ segments: []
       "changes touches 缺少 file 引用: src/demo.ts",
       "changes touches 缺少 file 引用: src/missing.ts",
     ]);
+  });
+
+  it("--diff 模式装配逐段上限与 must-read 源码覆盖率硬门禁", async () => {
+    const root = tempRoot("verify-walkthrough-review-coverage-");
+    writeSite(root, { bootstrap: true, status: "in-progress", fullCoverage: true });
+    write(root, "src/demo.ts", `export const first = 1;
+export const second = 2;
+export const third = 3;
+${Array.from({ length: 9 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join("\n")}
+`);
+    write(root, "walkthrough/changes/demo.yaml", `kind: change
+issue: demo
+title: Demo change
+scale:
+  files: 3
+  additions: 12
+  deletions: 3
+feature: |
+  功能变化。
+userFlow:
+  - 打开演示
+architectural: |
+  无。
+codeMap:
+  - group: 实现
+    attention: must-read
+    why: 核心
+    files:
+      - path: src/demo.ts
+        note: 改动点
+        changes:
+          - snippet: |
+              export const line1 = 1;
+              export const line2 = 2;
+              export const line3 = 3;
+            note: |
+              本次变更公开了前三行。
+reviewGuide:
+  order:
+    - 先读变更地图
+  risks: []
+  acceptance:
+    - item: 验收
+      evidence: 证据
+verification:
+  - pnpm exec vitest
+touches: [file:src/demo.ts]
+`);
+    const diffFiles = [
+      "src/demo.ts",
+      "walkthrough/files/src/demo.ts.yaml",
+      "walkthrough/changes/demo.yaml",
+    ];
+    const numstat = [
+      { additions: 10, deletions: 3, path: "src/demo.ts" },
+      { additions: 2, deletions: 0, path: "walkthrough/files/src/demo.ts.yaml" },
+      { additions: 18, deletions: 0, path: "walkthrough/changes/demo.yaml" },
+    ];
+    const result = await verifyWalkthrough({
+      root,
+      issues: [{ slug: "demo", status: "in-progress" }],
+      diffFiles,
+      numstat,
+      addedDiffFiles: [],
+    });
+    expect(result.errors).toEqual([
+      "逐段注解覆盖率 <90%（实际 30.00%）",
+    ]);
+
+    // 覆盖 9/10 行后新键缺省阈值是 0.9，覆盖率门禁转绿。
+    const source = `export const first = 1;\nexport const second = 2;\nexport const third = 3;\n${Array.from({ length: 9 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join("\n")}\n`;
+    write(root, "src/demo.ts", source);
+    write(
+      root,
+      "walkthrough/changes/demo.yaml",
+      readFileSync(path.join(root, "walkthrough/changes/demo.yaml"), "utf8").replace(
+        "export const line3 = 3;",
+        "export const line3 = 3;\n              export const line4 = 4;\n              export const line5 = 5;\n              export const line6 = 6;\n              export const line7 = 7;\n              export const line8 = 8;\n              export const line9 = 9;",
+      ),
+    );
+    const green = await verifyWalkthrough({
+      root,
+      issues: [{ slug: "demo", status: "in-progress" }],
+      diffFiles,
+      numstat,
+      addedDiffFiles: [],
+    });
+    expect(green.errors).toEqual([]);
+
+    write(root, "walkthrough/manifest.json", JSON.stringify({
+      bootstrap: true,
+      lineCoverage: { threshold: 0.5, exemptions: {} },
+      reviewCoverage: 1.1,
+    }));
+    const invalid = await verifyWalkthrough({
+      root,
+      issues: [{ slug: "demo", status: "in-progress" }],
+      diffFiles,
+      numstat,
+      addedDiffFiles: [],
+    });
+    expect(invalid.errors).toContain("walkthrough/manifest.json: reviewCoverage 必须是 0 到 1 的数字");
   });
 
   it("非 diff 模式跳过两条 diff 规则，CLI 把降级项输出到 stdout", async () => {

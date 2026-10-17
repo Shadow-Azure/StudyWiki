@@ -437,12 +437,13 @@ related:
 });
 
 describe("review 模式", () => {
-  it("--review 产出本 PR 检视页：叙事区 + must-read 组真实 diff + 注解归位", () => {
+  it("--review 变更区渲染折叠路径树、分组图例与逐段注解 diff", () => {
     const root = mkdtempSync(path.join(tmpdir(), "walkthrough-review-build-"));
     dirs.push(root);
     const git = (argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" });
     git(["init", "-q", "-b", "main"]);
     write(root, "src/demo.ts", "export const covered = 1;\nexport const keep = 2;\n");
+    write(root, "src/nested/skim.ts", "export const skimOld = 1;\n");
     write(root, "scripts/code-map.manifest.json", "{\"src/demo.ts\": \"演示源文件\"}");
     write(root, "walkthrough/manifest.json", "{\"lineCoverage\": {\"threshold\": 0.9, \"exemptions\": {}}}");
     write(root, "walkthrough/overview.yaml", "kind: overview\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
@@ -478,6 +479,12 @@ codeMap:
               export const changed = 2;
             note: |
               这是本次修改的那行。
+  - group: 外围变更
+    attention: skim
+    why: 外围扫读即可。
+    files:
+      - path: src/nested/skim.ts
+        note: 只看规模与文件级说明。
 reviewGuide:
   order:
     - 先看 demo.ts
@@ -492,6 +499,7 @@ touches: []
 `,
     );
     write(root, "src/demo.ts", "export const covered = 1;\nexport const changed = 2;\nexport const keep = 2;\n");
+    write(root, "src/nested/skim.ts", "export const skimOld = 1;\nexport const skimNew = 2;\n");
     git(["add", "."]);
     git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "work"]);
     const outDir = path.join(root, "walkthrough/dist");
@@ -503,6 +511,27 @@ touches: []
     expect(review).toContain("export const changed = 2;");
     expect(review).toContain("这是本次修改的那行。");
     expect(review).toContain("attention-must-read");
+    // 分组图例在路径树上方：组名、attention 与 why 保留，但不作为文件容器。
+    expect(review.indexOf('<div class="tree-legend">')).toBeGreaterThan(-1);
+    expect(review.indexOf("核心变更")).toBeLessThan(review.indexOf('<section class="review-tree"'));
+
+    // 树本体复用目录折叠模式：目录与文件都是初始收起的 details。
+    expect(review).toContain('<section class="review-tree">');
+    expect(review).toContain('<details class="review-dir"><summary>src/ (2)</summary>');
+    expect(review).toContain('<details class="review-file attention-must-read"><summary><code>src/demo.ts</code>');
+    expect(review).not.toMatch(/<details[^>]*\sopen(?:\s|>)/u);
+
+    // must-read reviewable 文件展开后是 changes 锚定骨架 + 段内 diff 行 + 段下注解。
+    expect(review).toContain('<div class="changes-segment" data-path="src/demo.ts" data-start="2" data-end="2">');
+    expect(review).toContain('<span class="diff-line diff-add">');
+    expect(review).toContain("这是本次修改的那行。");
+    expect(review).toContain('<details class="diff-rest-lines"><summary>其余变更行');
+
+    // skim 文件只给规模行与文件级 note，不泄漏 hunk。
+    expect(review).toContain('<details class="review-file attention-skim"><summary><code>src/nested/skim.ts</code>');
+    expect(review).not.toContain("export const skimNew = 2;");
+    expect(review).not.toContain("export const skimOld = 1;");
+
     // 导航置顶链接
     expect(review).toContain("本 PR 检视</a>");
   });
