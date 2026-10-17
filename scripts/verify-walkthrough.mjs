@@ -40,9 +40,10 @@ function appendDegraded(errors, warnings, bootstrap, ruleErrors) {
 
 /**
  * 执行 walkthrough 门禁并保留 bootstrap 警告，供 CLI 与测试观测。
- * @param {{root?: string, diffFiles?: string[], numstat?: Array<{additions:number, deletions:number, path:string}>, issues?: Array<{slug:string,status:string}>}} options
- *   root 默认 process.cwd；diffFiles 注入时执行规则 8/9/10；numstat 注入时规则 10
- *   额外对账变更页 scale；issues 注入用于纯装配测试。
+ * @param {{root?: string, diffFiles?: string[], numstat?: Array<{additions:number, deletions:number, path:string}>, addedDiffFiles?: string[], issues?: Array<{slug:string,status:string}>}} options
+ *   root 默认 process.cwd；diffFiles 注入时执行规则 8/9/10；numstat 与
+ *   addedDiffFiles 注入时规则 10 对本 PR 新建的变更页对账 scale 与语义覆盖；
+ *   issues 注入用于纯装配测试。
  * @returns {Promise<{ok:boolean, errors:string[], warnings:string[]}>} 门禁结果。
  */
 export async function collectWalkthrough(options = {}) {
@@ -71,7 +72,7 @@ export async function collectWalkthrough(options = {}) {
   appendDegraded(errors, warnings, bootstrap, checkLineCoverage(root, site));
   if (options.diffFiles !== undefined) {
     errors.push(...checkDiff(options.diffFiles, site));
-    errors.push(...checkDiffScale(options.diffFiles, site, options.numstat));
+    errors.push(...checkDiffScale(options.diffFiles, site, options.numstat, options.addedDiffFiles));
   }
 
   return { ok: errors.length === 0, errors, warnings };
@@ -101,6 +102,14 @@ export function readNumstat(base, exec = execFileSync) {
   return parseNumstat(exec("git", ["diff", "--numstat", base + "...HEAD"]).toString());
 }
 
+/** 执行 `git diff --name-only --diff-filter=A base...HEAD`；exec 参数仅供测试注入。 */
+export function readAddedDiffFiles(base, exec = execFileSync) {
+  return exec("git", ["diff", "--name-only", "--diff-filter=A", base + "...HEAD"])
+    .toString()
+    .split("\n")
+    .filter(Boolean);
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   let diffIndex = -1;
@@ -115,6 +124,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   let diffFiles;
   let numstat;
+  let addedDiffFiles;
   if (diffIndex >= 0) {
     const base = args[diffIndex + 1];
     if (!base) {
@@ -124,6 +134,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     try {
       diffFiles = readDiffFiles(base);
       numstat = readNumstat(base);
+      addedDiffFiles = readAddedDiffFiles(base);
     } catch (error) {
       console.error(`verify-walkthrough: 无法读取 git diff ${base}...HEAD`);
       console.error(error instanceof Error ? error.message : String(error));
@@ -131,7 +142,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
   }
 
-  const result = await collectWalkthrough({ diffFiles, numstat });
+  const result = await collectWalkthrough({ diffFiles, numstat, addedDiffFiles });
   for (const warning of result.warnings) console.log(warning);
   if (!result.ok) {
     console.error(`verify-walkthrough: FAIL\n  ${result.errors.join("\n  ")}`);

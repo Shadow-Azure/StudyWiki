@@ -62,7 +62,7 @@
 7. `node scripts/build-walkthrough.mjs` 成功产出 `walkthrough/dist/`。
 8. PR diff 中每个 `src/**` 或 `src-tauri/src/**` 源文件，其文件页必须在同一 diff 更新。
 9. PR diff 中全部强制源文件必须被某个变更页 `touches` 的 `file:` 引用覆盖。
-10. diff 中新增/修改的变更页：`scale.files` 必须恰好等于 `git diff --numstat` 行数，`scale.additions`/`deletions` 允许相对实际值 ±10% 容差；变更页 `codeMap.files` 必须覆盖 diff 中全部语义路径（命中 `MECHANICAL_PATTERNS` 的机械路径与 `walkthrough/` 站点源自身豁免覆盖义务）。
+10. scale 与语义路径对账只约束本 PR 新建的变更页（`--diff-filter=A`，base 无该文件），且 scale totals 对账仅在恰好新增一个变更页时执行——`scale.files` 必须恰好等于 `git diff --numstat` 行数，`scale.additions`/`deletions` 允许相对实际值 ±10% 容差（单页 PR 是未来常态，反过期目的保住；bootstrap 型多页大 PR 的页面各自描述历史 PR，totals 结构上不可满足，退化为仅覆盖检查）。codeMap 语义覆盖对所有新增变更页全局生效：`codeMap.files` 必须覆盖 diff 中全部语义路径（命中 `MECHANICAL_PATTERNS` 的机械路径与 `walkthrough/` 站点源自身豁免覆盖义务）。仅被修改的历史变更页只做 schema 静态检查——它们描述的是自己的历史 PR，scale 与本 diff 无关也不该相等。
 
 PR 还须让 flow issue scope 包含触到的 `walkthrough/**`；正式接线后命令与 CI 路由由根 `AGENTS.md` 和 `docs/AGENTS.md` 登记。
 

@@ -872,17 +872,26 @@ export function parseNumstat(text) {
 
 /**
  * --diff 档变更页对账：凡本 PR 新增/修改的 changes 页（diff 中出现
- * walkthrough/changes/<slug>.yaml），其 scale 与 numstat 实际值对账——
- * files 必须恰好相等，additions/deletions 允许 ±10% 容差（相对实际值，
- * 端点含内）；其 codeMap.files 必须覆盖 diff 中全部语义路径。机械路径
- * （MECHANICAL_PATTERNS）与 walkthrough/ 站点源自身豁免覆盖义务。
+ * walkthrough/changes/<slug>.yaml 且该文件在本 PR 新建——base 无该文件，
+ * 由 addedDiffFiles 给出）。scale totals 对账仅在本 PR 恰好新增一个变更页
+ * 时执行——files 必须恰好相等，additions/deletions 允许 ±10% 容差（相对
+ * 实际值，端点含内）；新增多页（bootstrap 型大 PR，页面描述各自的历史 PR）
+ * 时 totals 结构上不可满足，退化为仅覆盖检查。codeMap 语义覆盖对全部新增
+ * 变更页生效：codeMap.files 必须覆盖 diff 中全部语义路径。仅被修改的历史
+ * 变更页只做 schema 静态检查：它们描述的是自己的历史 PR，scale 与本 diff
+ * 无关。
+ * 机械路径（MECHANICAL_PATTERNS）与 walkthrough/ 站点源自身豁免覆盖义务。
  * @param {string[]} diffFiles - `git diff --name-only base...HEAD` 的注入结果。
  * @param {object} site - 站点索引。
  * @param {Array<{additions:number, deletions:number, path:string}>} [numstat]
- *   `git diff --numstat` 解析结果；缺省时跳过 scale 对账、只做覆盖对账。
+ *   `git diff --numstat` 解析结果；缺省时跳过 totals 对账、只做覆盖对账。
+ * @param {string[]} [addedDiffFiles]
+ *   `git diff --name-only --diff-filter=A base...HEAD` 的注入结果；对账对象
+ *   是 changedSlugs 与它的交集；交集恰为一页时执行 totals 对账，多页时仅做
+ *   覆盖检查；缺省视为空交集（不做对账）。
  * @returns {string[]} 错误列表。
  */
-export function checkDiffScale(diffFiles, site, numstat) {
+export function checkDiffScale(diffFiles, site, numstat, addedDiffFiles) {
   const errors = [];
   if (!Array.isArray(diffFiles)) return ["diffFiles 必须是字符串数组"];
   if (diffFiles.some((item) => typeof item !== "string")) {
@@ -902,6 +911,12 @@ export function checkDiffScale(diffFiles, site, numstat) {
       return ["numstat 每项必须是 {additions, deletions, path}"];
     }
   }
+  if (addedDiffFiles !== undefined) {
+    if (!Array.isArray(addedDiffFiles)) return ["addedDiffFiles 必须是数组"];
+    if (addedDiffFiles.some((item) => typeof item !== "string")) {
+      return ["addedDiffFiles 每项必须是字符串"];
+    }
+  }
   const diff = diffFiles.map(normalizePath);
   const changedSlugs = [
     ...new Set(
@@ -911,14 +926,26 @@ export function checkDiffScale(diffFiles, site, numstat) {
     ),
   ].sort();
   if (changedSlugs.length === 0) return errors;
+  const addedSlugs = new Set(
+    (addedDiffFiles ?? [])
+      .map((file) => normalizePath(file))
+      .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+      .filter(Boolean),
+  );
+  // 只有「本 PR 新建」的变更页参与对账；被修改的历史页豁免。
+  const targetSlugs = changedSlugs.filter((slug) => addedSlugs.has(slug));
+  if (targetSlugs.length === 0) return errors;
 
-  if (numstat !== undefined) {
+  // 裁决 G：totals 对账只在恰好新增一个变更页时执行；多页新增（bootstrap 型
+  // 大 PR）页面各自描述历史 PR，任何单一 totals 都不可能同时等于全部页面，
+  // 结构上不可满足，因此跳过、只保留覆盖检查。
+  if (numstat !== undefined && targetSlugs.length === 1) {
     const totals = { additions: 0, deletions: 0 };
     for (const row of numstat) {
       totals.additions += row.additions;
       totals.deletions += row.deletions;
     }
-    for (const slug of changedSlugs) {
+    for (const slug of targetSlugs) {
       const page = site.changes.get(slug);
       // schema 规则已负责形状；这里只对形状合法的 scale 做对账。
       if (!isObject(page) || !isObject(page.scale)) continue;
@@ -945,7 +972,7 @@ export function checkDiffScale(diffFiles, site, numstat) {
   }
 
   const covered = new Set();
-  for (const slug of changedSlugs) {
+  for (const slug of targetSlugs) {
     const page = site.changes.get(slug);
     if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
     for (const group of page.codeMap) {

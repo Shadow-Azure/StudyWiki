@@ -827,24 +827,25 @@ describe("walkthrough-lib", () => {
     const site = emptySite();
     site.changes.set("demo-change", validChange());
     const diff = ["src/demo.ts", "walkthrough/changes/demo-change.yaml"];
+    const added = ["walkthrough/changes/demo-change.yaml"];
     const numstat = [
       { additions: 10, deletions: 3, path: "src/demo.ts" },
       { additions: 5, deletions: 5, path: "walkthrough/changes/demo-change.yaml" },
     ];
     // 精确命中。
-    expect(checkDiffScale(diff, site, numstat)).toEqual([]);
+    expect(checkDiffScale(diff, site, numstat, added)).toEqual([]);
     // 容差边界：±10% 含端点（15 的 10% 为 1.5，16 在容差内；8 精确命中）。
     site.changes.set("demo-change", {
       ...validChange(),
       scale: { files: 2, additions: 16, deletions: 8 },
     });
-    expect(checkDiffScale(diff, site, numstat)).toEqual([]);
+    expect(checkDiffScale(diff, site, numstat, added)).toEqual([]);
     // files 必须恰好相等。
     site.changes.set("demo-change", {
       ...validChange(),
       scale: { files: 3, additions: 15, deletions: 8 },
     });
-    expect(checkDiffScale(diff, site, numstat)).toEqual([
+    expect(checkDiffScale(diff, site, numstat, added)).toEqual([
       "walkthrough/changes/demo-change.yaml: scale.files=3 与实际 diff 文件数 2 不一致（须恰好相等）",
     ]);
     // additions 超出容差。
@@ -852,7 +853,7 @@ describe("walkthrough-lib", () => {
       ...validChange(),
       scale: { files: 2, additions: 20, deletions: 8 },
     });
-    expect(checkDiffScale(diff, site, numstat)).toEqual([
+    expect(checkDiffScale(diff, site, numstat, added)).toEqual([
       "walkthrough/changes/demo-change.yaml: scale.additions=20 超出实际 15 的 ±10% 容差",
     ]);
     // deletions 超出容差。
@@ -860,8 +861,64 @@ describe("walkthrough-lib", () => {
       ...validChange(),
       scale: { files: 2, additions: 15, deletions: 2 },
     });
-    expect(checkDiffScale(diff, site, numstat)).toEqual([
+    expect(checkDiffScale(diff, site, numstat, added)).toEqual([
       "walkthrough/changes/demo-change.yaml: scale.deletions=2 超出实际 8 的 ±10% 容差",
+    ]);
+    // 历史页只被修改（不在新增集）时不触发对账：其 scale 描述自身历史 PR。
+    expect(
+      checkDiffScale(
+        diff,
+        site,
+        [
+          { additions: 999, deletions: 999, path: "src/demo.ts" },
+          { additions: 1, deletions: 1, path: "walkthrough/changes/demo-change.yaml" },
+        ],
+        [],
+      ),
+    ).toEqual([]);
+    // addedDiffFiles 里的变更页不在 diff 中（求交集为空）也不触发。
+    expect(checkDiffScale(diff, site, numstat, ["walkthrough/changes/other.yaml"])).toEqual([]);
+    // addedDiffFiles 形状契约 fail-loud。
+    expect(checkDiffScale(diff, site, numstat, "x")).toEqual(["addedDiffFiles 必须是数组"]);
+    expect(checkDiffScale(diff, site, numstat, [42])).toEqual([
+      "addedDiffFiles 每项必须是字符串",
+    ]);
+  });
+
+  it("checkDiffScale：新增多页跳过 totals 对账但保留语义覆盖，单页新增恢复对账", () => {
+    const site = emptySite();
+    site.changes.set("demo-change", validChange());
+    site.changes.set("other-change", { ...validChange(), issue: "other-change" });
+    const diff = [
+      "src/demo.ts",
+      "src/other.ts",
+      "walkthrough/changes/demo-change.yaml",
+      "walkthrough/changes/other-change.yaml",
+    ];
+    const twoAdded = [
+      "walkthrough/changes/demo-change.yaml",
+      "walkthrough/changes/other-change.yaml",
+    ];
+    const tinyNumstat = [
+      { additions: 1, deletions: 1, path: "src/demo.ts" },
+      { additions: 1, deletions: 1, path: "src/other.ts" },
+      { additions: 1, deletions: 1, path: "walkthrough/changes/demo-change.yaml" },
+      { additions: 1, deletions: 1, path: "walkthrough/changes/other-change.yaml" },
+    ];
+
+    // bootstrap 型多页新增：totals 结构上不可满足，跳过 scale 对账，
+    // 但 codeMap 语义覆盖仍全局生效（src/other.ts 未覆盖即红）。
+    expect(checkDiffScale(diff, site, tinyNumstat, twoAdded)).toEqual([
+      "变更页 codeMap 未覆盖语义路径: src/other.ts",
+    ]);
+
+    // 单页新增：恢复 totals 对账（scale 三项全红）+ 覆盖检查。
+    const oneAdded = ["walkthrough/changes/demo-change.yaml"];
+    expect(checkDiffScale(diff, site, tinyNumstat, oneAdded)).toEqual([
+      "walkthrough/changes/demo-change.yaml: scale.files=2 与实际 diff 文件数 4 不一致（须恰好相等）",
+      "walkthrough/changes/demo-change.yaml: scale.additions=15 超出实际 4 的 ±10% 容差",
+      "walkthrough/changes/demo-change.yaml: scale.deletions=8 超出实际 4 的 ±10% 容差",
+      "变更页 codeMap 未覆盖语义路径: src/other.ts",
     ]);
   });
 
@@ -876,16 +933,19 @@ describe("walkthrough-lib", () => {
       "walkthrough/files/src/demo.ts.yaml",
       "walkthrough/changes/demo-change.yaml",
     ];
+    const added = ["walkthrough/changes/demo-change.yaml"];
     // numstat 缺省时仍执行覆盖对账；机械路径与 walkthrough/ 自身不强制覆盖。
-    expect(checkDiffScale(diff, site, undefined)).toEqual([
+    expect(checkDiffScale(diff, site, undefined, added)).toEqual([
       "变更页 codeMap 未覆盖语义路径: src/other.ts",
     ]);
+    // 历史页只被修改（不在新增集）时不做覆盖对账。
+    expect(checkDiffScale(diff, site, undefined, [])).toEqual([]);
     // change 页不在 diff 中时不触发任何对账。
-    expect(checkDiffScale(["src/demo.ts"], site, [])).toEqual([]);
+    expect(checkDiffScale(["src/demo.ts"], site, [], added)).toEqual([]);
     // 坏 numstat 形状 fail-loud。
-    expect(checkDiffScale(diff, site, "x")).toEqual(["numstat 必须是数组"]);
+    expect(checkDiffScale(diff, site, "x", added)).toEqual(["numstat 必须是数组"]);
     expect(
-      checkDiffScale(diff, site, [{ additions: 1, deletions: 1 }]),
+      checkDiffScale(diff, site, [{ additions: 1, deletions: 1 }], added),
     ).toEqual(["numstat 每项必须是 {additions, deletions, path}"]);
   });
 });

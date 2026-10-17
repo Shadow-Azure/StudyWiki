@@ -108,6 +108,20 @@ codeMap:
         note: 覆盖率定版与快照粒度经验。
       - path: .agents/flow/issues/m2-walkthrough-backfill.i18n.yaml
         note: 双语配对记录。
+  - group: 流程与契约英文侧 + 门禁自测
+    attention: skim
+    why: 本 PR 的双语流程件英文侧与覆盖率/对账门禁自测试更新。
+    files:
+      - path: .agents/flow/issues/m2-walkthrough-backfill.en.md
+        note: 回填 issue 英文侧。
+      - path: .agents/flow/issues/m2-walkthrough-site.en.md
+        note: 骨架 issue 英文侧收尾。
+      - path: .agents/notes/implemented/process/2026-10-15-walkthrough-site.en.md
+        note: 决策记录英文侧校准段。
+      - path: scripts/verify-walkthrough.spec.mjs
+        note: 覆盖率与对账门禁的自测试更新。
+      - path: plans/2026-10-15-walkthrough-backfill.md
+        note: 回填实施计划执行蓝本。
 reviewGuide:
   order:
     - walkthrough/manifest.json
