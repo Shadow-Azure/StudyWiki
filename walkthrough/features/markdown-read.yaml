@@ -1,0 +1,79 @@
+kind: feature
+slug: markdown-read
+title: Markdown 阅读与编辑
+behavior: |
+  点击 Markdown 文件后默认进入安全预览；用户可切换编辑模式获得 CodeMirror 编辑器，修改会即时标脏，Mod-S 或保存按钮写回原文件。读取、保存失败和切换关闭都会给出可见反馈。
+
+modules: [src/host/files.ts, src/plugins/doc-markdown/index.ts, src/plugins/doc-markdown/mode.ts, src/plugins/doc-markdown/editor.ts, src/ui/markdown.ts, src/ui/viewer.ts]
+steps:
+  - ref:
+      file: src/plugins/doc-markdown/index.ts
+      snippet: |
+        ): () => void {
+          let host: HTMLElement | null = null;
+          let current: FileNode | null = null;
+          let state: DocState = openDoc("");
+          let editor: EditorHandle | null = null;
+          let offGuard: (() => void) | null = null;
+          let offSwitchGuard: (() => void) | null = null;
+          let offSave: (() => void) | null = null;
+          let error: string | null = null;
+          let loading = false;
+          let openSeq = 0;
+
+    note: |
+        打开文档先经宿主文件服务读取；openSeq 丢弃过期响应，读失败时清空旧正文并显示错误。
+
+  - ref:
+      file: src/plugins/doc-markdown/mode.ts
+      snippet: |
+        export function openDoc(text: string): DocState {
+          return { mode: "preview", savedText: text, text };
+        }
+
+    note: |
+        磁盘文本同时是预览内容和“最后保存”基线，后续脏判断只比较 live text 与 savedText。
+
+  - ref:
+      file: src/plugins/doc-markdown/editor.ts
+      snippet: |
+        ): EditorHandle {
+          const view = new EditorView({
+            parent,
+
+    note: |
+        CodeMirror 每次文档变化把全文镜像回 DocState；插件因此能统一渲染、标脏和守卫。
+
+  - ref:
+      file: src/plugins/doc-markdown/index.ts
+      snippet: |
+        ): () => void {
+          let host: HTMLElement | null = null;
+          let current: FileNode | null = null;
+          let state: DocState = openDoc("");
+          let editor: EditorHandle | null = null;
+          let offGuard: (() => void) | null = null;
+          let offSwitchGuard: (() => void) | null = null;
+          let offSave: (() => void) | null = null;
+          let error: string | null = null;
+          let loading = false;
+          let openSeq = 0;
+
+    note: |
+        预览与编辑消费同一状态；共享渲染器关闭 HTML/linkify，编辑器工厂则保留测试注桩。
+
+  - ref:
+      file: src/plugins/doc-markdown/index.ts
+      snippet: |
+        ): () => void {
+          let host: HTMLElement | null = null;
+          let current: FileNode | null = null;
+          let state: DocState = openDoc("");
+          let editor: EditorHandle | null = null;
+
+    note: |
+        保存把发起时的文本写回磁盘；期间又输入时不误标干净，成功后才移动 clean 基线。
+
+related:
+  notes:
+    - 参见 [阅读体验优化](../../.agents/notes/implemented/feature/2026-09-27-reading-polish.md)

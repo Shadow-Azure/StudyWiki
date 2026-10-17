@@ -1,0 +1,485 @@
+kind: file-page
+source: src/plugins/agent-core/loop.ts
+summary: agent-core 回合状态机：wire 组装、快照事件、串行工具回灌与半截不落账
+segments:
+  - snippet: |
+      import type { ChatMessage, ToolDeclaration } from "../../host/llm";
+      import type { ChatStreamHandle, PartialAssistant } from "../../host/llm-stream";
+      import type { AgentMessage, AgentToolCall, SessionLine } from "./types";
+
+      /** 回合过程中对调用方暴露的增量事件；快照与落账消息分离传递。 */
+      export type AgentEvent =
+        | { type: "turn-start" }
+        | { type: "snapshot"; snapshot: PartialAssistant }
+        | { type: "tool-start"; call: AgentToolCall }
+        | { type: "tool-end"; call: AgentToolCall; content: string; isError: boolean }
+        | { type: "message"; message: AgentMessage }
+        | { type: "turn-end" }
+        | { type: "aborted" }
+        | { type: "error"; message: string };
+    note: |
+      AgentEvent 把回合生命周期拆成开始、快照、工具开始与结束、完整消息、结束、中止和错误。快照只服务界面，完整消息才代表落账，调用方不会把半截输出误存为历史。
+  - snippet: |
+      /** 回合状态机的注入缝：推理流、工具执行、系统提示与持久化都由宿主装配。 */
+      export interface LoopDeps {
+        /** 发起一次流式模型请求；模型路由与工具能力门禁归 LLM 宿主服务。 */
+        chatStream: (req: {
+          model?: string;
+          messages: ChatMessage[];
+          tools?: ToolDeclaration[];
+        }) => Promise<ChatStreamHandle>;
+        /** 执行单个模型工具调用；抛错会转为错误工具结果回灌。 */
+        runTool: (call: AgentToolCall) => Promise<{ content: string; isError?: boolean }>;
+        /** 每回合现组的系统提示；只进入模型 wire，不进入历史或会话日志。 */
+        systemPrompt: () => string;
+        /** 本回合暴露给模型的工具声明。 */
+        tools: ToolDeclaration[];
+        /** LLM 服务使用的模型路由键。 */
+        model?: string;
+        /** 只追加落账；user 由调用方先落，本状态机只负责 assistant/tool。 */
+        persist: (line: SessionLine) => void;
+        /** UI 与流程事件出口；实现方自行节流与清理。 */
+        emit: (e: AgentEvent) => void;
+      }
+
+      type ToolResult = Awaited<ReturnType<LoopDeps["runTool"]>>;
+    note: |
+      LoopDeps 声明回合状态机的全部外部缝：流式聊天、单个工具执行、系统提示、工具声明、模型、持久化和事件出口。因此状态机不绑定 LLM 供应商、文件系统或 DOM，测试可以逐步注入。
+  - snippet: |
+      /** Agent 历史转模型 wire 形状；reasoning/usage/finishReason 是本地元数据不回传。
+       * @param history Ordered, read-only conversation history.
+       * @returns New wire messages without mutating or including local metadata.
+       */
+      export function toChatMessages(history: AgentMessage[]): ChatMessage[] {
+        return history.map((message): ChatMessage => {
+          if (message.role === "assistant") {
+            return {
+              role: message.role,
+              content: message.text,
+              // Internal calls keep the raw-text name `argumentsText`; the Chat
+              // Completions wire contract names the same value `arguments`.
+              toolCalls: message.toolCalls.map(({ id, name, argumentsText }) => ({
+                id,
+                name,
+                arguments: argumentsText,
+              })),
+            };
+          }
+          if (message.role === "tool") {
+            return {
+              role: "tool",
+              content: message.content,
+              toolCallId: message.callId,
+            };
+          }
+          return { role: message.role, content: message.content };
+        });
+      }
+    note: |
+      toChatMessages 把本地历史转换成模型 wire。助手本地元数据不回传，工具参数从内部 argumentsText 改成 Chat Completions 契约的 arguments，工具消息用 callId 关联。
+  - snippet: |
+      export async function runTurn(
+        history: AgentMessage[],
+        deps: LoopDeps,
+        signal: AbortSignal,
+      ): Promise<AgentMessage[]> {
+        const appended: AgentMessage[] = [];
+        let completedAssistant: AgentMessage | undefined;
+        deps.emit({ type: "turn-start" });
+
+        const stop = (): AgentMessage[] => {
+          if (completedAssistant?.role === "assistant") {
+            const completedCalls = new Set(
+              appended
+                .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+                .map((message) => message.callId),
+            );
+            for (const call of completedAssistant.toolCalls) {
+              if (completedCalls.has(call.id)) continue;
+              const tool: AgentMessage = {
+                role: "tool",
+                callId: call.id,
+                name: call.name,
+                content: "已取消",
+                isError: true,
+              };
+              deps.persist({ type: "message", message: tool });
+              appended.push(tool);
+            }
+          }
+          deps.emit({ type: "aborted" });
+          return appended;
+        };
+        const fail = (e: unknown): AgentMessage[] => {
+          deps.emit({ type: "error", message: errorMessage(e) });
+          return appended;
+        };
+    note: |
+      runTurn 进入回合后先记录新增消息并广播开始。stop 负责中止路径：已经落账的助手若还有未执行调用，会补上“已取消”的错误工具结果，保证 wire 里的每个 tool_calls 都有回应。
+  - snippet: |
+      export async function runTurn(
+        history: AgentMessage[],
+        deps: LoopDeps,
+        signal: AbortSignal,
+      ): Promise<AgentMessage[]> {
+        const appended: AgentMessage[] = [];
+        let completedAssistant: AgentMessage | undefined;
+        deps.emit({ type: "turn-start" });
+
+        const stop = (): AgentMessage[] => {
+          if (completedAssistant?.role === "assistant") {
+            const completedCalls = new Set(
+              appended
+                .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+                .map((message) => message.callId),
+            );
+            for (const call of completedAssistant.toolCalls) {
+              if (completedCalls.has(call.id)) continue;
+              const tool: AgentMessage = {
+                role: "tool",
+                callId: call.id,
+                name: call.name,
+                content: "已取消",
+                isError: true,
+              };
+              deps.persist({ type: "message", message: tool });
+              appended.push(tool);
+            }
+          }
+          deps.emit({ type: "aborted" });
+          return appended;
+        };
+        const fail = (e: unknown): AgentMessage[] => {
+          deps.emit({ type: "error", message: errorMessage(e) });
+          return appended;
+        };
+
+        for (;;) {
+          if (signal.aborted) return stop();
+
+          let handle: ChatStreamHandle;
+          try {
+            handle = await deps.chatStream({
+              model: deps.model,
+              messages: [
+                { role: "system", content: deps.systemPrompt() },
+                ...toChatMessages([...history, ...appended]),
+              ],
+              tools: deps.tools,
+            });
+          } catch (e) {
+            return fail(e);
+          }
+          let snapshot: PartialAssistant;
+          let cancelRequested = false;
+          const cancel = async (): Promise<void> => {
+            if (cancelRequested) return;
+            cancelRequested = true;
+            try {
+              await handle.abort();
+            } catch {
+              // Abort delivery is best-effort; the loop still ends as aborted.
+            }
+          };
+          if (signal.aborted) {
+            await cancel();
+            return stop();
+          }
+          const onAbort = () => void cancel();
+          signal.addEventListener("abort", onAbort, { once: true });
+          try {
+            for await (const _chunk of handle.events) {
+              snapshot = handle.snapshot();
+              deps.emit({ type: "snapshot", snapshot });
+              if (signal.aborted) {
+                await cancel();
+                return stop();
+              }
+            }
+            if (signal.aborted) {
+              await cancel();
+              return stop();
+            }
+            await handle.settled;
+            snapshot = handle.snapshot();
+            if (signal.aborted || cancelRequested) return stop();
+          } catch (e) {
+            return fail(e);
+          } finally {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!snapshot.finishReason) return stop();
+    note: |
+      每一轮都重新组装 system prompt、完整有效历史和已新增消息，再开启流。监听协作中止信号，收到 chunk 就广播快照；流结束或出错后移除监听，半截快照永远不会进入 appended。
+  - snippet: |
+      export async function runTurn(
+        history: AgentMessage[],
+        deps: LoopDeps,
+        signal: AbortSignal,
+      ): Promise<AgentMessage[]> {
+        const appended: AgentMessage[] = [];
+        let completedAssistant: AgentMessage | undefined;
+        deps.emit({ type: "turn-start" });
+
+        const stop = (): AgentMessage[] => {
+          if (completedAssistant?.role === "assistant") {
+            const completedCalls = new Set(
+              appended
+                .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+                .map((message) => message.callId),
+            );
+            for (const call of completedAssistant.toolCalls) {
+              if (completedCalls.has(call.id)) continue;
+              const tool: AgentMessage = {
+                role: "tool",
+                callId: call.id,
+                name: call.name,
+                content: "已取消",
+                isError: true,
+              };
+              deps.persist({ type: "message", message: tool });
+              appended.push(tool);
+            }
+          }
+          deps.emit({ type: "aborted" });
+          return appended;
+        };
+        const fail = (e: unknown): AgentMessage[] => {
+          deps.emit({ type: "error", message: errorMessage(e) });
+          return appended;
+        };
+
+        for (;;) {
+          if (signal.aborted) return stop();
+
+          let handle: ChatStreamHandle;
+          try {
+            handle = await deps.chatStream({
+              model: deps.model,
+              messages: [
+                { role: "system", content: deps.systemPrompt() },
+                ...toChatMessages([...history, ...appended]),
+              ],
+              tools: deps.tools,
+            });
+          } catch (e) {
+            return fail(e);
+          }
+          let snapshot: PartialAssistant;
+          let cancelRequested = false;
+          const cancel = async (): Promise<void> => {
+            if (cancelRequested) return;
+            cancelRequested = true;
+            try {
+              await handle.abort();
+            } catch {
+              // Abort delivery is best-effort; the loop still ends as aborted.
+            }
+          };
+          if (signal.aborted) {
+            await cancel();
+            return stop();
+          }
+          const onAbort = () => void cancel();
+          signal.addEventListener("abort", onAbort, { once: true });
+          try {
+            for await (const _chunk of handle.events) {
+              snapshot = handle.snapshot();
+              deps.emit({ type: "snapshot", snapshot });
+              if (signal.aborted) {
+                await cancel();
+                return stop();
+              }
+            }
+            if (signal.aborted) {
+              await cancel();
+              return stop();
+            }
+            await handle.settled;
+            snapshot = handle.snapshot();
+            if (signal.aborted || cancelRequested) return stop();
+          } catch (e) {
+            return fail(e);
+          } finally {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!snapshot.finishReason) return stop();
+          const assistant: AgentMessage = {
+            role: "assistant",
+            reasoning: snapshot.reasoning,
+            text: snapshot.text,
+            toolCalls: snapshot.toolCalls.map(({ id, name, argumentsText }) => ({
+              id,
+              name,
+              argumentsText,
+            })),
+            usage: snapshot.usage,
+            finishReason: snapshot.finishReason,
+          };
+          completedAssistant = assistant;
+          deps.persist({ type: "message", message: assistant });
+          appended.push(assistant);
+          deps.emit({ type: "message", message: assistant });
+
+          if (assistant.toolCalls.length === 0) {
+            deps.emit({ type: "turn-end" });
+            return appended;
+          }
+
+    note: |
+      只有快照带 finishReason 时才构造完整助手消息，先落账再广播。没有工具调用时回合自然结束；本地元数据保留在历史，但 toChatMessages 不会回传。
+  - snippet: |
+      export async function runTurn(
+        history: AgentMessage[],
+        deps: LoopDeps,
+        signal: AbortSignal,
+      ): Promise<AgentMessage[]> {
+        const appended: AgentMessage[] = [];
+        let completedAssistant: AgentMessage | undefined;
+        deps.emit({ type: "turn-start" });
+
+        const stop = (): AgentMessage[] => {
+          if (completedAssistant?.role === "assistant") {
+            const completedCalls = new Set(
+              appended
+                .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+                .map((message) => message.callId),
+            );
+            for (const call of completedAssistant.toolCalls) {
+              if (completedCalls.has(call.id)) continue;
+              const tool: AgentMessage = {
+                role: "tool",
+                callId: call.id,
+                name: call.name,
+                content: "已取消",
+                isError: true,
+              };
+              deps.persist({ type: "message", message: tool });
+              appended.push(tool);
+            }
+          }
+          deps.emit({ type: "aborted" });
+          return appended;
+        };
+        const fail = (e: unknown): AgentMessage[] => {
+          deps.emit({ type: "error", message: errorMessage(e) });
+          return appended;
+        };
+
+        for (;;) {
+          if (signal.aborted) return stop();
+
+          let handle: ChatStreamHandle;
+          try {
+            handle = await deps.chatStream({
+              model: deps.model,
+              messages: [
+                { role: "system", content: deps.systemPrompt() },
+                ...toChatMessages([...history, ...appended]),
+              ],
+              tools: deps.tools,
+            });
+          } catch (e) {
+            return fail(e);
+          }
+          let snapshot: PartialAssistant;
+          let cancelRequested = false;
+          const cancel = async (): Promise<void> => {
+            if (cancelRequested) return;
+            cancelRequested = true;
+            try {
+              await handle.abort();
+            } catch {
+              // Abort delivery is best-effort; the loop still ends as aborted.
+            }
+          };
+          if (signal.aborted) {
+            await cancel();
+            return stop();
+          }
+          const onAbort = () => void cancel();
+          signal.addEventListener("abort", onAbort, { once: true });
+          try {
+            for await (const _chunk of handle.events) {
+              snapshot = handle.snapshot();
+              deps.emit({ type: "snapshot", snapshot });
+              if (signal.aborted) {
+                await cancel();
+                return stop();
+              }
+            }
+            if (signal.aborted) {
+              await cancel();
+              return stop();
+            }
+            await handle.settled;
+            snapshot = handle.snapshot();
+            if (signal.aborted || cancelRequested) return stop();
+          } catch (e) {
+            return fail(e);
+          } finally {
+            signal.removeEventListener("abort", onAbort);
+          }
+
+          if (!snapshot.finishReason) return stop();
+          const assistant: AgentMessage = {
+            role: "assistant",
+            reasoning: snapshot.reasoning,
+            text: snapshot.text,
+            toolCalls: snapshot.toolCalls.map(({ id, name, argumentsText }) => ({
+              id,
+              name,
+              argumentsText,
+            })),
+            usage: snapshot.usage,
+            finishReason: snapshot.finishReason,
+          };
+          completedAssistant = assistant;
+          deps.persist({ type: "message", message: assistant });
+          appended.push(assistant);
+          deps.emit({ type: "message", message: assistant });
+
+          if (assistant.toolCalls.length === 0) {
+            deps.emit({ type: "turn-end" });
+            return appended;
+          }
+
+          for (const call of assistant.toolCalls) {
+            if (signal.aborted) return stop();
+            deps.emit({ type: "tool-start", call });
+            let result: ToolResult;
+            try {
+              result = await deps.runTool(call);
+            } catch (e) {
+              result = { content: String(e), isError: true };
+            }
+            const tool: AgentMessage = {
+              role: "tool",
+              callId: call.id,
+              name: call.name,
+              content: result.content,
+              isError: result.isError === true ? true : undefined,
+            };
+            deps.persist({ type: "message", message: tool });
+            appended.push(tool);
+            deps.emit({
+              type: "tool-end",
+              call,
+              content: tool.content,
+              isError: tool.isError === true,
+            });
+            deps.emit({ type: "message", message: tool });
+          }
+        }
+    note: |
+      有工具调用时按声明顺序串行执行。runTool 抛错也转成错误结果，随正常结果一起落账、广播并回灌到下一轮模型请求，使失败成为模型可以适应的信息而不是回合崩溃。
+  - snippet: |
+      function errorMessage(e: unknown): string {
+        if (e instanceof Error) return e.message;
+        if (typeof e === "string") return e;
+        return JSON.stringify(e);
+      }
+    note: |
+      errorMessage 把 Error、字符串和其他可序列化异常统一成文本。它让流错误事件始终携带稳定可显示的消息。

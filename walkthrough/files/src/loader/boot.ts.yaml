@@ -1,0 +1,162 @@
+kind: file-page
+source: src/loader/boot.ts
+summary: 装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计
+segments:
+  - snippet: |
+      /** boot 结果报告：成功激活的 id 与分治跳过的外置坏行（面板待清理）。 */
+      export interface BootReport {
+        loaded: string[];
+        /** 外置行装载失败（目录缺失/入口损坏/形状不符/审计卡死）：跳过不阻断，面板点名。 */
+        broken: Array<{ id: string; reason: string }>;
+      }
+    note: |
+      BootReport 把成功装载和外置坏行分开返回。broken 保留 id 和原因，成为插件面板清理入口的数据源。
+  - snippet: |
+      /** Boot every enabled row, then audit fiber states: built-in failures stay
+       * fail-loud; external (ext:*) failures are quarantined into the report —
+       * external resources are user-side state and must not block the whole app.
+       * @param ctx Host context the plugins attach to.
+       * @param manifest Persisted manifest rows driving what gets loaded.
+       * @param table Static module table resolving built-in ids to plugins.
+       * @param loadExternal Resolves an external plugin name to its module
+       *   (Rust 读入口 + blob 装载 + 支持集/形状校验，见 host/plugins.ts).
+       * @param deps 外置激活参数（版本快照通道 + 审计等待配置）；缺省不写快照、用真实等待预算。
+       * @returns The boot report (activated ids + quarantined external rows). */
+      export async function boot(
+        ctx: Context,
+        manifest: Manifest,
+        table: ModuleTable,
+        loadExternal: (name: string) => Promise<PluginModule>,
+        deps?: ActivateDeps,
+      ): Promise<BootReport> {
+    note: |
+      boot 的输入是宿主 Context、清单、静态表、外置模块解析器和激活参数。签名已经表明内置与外置来源不同：静态解析与运行期读取分治。
+  - snippet: |
+      /** Boot every enabled row, then audit fiber states: built-in failures stay
+       * fail-loud; external (ext:*) failures are quarantined into the report —
+       * external resources are user-side state and must not block the whole app.
+       * @param ctx Host context the plugins attach to.
+       * @param manifest Persisted manifest rows driving what gets loaded.
+       * @param table Static module table resolving built-in ids to plugins.
+       * @param loadExternal Resolves an external plugin name to its module
+       *   (Rust 读入口 + blob 装载 + 支持集/形状校验，见 host/plugins.ts).
+       * @param deps 外置激活参数（版本快照通道 + 审计等待配置）；缺省不写快照、用真实等待预算。
+       * @returns The boot report (activated ids + quarantined external rows). */
+      export async function boot(
+        ctx: Context,
+        manifest: Manifest,
+        table: ModuleTable,
+        loadExternal: (name: string) => Promise<PluginModule>,
+        deps?: ActivateDeps,
+      ): Promise<BootReport> {
+        const loaded: string[] = [];
+        const broken: Array<{ id: string; reason: string }> = [];
+        const states: Array<{ id: string; state: () => number }> = [];
+        for (const row of manifest.plugins) {
+          if (!row.enabled) continue;
+          if (row.id.startsWith("ext:")) {
+            const name = row.id.slice(4);
+            try {
+              const plugin = await loadExternal(name);
+              await activateExternal(ctx, name, plugin, row.config, deps ?? { snapshot: async () => {} });
+              loaded.push(row.id);
+            } catch (e) {
+              // 资源缺失/入口损坏/形状不符/审计超时：跳过并点名，不阻断其余插件。
+              broken.push({ id: row.id, reason: (e as Error).message });
+            }
+            continue;
+    note: |
+      启用行循环里，ext: 行逐个装载并激活；任何目录缺失、入口损坏、形状不符或审计失败都进入 broken 后继续处理下一行。用户侧外置资源因此不会阻断应用。
+  - snippet: |
+      /** Boot every enabled row, then audit fiber states: built-in failures stay
+       * fail-loud; external (ext:*) failures are quarantined into the report —
+       * external resources are user-side state and must not block the whole app.
+       * @param ctx Host context the plugins attach to.
+       * @param manifest Persisted manifest rows driving what gets loaded.
+       * @param table Static module table resolving built-in ids to plugins.
+       * @param loadExternal Resolves an external plugin name to its module
+       *   (Rust 读入口 + blob 装载 + 支持集/形状校验，见 host/plugins.ts).
+       * @param deps 外置激活参数（版本快照通道 + 审计等待配置）；缺省不写快照、用真实等待预算。
+       * @returns The boot report (activated ids + quarantined external rows). */
+      export async function boot(
+        ctx: Context,
+        manifest: Manifest,
+        table: ModuleTable,
+        loadExternal: (name: string) => Promise<PluginModule>,
+        deps?: ActivateDeps,
+      ): Promise<BootReport> {
+        const loaded: string[] = [];
+        const broken: Array<{ id: string; reason: string }> = [];
+        const states: Array<{ id: string; state: () => number }> = [];
+        for (const row of manifest.plugins) {
+          if (!row.enabled) continue;
+          if (row.id.startsWith("ext:")) {
+            const name = row.id.slice(4);
+            try {
+              const plugin = await loadExternal(name);
+              await activateExternal(ctx, name, plugin, row.config, deps ?? { snapshot: async () => {} });
+              loaded.push(row.id);
+            } catch (e) {
+              // 资源缺失/入口损坏/形状不符/审计超时：跳过并点名，不阻断其余插件。
+              broken.push({ id: row.id, reason: (e as Error).message });
+            }
+            continue;
+          }
+          const entry = table[row.id];
+          if (!entry) throw new Error(`装载失败：清单条目 "${row.id}" 不在静态模块表中`);
+          const fiber = ctx.plugin(entry.plugin, { ...entry.defaults, ...row.config });
+          states.push({ id: row.id, state: () => fiber.state });
+          loaded.push(row.id);
+    note: |
+      非外置 id 必须能在静态模块表找到，找不到直接抛错。内置插件合并默认配置和清单配置后挂载，并登记 fiber 供稍后审计。
+  - snippet: |
+      /** Boot every enabled row, then audit fiber states: built-in failures stay
+       * fail-loud; external (ext:*) failures are quarantined into the report —
+       * external resources are user-side state and must not block the whole app.
+       * @param ctx Host context the plugins attach to.
+       * @param manifest Persisted manifest rows driving what gets loaded.
+       * @param table Static module table resolving built-in ids to plugins.
+       * @param loadExternal Resolves an external plugin name to its module
+       *   (Rust 读入口 + blob 装载 + 支持集/形状校验，见 host/plugins.ts).
+       * @param deps 外置激活参数（版本快照通道 + 审计等待配置）；缺省不写快照、用真实等待预算。
+       * @returns The boot report (activated ids + quarantined external rows). */
+      export async function boot(
+        ctx: Context,
+        manifest: Manifest,
+        table: ModuleTable,
+        loadExternal: (name: string) => Promise<PluginModule>,
+        deps?: ActivateDeps,
+      ): Promise<BootReport> {
+        const loaded: string[] = [];
+        const broken: Array<{ id: string; reason: string }> = [];
+        const states: Array<{ id: string; state: () => number }> = [];
+        for (const row of manifest.plugins) {
+          if (!row.enabled) continue;
+          if (row.id.startsWith("ext:")) {
+            const name = row.id.slice(4);
+            try {
+              const plugin = await loadExternal(name);
+              await activateExternal(ctx, name, plugin, row.config, deps ?? { snapshot: async () => {} });
+              loaded.push(row.id);
+            } catch (e) {
+              // 资源缺失/入口损坏/形状不符/审计超时：跳过并点名，不阻断其余插件。
+              broken.push({ id: row.id, reason: (e as Error).message });
+            }
+            continue;
+          }
+          const entry = table[row.id];
+          if (!entry) throw new Error(`装载失败：清单条目 "${row.id}" 不在静态模块表中`);
+          const fiber = ctx.plugin(entry.plugin, { ...entry.defaults, ...row.config });
+          states.push({ id: row.id, state: () => fiber.state });
+          loaded.push(row.id);
+        }
+        await new Promise((r) => setTimeout(r, 50)); // 内置行静默窗口（注入等待 + 激活）；外置行已由 waitActive 覆盖
+        const stuckBuiltin = states
+          .filter((s) => s.state() !== FiberState.ACTIVE)
+          .map((s) => `${s.id}（state=${s.state()}）`);
+        if (stuckBuiltin.length) {
+          throw new Error(`装载审计失败：${stuckBuiltin.join("、")} 未激活——声明的服务未提供？`);
+        }
+        return { loaded, broken };
+    note: |
+      短暂静默窗口覆盖内置插件的注入等待和激活。若仍有 fiber 不在 ACTIVE，boot 点名全部卡住行并失败；外置行已被各自的 waitActive 审计过。

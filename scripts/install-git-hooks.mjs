@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // 安装本地 git 钩子（每个 clone 跑一次），刻意窄：pre-commit 只查暂存文本的尾随空白，
+// post-commit 只在提交涉及 walkthrough 时刷新检视页（无法阻断提交，失败仅提示），
 // commit-msg 只提醒提交标题挂 (#N) 流程引用，
-// pre-push 跑 doc-quick + src-tauri 有改动时的 rustfmt 提醒。穷尽覆盖归
-// CI——钩子是提醒，不是门禁。幂等，重复安装安全。
+// pre-push 跑 doc-quick、检视元数据保鲜硬门禁与 src-tauri rustfmt；
+// 穷尽覆盖归 CI。幂等，重复安装安全。
 // 同时注册 .i18n.yaml 的 fail-closed merge driver（.gitattributes 已引用），
 // 免得安装入口散成两条命令。
 
@@ -29,10 +30,25 @@ exit $status
 # Installed by scripts/install-git-hooks.mjs — do not edit.
 # 开发流程的本地提醒：提交标题须挂 flow issue 引用 (#N)（契约见
 # .agents/flow/README.md；穷尽覆盖归 CI 的 verify-flow --diff）。
-grep -Eq '[([]#[0-9]+[)]]' "$1" || {
+grep -Eq '[(（]#[0-9]+[)）]' "$1" || {
   echo "commit-msg: 提交标题缺 issue 引用 (#N)（--no-verify 可跳过，风险自担）" >&2
   exit 1
 }
+`,
+  "post-commit": `#!/bin/sh
+# Installed by scripts/install-git-hooks.mjs — do not edit.
+# 提交涉及 walkthrough 时刷新检视页（post-commit 无法阻断提交；失败仅提示，
+# 穷尽校验归 CI 的 verify-walkthrough --diff）。
+changed=$(git show --name-only --format= HEAD 2>/dev/null || true)
+case "$changed" in
+  *walkthrough/*|*build-walkthrough*)
+    if pnpm walkthrough:review >/dev/null 2>&1; then
+      echo "post-commit: 检视页已更新（walkthrough/dist/review.html）"
+    else
+      echo "post-commit: walkthrough:review 未过——检视页可能未刷新" >&2
+    fi
+    ;;
+esac
 `,
   "pre-push": `#!/bin/sh
 # Installed by scripts/install-git-hooks.mjs — do not edit.
@@ -40,6 +56,8 @@ node scripts/run-gates.mjs --mode doc-quick || {
   echo "pre-push: doc-quick 未过（pnpm lint:docs）。git push --no-verify 可跳过，风险自担。" >&2
   exit 1
 }
+# 有关联 PR 时检查 changes 元数据是否由 walkthrough-change-metadata-gen 对齐。
+node scripts/check-review-freshness.mjs "$@" || exit 1
 # src-tauri 有改动且本机有 cargo 时提醒 rustfmt（穷尽覆盖归 CI 的 fmt lane；
 # origin/main 缺席时静默跳过——钩子是提醒，不是门禁）。
 if command -v cargo >/dev/null 2>&1; then

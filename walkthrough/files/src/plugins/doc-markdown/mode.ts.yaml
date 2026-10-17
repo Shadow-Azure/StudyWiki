@@ -1,0 +1,114 @@
+kind: file-page
+source: src/plugins/doc-markdown/mode.ts
+summary: doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
+segments:
+  - snippet: |
+      /** Document display mode. */
+      export type DocMode = "preview" | "edit";
+
+      /** Document state; the editor's own text is mirrored into `text` via onChange. */
+      export interface DocState {
+        /** What the viewer is showing right now. */
+        mode: DocMode;
+        /** Content as of the last successful save — the clean baseline. */
+        savedText: string;
+        /** Live content; the editor mirrors its own text here via onChange. */
+        text: string;
+      }
+
+      /** Open a document: preview mode, clean.
+       * @param text Content loaded from disk; doubles as the clean baseline.
+       * @returns Fresh state in preview mode, not dirty. */
+      export function openDoc(text: string): DocState {
+        return { mode: "preview", savedText: text, text };
+      }
+
+      /** Record an edit (editor onChange).
+       * @param s Previous document state.
+       * @param text New editor text.
+       * @returns State with `text` updated; dirtiness is recomputed against `savedText`. */
+      export function editText(s: DocState, text: string): DocState {
+        return { ...s, text };
+      }
+
+      /** Record a successful save.
+       * @param s Previous document state.
+       * @returns State whose clean baseline is the current text. */
+      export function markSaved(s: DocState): DocState {
+        return { ...s, savedText: s.text };
+      }
+
+      /** Toggle the display mode.
+       * @param mode Current display mode.
+       * @returns The other mode (preview ↔ edit). */
+      export function toggleMode(mode: DocMode): DocMode {
+        return mode === "preview" ? "edit" : "preview";
+      }
+
+      /** Dirty when text differs from the last saved text.
+       * @param s Current document state.
+       * @returns True while `text` differs from `savedText`. */
+      export function isDirty(s: DocState): boolean {
+        return s.text !== s.savedText;
+      }
+    note: |
+      整个文件是文档查看器的小状态机：模式、干净基线和当前文本放在一个值对象里，所有转移都是纯函数。UI 只消费这些结果，测试可以直接穷举打开、编辑、保存、切换和脏判断。
+  - snippet: |
+      /** Document display mode. */
+      export type DocMode = "preview" | "edit";
+
+      /** Document state; the editor's own text is mirrored into `text` via onChange. */
+      export interface DocState {
+        /** What the viewer is showing right now. */
+        mode: DocMode;
+        /** Content as of the last successful save — the clean baseline. */
+        savedText: string;
+        /** Live content; the editor mirrors its own text here via onChange. */
+        text: string;
+      }
+    note: |
+      类型层区分预览/编辑模式，并把 savedText 明确定义为最近一次成功保存的基线。text 与编辑器保持镜像，脏判断因此不需要触碰 DOM 或编辑器内部。
+  - snippet: |
+      /** Open a document: preview mode, clean.
+       * @param text Content loaded from disk; doubles as the clean baseline.
+       * @returns Fresh state in preview mode, not dirty. */
+      export function openDoc(text: string): DocState {
+        return { mode: "preview", savedText: text, text };
+      }
+    note: |
+      openDoc 是载入成功后的唯一状态入口。磁盘内容同时成为展示文本和保存基线，天然保证新文档初始不脏。
+  - snippet: |
+      /** Record an edit (editor onChange).
+       * @param s Previous document state.
+       * @param text New editor text.
+       * @returns State with `text` updated; dirtiness is recomputed against `savedText`. */
+      export function editText(s: DocState, text: string): DocState {
+        return { ...s, text };
+      }
+    note: |
+      editText 只替换活动文本，不猜测保存状态。这个窄转移让输入法、撤销和连续变更都汇入同一条镜像路径。
+  - snippet: |
+      /** Record a successful save.
+       * @param s Previous document state.
+       * @returns State whose clean baseline is the current text. */
+      export function markSaved(s: DocState): DocState {
+        return { ...s, savedText: s.text };
+      }
+    note: |
+      markSaved 把当前文本提升为新基线，是保存成功后的唯一提交点。失败路径不调用它，因此脏标记自然保留。
+  - snippet: |
+      /** Toggle the display mode.
+       * @param mode Current display mode.
+       * @returns The other mode (preview ↔ edit). */
+      export function toggleMode(mode: DocMode): DocMode {
+        return mode === "preview" ? "edit" : "preview";
+      }
+
+      /** Dirty when text differs from the last saved text.
+       * @param s Current document state.
+       * @returns True while `text` differs from `savedText`. */
+      export function isDirty(s: DocState): boolean {
+        return s.text !== s.savedText;
+      }
+    note: |
+      toggleMode 提供模式翻转，isDirty 用文本与基线的直接比较作守卫。两者都无副作用，方便关闭和切换前反复询问。

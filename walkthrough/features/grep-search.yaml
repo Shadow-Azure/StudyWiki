@@ -1,0 +1,84 @@
+kind: feature
+slug: grep-search
+title: Agent grep 工具
+behavior: |
+  Agent 可在库根或已授权路径执行文本搜索，支持正则或原文、忽略大小写、glob、上下文和命中上限。Rust 使用随应用打包的 ripgrep sidecar，流式解析 JSON 输出，并按字节、空闲超时与数量预算提前停止。
+
+modules: [src/plugins/agent-core/tools.ts, src/host/files.ts, src-tauri/src/lib.rs, src-tauri/src/grep.rs, src-tauri/src/windows.rs]
+steps:
+  - ref:
+      file: src/plugins/agent-core/tools.ts
+      snippet: |
+        async function executeGrep(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
+          const pattern = requiredString(args, "pattern");
+          if (typeof pattern !== "string") return pattern;
+
+    note: |
+        grep 先走统一的读授权缝；路径不在当前授权域时可发起升级审批，失败结果仍作为工具消息返回。
+
+  - ref:
+      file: src/host/files.ts
+      snippet: |
+        export class FilesService {
+          readonly #deps: FilesDeps;
+          readonly #events = createEmitter<{ "fs-changed": string }>();
+          #unlisten: (() => void) | null = null;
+
+    note: |
+        前端不拼命令行，只把类型化请求交给宿主文件服务；错误词表原样穿透给工具层。
+
+  - ref:
+      file: src-tauri/src/lib.rs
+      snippet: |
+        ) -> Result<crate::grep::GrepResult, crate::grep::GrepError> {
+            let config_root =
+                crate::config::app_studywiki_dir(&app).map_err(|e| crate::grep::GrepError {
+                    code: "SEARCH_FAILED".into(),
+                    message: e,
+                })?;
+            if let Err(message) = ensure_authorized_read(&state, window.label(), &req.path, &config_root) {
+
+    note: |
+        Rust 命令在 spawn 前复查窗口 root 与动态读 grants，再定位同目录发布的 ripgrep sidecar。
+
+  - ref:
+      file: src-tauri/src/grep.rs
+      snippet: |
+        ) -> Result<GrepResult, GrepError> {
+            let mut argv = vec![
+                "--json".to_string(),
+                "--line-number".to_string(),
+                "--color=never".to_string(),
+                "--hidden".to_string(),
+            ];
+            if args.ignore_case {
+                argv.push("--ignore-case".to_string());
+            }
+            if args.literal {
+                argv.push("--fixed-strings".to_string());
+
+    note: |
+        参数用裸 argv 传递并固定 JSON、行号与无色输出；literal 开关把用户输入降级为原文搜索。
+
+  - ref:
+      file: src-tauri/src/grep.rs
+      snippet: |
+        ) -> Result<CollectOutcome, GrepError> {
+            loop {
+                match receiver.recv_timeout(budget.timeout) {
+                    Ok(StdoutEvent::Chunk(chunk)) => {
+                        if state.total_bytes() + chunk.len() > budget.raw_max_bytes {
+                            return Ok(CollectOutcome::Overflow);
+                        }
+                        state.ingest(&chunk);
+                        if state.parse_error.is_some() {
+                            return Ok(CollectOutcome::ParseError);
+                        }
+                        if state.limit_reached() {
+
+    note: |
+        stdout 按块进入预算器；超量、解析失败或到达命中上限都会杀掉子进程并返回结构化结果。
+
+related:
+  notes:
+    - 参见 [基础 Agent 决策](../../.agents/notes/implemented/architecture/2026-10-04-basic-agent.md)

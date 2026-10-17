@@ -1,1 +1,53 @@
-features: []
+features:
+  - slug: file-tree
+    title: 文件树浏览
+    summary: 在侧栏浏览已打开库的文件树，展开目录并点开受支持文档。
+    issue: m1-01-excel-viewer
+  - slug: markdown-read
+    title: Markdown 阅读与编辑
+    summary: 在阅读面预览 Markdown，切换编辑、自动跟踪草稿并手动保存。
+    issue: m1-02-reading-polish
+  - slug: excel-view
+    title: Excel 查看
+    summary: 按工作表查看 Excel 网格、样式、合并结果并虚拟滚动大表。
+    issue: m1-01-excel-viewer
+  - slug: excel-edit
+    title: Excel 编辑
+    summary: 选中单元格输入内容或样式，解析写回工作簿并经脏标记确认保存。
+    issue: m1-03-excel-editing
+  - slug: video-play
+    title: 视频播放
+    summary: 在阅读面通过 asset protocol 播放本地视频并提供加载与错误反馈。
+    issue: m1-02-reading-polish
+  - slug: multi-window
+    title: 多窗口与关窗守卫
+    summary: 从活动栏创建多窗口，并用聚合守卫确认未保存内容后再关窗或退出。
+    issue: m1-native-close-guard
+  - slug: plugin-manage
+    title: 外置插件管理
+    summary: 安装、导入、启停、重载、回退和移除外置插件，并看清运行与坏行状态。
+    issue: m2-02-agent-host
+  - slug: plugin-load
+    title: 外置插件装载
+    summary: 启动或热路径经唯一 blob 装载缝加载外置插件，并包上声明式宿主门面。
+    issue: m2-02-agent-host
+  - slug: llm-settings
+    title: LLM endpoint 配置
+    summary: 用厂商预设或自定义表单配置模型 endpoint，保存脱敏配置并可探测可用性。
+    issue: m2-01-ai-inference-supply
+  - slug: agent-chat
+    title: Agent 对话与回合
+    summary: 在右栏发送消息、观察流式回答与工具过程，并把会话持久化为 JSONL。
+    issue: m2-03-basic-agent
+  - slug: approval-gate
+    title: 审批门
+    summary: 对读写越权和写入操作按 ask/auto 路由审批，由人或 Guardian 给出决定。
+    issue: m2-03-basic-agent
+  - slug: grep-search
+    title: Agent grep 工具
+    summary: 让 Agent 用打包的 ripgrep sidecar 在授权路径内搜索并返回结构化命中。
+    issue: m2-03-basic-agent
+  - slug: attachments
+    title: 附件三源
+    summary: 通过粘贴、拖入或路径把图片和音频组合进多模态请求，并做类型与大小门禁。
+    issue: m2-03-basic-agent

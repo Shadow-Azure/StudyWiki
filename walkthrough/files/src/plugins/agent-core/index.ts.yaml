@@ -1,0 +1,49 @@
+kind: file-page
+source: src/plugins/agent-core/index.ts
+summary: agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话
+segments:
+  - snippet: |
+      import type { Context } from "cordis";
+      import { createAgentService } from "./service";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "agent-core";
+      /** Service keys awaited before apply runs. */
+      export const inject = ["llm", "files", "workspace"];
+    note: |
+      插件入口声明 agent-core 的静态插件名和三个宿主依赖。LLM、文件服务与工作区投影先于 apply 注入，使核心能力不需要直接触碰 Tauri 或全局环境。
+  - snippet: |
+      /** Publish persistent agent sessions as `ctx.agent`; cleanup aborts every session.
+       * @param ctx Host context with the three injected facades.
+       * @returns Disposer used by cordis lifecycle teardown.
+       */
+    note: |
+      apply 的文档说明它发布持久会话服务并在卸载时中止所有会话。宿主上下文类型来自 cordis，具体能力通过注入键获得。
+  - snippet: |
+      export function apply(ctx: Context): () => void {
+        const agent = createAgentService({
+          llm: ctx.llm,
+    note: |
+      apply 收到宿主上下文后创建服务。入口保持很薄，不在这里实现会话状态或工具细节。
+  - snippet: |
+      export function apply(ctx: Context): () => void {
+        const agent = createAgentService({
+          llm: ctx.llm,
+          files: ctx.files,
+          workspace: ctx.workspace,
+        });
+        ctx.reflect.provide("agent", agent);
+    note: |
+      三个注入面被装配成 agent 服务并注册为 ctx.agent。插件消费者只看到这个稳定门面，不感知内部组装过程。
+  - snippet: |
+      export function apply(ctx: Context): () => void {
+        const agent = createAgentService({
+          llm: ctx.llm,
+          files: ctx.files,
+          workspace: ctx.workspace,
+        });
+        ctx.reflect.provide("agent", agent);
+        return () => agent.dispose();
+      }
+    note: |
+      返回的 disposer 委托服务 dispose。这样 cordis 生命周期结束时会中止全部打开会话，避免后台流和审批悬留。

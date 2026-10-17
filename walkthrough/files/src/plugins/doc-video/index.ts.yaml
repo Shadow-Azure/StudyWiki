@@ -1,0 +1,230 @@
+kind: file-page
+source: src/plugins/doc-video/index.ts
+summary: doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）
+segments:
+  - snippet: |
+      import type { Context } from "cordis";
+      import { errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "doc-video";
+      /** Service keys awaited before apply runs. */
+      export const inject = ["files", "workspace", "slots"];
+
+      /** Ignore shortcut events originating from controls that own those keys. */
+      function ownsKeyTarget(target: EventTarget | null): boolean {
+        return target instanceof HTMLElement
+          && target.closest("input, textarea, select, button, [contenteditable=true], .cm-content, [role=\"separator\"]") !== null;
+      }
+
+      /** Video viewer for the active file: `<video controls>` fed by the asset
+       * protocol when the active file's kind is video; clears its slot otherwise.
+       * @param ctx Host context (files/workspace/slots injected).
+       * @returns Teardown removing the file-opened subscription, slot renderer and video shortcuts. */
+      export function apply(ctx: Context): () => void {
+        let host: HTMLElement | null = null;
+        let offShortcuts: (() => void) | null = null;
+        let renderGeneration = 0;
+
+        const render = (): void => {
+          renderGeneration += 1;
+          const generation = renderGeneration;
+          offShortcuts?.();
+          offShortcuts = null;
+          if (!host) return;
+          host.replaceChildren();
+          const file = ctx.workspace.activeFile;
+          host.hidden = file?.kind !== "video";
+          if (file?.kind !== "video") return;
+          paintTitle(file);
+          const stage = document.createElement("div");
+          stage.className = "video-stage";
+          const loading = loadingHint();
+          const video = document.createElement("video");
+          video.controls = true;
+          video.tabIndex = 0;
+          video.setAttribute("aria-keyshortcuts", "Space ArrowLeft ArrowRight");
+          video.src = ctx.files.assetUrl(file.path);
+          video.addEventListener("canplay", () => {
+            if (generation === renderGeneration) loading.remove();
+          });
+          video.addEventListener("error", () => {
+            if (generation !== renderGeneration || !video.isConnected) return;
+            loading.remove();
+            errorBanner(host!, "视频加载失败", () => {});
+          });
+          stage.append(video, loading);
+          host.append(stage);
+          const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.defaultPrevented || ctx.workspace.activeFile?.kind !== "video" || ownsKeyTarget(event.target)) return;
+            if (event.key === " ") {
+              event.preventDefault();
+              void (video.paused ? video.play() : video.pause());
+            } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              video.currentTime += event.key === "ArrowRight" ? 5 : -5;
+            }
+          };
+          window.addEventListener("keydown", onKeyDown);
+          offShortcuts = () => window.removeEventListener("keydown", onKeyDown);
+        };
+
+        const offFile = ctx.workspace.events.on("file-opened", () => render());
+        const offSlot = ctx.slots.register("main.viewer", (el) => {
+          host = el;
+          render();
+        });
+        return () => {
+          offShortcuts?.();
+          offFile();
+          offSlot();
+        };
+      }
+    note: |
+      整份插件只做一件事：活动文件是视频时挂载原生 video 控件并用 asset protocol 提供离线媒体，否则清空插槽。加载、错误、快捷键和重入都围绕同一次 render generation 管理，拆卸时移除订阅与监听。
+  - snippet: |
+      import type { Context } from "cordis";
+      import { errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "doc-video";
+      /** Service keys awaited before apply runs. */
+      export const inject = ["files", "workspace", "slots"];
+    note: |
+      视频插件只需要文件服务取 asset URL、工作区提供活动文件事件，以及主查看器插槽。原生 controls 交给浏览器/系统实现，插件不引入解码器或外置播放器。
+  - snippet: |
+      /** Ignore shortcut events originating from controls that own those keys. */
+      function ownsKeyTarget(target: EventTarget | null): boolean {
+        return target instanceof HTMLElement
+          && target.closest("input, textarea, select, button, [contenteditable=true], .cm-content, [role=\"separator\"]") !== null;
+      }
+    note: |
+      ownsKeyTarget 判定快捷键是否应该让位给输入框、按钮、内容可编辑区或 CodeMirror。这个守卫放在模块顶部，避免空格和方向键在控件获得焦点时被全局监听抢走。
+  - snippet: |
+      /** Video viewer for the active file: `<video controls>` fed by the asset
+       * protocol when the active file's kind is video; clears its slot otherwise.
+       * @param ctx Host context (files/workspace/slots injected).
+       * @returns Teardown removing the file-opened subscription, slot renderer and video shortcuts. */
+      export function apply(ctx: Context): () => void {
+        let host: HTMLElement | null = null;
+        let offShortcuts: (() => void) | null = null;
+        let renderGeneration = 0;
+
+        const render = (): void => {
+          renderGeneration += 1;
+          const generation = renderGeneration;
+          offShortcuts?.();
+          offShortcuts = null;
+          if (!host) return;
+          host.replaceChildren();
+          const file = ctx.workspace.activeFile;
+          host.hidden = file?.kind !== "video";
+          if (file?.kind !== "video") return;
+          paintTitle(file);
+          const stage = document.createElement("div");
+          stage.className = "video-stage";
+          const loading = loadingHint();
+          const video = document.createElement("video");
+          video.controls = true;
+          video.tabIndex = 0;
+          video.setAttribute("aria-keyshortcuts", "Space ArrowLeft ArrowRight");
+          video.src = ctx.files.assetUrl(file.path);
+          video.addEventListener("canplay", () => {
+            if (generation === renderGeneration) loading.remove();
+          });
+          video.addEventListener("error", () => {
+            if (generation !== renderGeneration || !video.isConnected) return;
+            loading.remove();
+            errorBanner(host!, "视频加载失败", () => {});
+          });
+          stage.append(video, loading);
+          host.append(stage);
+          const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.defaultPrevented || ctx.workspace.activeFile?.kind !== "video" || ownsKeyTarget(event.target)) return;
+            if (event.key === " ") {
+              event.preventDefault();
+              void (video.paused ? video.play() : video.pause());
+            } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              video.currentTime += event.key === "ArrowRight" ? 5 : -5;
+            }
+          };
+          window.addEventListener("keydown", onKeyDown);
+          offShortcuts = () => window.removeEventListener("keydown", onKeyDown);
+        };
+
+        const offFile = ctx.workspace.events.on("file-opened", () => render());
+        const offSlot = ctx.slots.register("main.viewer", (el) => {
+          host = el;
+          render();
+        });
+        return () => {
+          offShortcuts?.();
+          offFile();
+          offSlot();
+        };
+      }
+    note: |
+      apply 的渲染流程先递增 generation，再按活动文件重建界面。video 就绪或失败时只有当前代次能移除加载提示或挂错误；窗口级键盘监听处理播放/暂停与五秒跳转，并在每次渲染前先解除旧监听。
+  - snippet: |
+      export function apply(ctx: Context): () => void {
+        let host: HTMLElement | null = null;
+        let offShortcuts: (() => void) | null = null;
+        let renderGeneration = 0;
+
+        const render = (): void => {
+          renderGeneration += 1;
+          const generation = renderGeneration;
+          offShortcuts?.();
+          offShortcuts = null;
+          if (!host) return;
+          host.replaceChildren();
+          const file = ctx.workspace.activeFile;
+          host.hidden = file?.kind !== "video";
+          if (file?.kind !== "video") return;
+          paintTitle(file);
+          const stage = document.createElement("div");
+          stage.className = "video-stage";
+          const loading = loadingHint();
+          const video = document.createElement("video");
+          video.controls = true;
+          video.tabIndex = 0;
+          video.setAttribute("aria-keyshortcuts", "Space ArrowLeft ArrowRight");
+          video.src = ctx.files.assetUrl(file.path);
+          video.addEventListener("canplay", () => {
+            if (generation === renderGeneration) loading.remove();
+          });
+          video.addEventListener("error", () => {
+            if (generation !== renderGeneration || !video.isConnected) return;
+            loading.remove();
+            errorBanner(host!, "视频加载失败", () => {});
+          });
+          stage.append(video, loading);
+          host.append(stage);
+          const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.defaultPrevented || ctx.workspace.activeFile?.kind !== "video" || ownsKeyTarget(event.target)) return;
+            if (event.key === " ") {
+              event.preventDefault();
+              void (video.paused ? video.play() : video.pause());
+            } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              video.currentTime += event.key === "ArrowRight" ? 5 : -5;
+            }
+          };
+          window.addEventListener("keydown", onKeyDown);
+          offShortcuts = () => window.removeEventListener("keydown", onKeyDown);
+        };
+
+        const offFile = ctx.workspace.events.on("file-opened", () => render());
+        const offSlot = ctx.slots.register("main.viewer", (el) => {
+          host = el;
+          render();
+        });
+        return () => {
+          offShortcuts?.();
+          offFile();
+          offSlot();
+        };
+      }
+    note: |
+      从 apply 声明起的视窗可见插槽与文件事件只负责触发同一条渲染路径。活动文件切走时 host 被清空并隐藏，切回视频时重新创建媒体元素；卸载函数最终移除快捷键、事件和插槽注册。

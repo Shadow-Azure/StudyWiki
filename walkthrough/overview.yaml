@@ -6,6 +6,3 @@ sections:
   - heading: 站点阅读指引
     body: |
       建议先读本页确认产品边界，再进入「架构」看分层与组成树；随后按功能页从用户行为进入模块地图和代码步骤，用文件页读取当前源码注解；检视一次改动时优先从变更史的三层叙事进入，再经 touches 回到主站页面。
-  - heading: 回填状态
-    body: |
-      内容回填进行中：骨架期已有总览与架构叙事，`features/`、`files/` 和 `changes/` 仍为空。`manifest.json` 的 bootstrap 降级允许这些欠账以 WARN 呈现，回填验收后移除标志。

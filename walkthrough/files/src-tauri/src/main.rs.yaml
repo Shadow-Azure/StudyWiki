@@ -1,0 +1,34 @@
+kind: file-page
+source: src-tauri/src/main.rs
+summary: 入口壳（Windows 隐藏控制台）
+segments:
+  - snippet: |
+      // Prevents an additional console window on Windows in release builds.
+      #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+      fn main() {
+          study_wiki_lib::run()
+      }
+    note: 完整入口视窗显示桌面启动的最短链路：main 只转入库层 run，所有命令、窗口和平台差异都在库内总装。这样发布二进制的入口没有业务逻辑，也便于测试直接驱动同一装配点。
+  - snippet: |
+      // Prevents an additional console window on Windows in release builds.
+      #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+    note: 这个 crate 级属性在 release 构建时为 Windows 选择 windows_subsystem = windows，避免额外弹出控制台。它只影响入口壳的可见形态，不改变 debug 与非 Windows 平台的行为。
+  - snippet: |
+      fn main() {
+          study_wiki_lib::run()
+      }
+    note: 完整 main 函数只调用 study_wiki_lib::run()。真正的 tauri::Builder、命令注册、状态初始化和事件接线留在库层，供发布入口与测试复用。
+  - snippet: |
+      // Prevents an additional console window on Windows in release builds.
+      #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+      fn main() {
+          study_wiki_lib::run()
+      }
+    note: 从完整文件看，入口没有任何配置读取、网络访问或环境分支；启动语义集中委托给库层，符合发布客户端环境无关性约束。
+  - snippet: |
+      fn main() {
+          study_wiki_lib::run()
+      }
+    note: 重复展示完整 main 是为了把“入口壳”与“应用总装”分开讲解：这里没有可失败的应用状态，run() 返回即桌面生命周期结束。

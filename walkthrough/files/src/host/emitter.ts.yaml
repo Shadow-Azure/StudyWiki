@@ -1,0 +1,68 @@
+kind: file-page
+source: src/host/emitter.ts
+summary: 极简类型化事件发射器（on 返回反订阅）
+segments:
+  - snippet: |
+      /** Payload map constraint for {@link createEmitter}. */
+      export type PayloadMap = Record<string, unknown>;
+
+      /** Minimal typed emitter: on returns an unsubscriber. */
+      export interface Emitter<M extends PayloadMap> {
+        on<K extends keyof M & string>(key: K, fn: (payload: M[K]) => void): () => void;
+        emit<K extends keyof M & string>(key: K, payload: M[K]): void;
+      }
+    note: PayloadMap 和 Emitter 接口定义了事件名到载荷类型的映射契约。on 的返回值就是反订阅函数，调用方不需要额外的 off 方法或事件句柄对象。
+  - snippet: |
+      /** Framework-free emitter used by host services to expose change streams.
+       * @returns An emitter with `on`/`emit`; `on` returns an unsubscriber. */
+      export function createEmitter<M extends PayloadMap>(): Emitter<M> {
+        const map = new Map<string, Set<(p: unknown) => void>>();
+    note: createEmitter 用普通 Map 和 Set 存储订阅者，不依赖任何前端框架或宿主服务。这个极简实现专门服务宿主内部和窗口 scope 状态流，避免为变更通知引入更重的机制。
+  - snippet: |
+      /** Framework-free emitter used by host services to expose change streams.
+       * @returns An emitter with `on`/`emit`; `on` returns an unsubscriber. */
+      export function createEmitter<M extends PayloadMap>(): Emitter<M> {
+        const map = new Map<string, Set<(p: unknown) => void>>();
+        return {
+          on(key, fn) {
+            const set = map.get(key) ?? new Set();
+            set.add(fn as (p: unknown) => void);
+            map.set(key, set);
+            return () => set.delete(fn as (p: unknown) => void);
+          },
+    note: on 先补齐事件集合，再把函数加入 Set 并返回一次性删除闭包。闭包持有原函数引用，所以同一函数注册多次时反订阅只移除对应成员。
+  - snippet: |
+      /** Framework-free emitter used by host services to expose change streams.
+       * @returns An emitter with `on`/`emit`; `on` returns an unsubscriber. */
+      export function createEmitter<M extends PayloadMap>(): Emitter<M> {
+        const map = new Map<string, Set<(p: unknown) => void>>();
+        return {
+          on(key, fn) {
+            const set = map.get(key) ?? new Set();
+            set.add(fn as (p: unknown) => void);
+            map.set(key, set);
+            return () => set.delete(fn as (p: unknown) => void);
+          },
+          emit(key, payload) {
+            for (const fn of map.get(key) ?? []) fn(payload);
+          },
+        };
+    note: emit 按当前 Set 的快照顺序同步调用订阅者。缺少事件集合时安全返回，使无订阅的事件发射和空流一样成为普通路径。
+  - snippet: |
+      /** Framework-free emitter used by host services to expose change streams.
+       * @returns An emitter with `on`/`emit`; `on` returns an unsubscriber. */
+      export function createEmitter<M extends PayloadMap>(): Emitter<M> {
+        const map = new Map<string, Set<(p: unknown) => void>>();
+        return {
+          on(key, fn) {
+            const set = map.get(key) ?? new Set();
+            set.add(fn as (p: unknown) => void);
+            map.set(key, set);
+            return () => set.delete(fn as (p: unknown) => void);
+          },
+          emit(key, payload) {
+            for (const fn of map.get(key) ?? []) fn(payload);
+          },
+        };
+      }
+    note: 完整 factory 显示 map、on 和 emit 共同构成的公共出口。框架无关实现让宿主服务能在窗口 teardown 时用反订阅闭包精确清理事件流。

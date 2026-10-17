@@ -1,0 +1,852 @@
+kind: change
+issue: m2-walkthrough-backfill
+skill_gen_commit_id: 7297a86
+title: #60 Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
+scale:
+  files: 100
+  additions: 32600
+  deletions: 15
+feature: |
+  维护者和检视者从任一功能、源文件或变更页都能进入同一套中文讲解：13 个用户可见功能有行为与跨文件步骤，65 个登记源文件有职责与逐段注解，10 个流程 issue 有三层变更叙事；回填验收后不再需要 bootstrap 降级提示。scale 是估算值（files 100、+32600/−15），合入前按最终 diff 校准。
+userFlow:
+  - 无用户面变化（开发流程）
+design: |
+  ### 问题与约束
+
+  AI 产出代码的速度远超维护者读码与检视速度；检视需要在"不默认信任生成代码"的前提下快速建立变更认知。硬约束：全离线、零运行时依赖、下限可机械看护、讲解质量归人扫读。
+
+  ### 候选方案
+
+  - 全自动 AI Wiki（DeepWiki 式）：官方文档自证漏目录漏组件，讲解不可信且无人工确认状态
+  - SaaS 评审工具（Swimm/CodeRabbit 式）：私有格式 + 在线依赖，违反离线硬约束；只借鉴其门禁与分诊语义
+  - IDE 内 tour（CodeTour 式）：锚点机制优秀但绑定 IDE，无站点聚合与归档
+  - 本仓方案：YAML 源入库 + 内容快照锚点 + 门禁 + 多页静态站
+
+  ### 选型与理由
+
+  YAML 源入库：可 diff、可门禁、可版本化；内容快照只用于定位，页面展示构建期从真实源码拉取的当前代码——代码展示层不可能陈旧；锚点按整行 trim 归一化，容忍块标量剥缩进。
+
+  ### 关键权衡与边界
+
+  牺牲了 before 视图（真 diff 页合入后转为归档）与在线协作；讲解质量无法机械保证——由生成 skill 纪律与维护者扫读兜底，讲错的内容靠人工覆写 YAML 修正。
+architectural: |
+  回填把 walkthrough 从机制骨架推进到可强制保鲜的五层内容：文件页与 code-map 一一对应，功能页与登记处一一对应，变更页与 active flow issue 一一对应；源码锚点、summary 逐字一致、行覆盖率和 touches 覆盖都由共享库机械校验。
+codeMap:
+  - group: 变更页全覆盖
+    attention: must-read
+    why: 十个 active/done issue 的三层叙事是本 PR 的语义索引。
+    files:
+      - path: walkthrough/changes/m0-01-dev-flow-gates.yaml
+        note: 开发流程门禁。
+      - path: walkthrough/changes/m1-01-excel-viewer.yaml
+        note: Excel 查看器。
+      - path: walkthrough/changes/m1-02-reading-polish.yaml
+        note: 三格式阅读统一。
+      - path: walkthrough/changes/m1-03-excel-editing.yaml
+        note: Excel 页面编辑。
+      - path: walkthrough/changes/m1-native-close-guard.yaml
+        note: 原生关窗守卫。
+      - path: walkthrough/changes/m2-01-ai-inference-supply.yaml
+        note: 模型供给与推理服务。
+      - path: walkthrough/changes/m2-02-agent-host.yaml
+        note: agent 宿主流式缝。
+      - path: walkthrough/changes/m2-03-basic-agent.yaml
+        note: 基础 agent 插件。
+      - path: walkthrough/changes/m2-walkthrough-site.yaml
+        note: 讲解站机制骨架。
+      - path: walkthrough/changes/m2-walkthrough-backfill.yaml
+        note: 本回填自身。
+  - group: 覆盖率与 bootstrap 收口
+    attention: must-read
+    why: 90% 覆盖率和降级摘除把三档 WARN 转成正式红门禁。
+    files:
+      - path: walkthrough/manifest.json
+        note: 定版 90% 阈值并移除 bootstrap 标志。
+      - path: scripts/build-walkthrough.mjs
+        note: 回填后继续执行构建即校验。
+        changes:
+          - snippet: |
+              const codeSection = `<section id="code-changes"><h2>代码变更（路径树）</h2>${renderReviewLegend(groups)}${renderReviewFileTree(diff.files, groups, byPath, site, root, restHtml)}</section>`;
+            note: |
+              代码变更区加 code-changes 锚点支持深链直达。
+          - snippet: |
+              <div class="summary-line"><span class="summary-label">文件主要实现：</span><span class="summary-text">${escapeHtml(metadata.entry.note)}</span></div>
+              <div class="summary-line"><span class="summary-label">当前PR修改点：</span><span class="summary-text">${escapeHtml(changeSummary)}</span></div>
+            note: |
+              文件行双行摘要改「文件主要实现 / 当前PR修改点」固定前缀，收起态可见。
+          - snippet: |
+              const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
+            note: |
+              可选 design 字段（方案设计说明）渲染为独立章节；未写则不渲染——schema 可选语义，内容质量由生成 skill 约束。
+          - snippet: |
+              /**
+               * 构建 walkthrough 多页静态站。
+               * @param {string} root - 站点仓库根目录。
+               * @param {string} [outDir] - 输出目录；默认解析到 root 下的 walkthrough/dist。
+               * @returns {void} 构建成功时无返回值；多处锚点命中会向 stdout 输出 WARN。
+               */
+              let activeReviewNav = false;
+
+              export function buildSite(root, outDir, options = {}) {
+                activeReviewNav = Boolean(options.review);
+                const resolvedRoot = path.resolve(root);
+                const resolvedOut = path.resolve(outDir ?? path.join(resolvedRoot, "walkthrough/dist"));
+                const site = parseSite(resolvedRoot);
+
+                if (site.parseErrors.length > 0) {
+                  throw new Error(`walkthrough 解析失败:\n  ${site.parseErrors.join("\n  ")}`);
+                }
+                const schemaErrors = validateSchema(site);
+                if (schemaErrors.length > 0) {
+                  throw new Error(`walkthrough schema 校验失败:\n  ${schemaErrors.join("\n  ")}`);
+            note: |
+                构建入口先解析 walkthrough YAML，再按 schema 校验形状；任一入口数据不合法都直接失败，不产出半成品站点。
+          - snippet: |
+              /** 渲染一个 changes 锚定段：完整 after 骨架 + 段内 add/ctx 着色 + 段下注解。 */
+              function renderChangesSegment(root, file, change, located) {
+                const lines = file.hunks.flatMap((hunk) => hunk.lines);
+                const selected = new Set(diffLinesForRange(lines, located));
+                const sourceLines = existsSync(path.join(root, file.path))
+                  ? readFileSync(path.join(root, file.path), "utf8").replace(/\r\n?/g, "\n").split("\n")
+                  : [];
+                const rows = [];
+                for (let lineNo = located.start; lineNo <= located.end; lineNo += 1) {
+                  for (const line of lines) {
+                    if (line.type === "del" && line.newNo === null && selected.has(line) &&
+                        !rows.includes(line) && nextAfterLine(lines, line) === lineNo) {
+                      rows.push(line);
+                    }
+                  }
+                  const diffLine = lines.find((line) => line.newNo === lineNo);
+                  rows.push(diffLine ?? { type: "ctx", text: sourceLines[lineNo - 1] ?? "", oldNo: lineNo, newNo: lineNo });
+                }
+                const range = located.start === located.end ? `L${located.start}` : `L${located.start}-L${located.end}`;
+                const segmentLines = rows.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("");
+            note: |
+                检视页把每个 changes 锚定段还原成连续 after 骨架，选中区间内的 add/context 着色，删除行插入到其原 after 位置，并紧邻源码渲染讲解。
+          - snippet: |
+              function renderSegmentedDiff(file, entry, root) {
+                const sourceText = existsSync(path.join(root, file.path)) ? readFileSync(path.join(root, file.path), "utf8") : "";
+                const segments = (entry.changes ?? []).map((change) => ({
+                  change,
+                  located: sourceText ? locateSnippet(sourceText, change.snippet) : null,
+                })).filter((segment) => segment.located);
+                const lines = file.hunks.flatMap((hunk) => hunk.lines);
+                const selected = new Set();
+                for (const segment of segments) {
+                  for (const line of diffLinesForRange(lines, segment.located)) selected.add(line);
+                }
+                const rest = lines.filter((line) => !selected.has(line));
+                const restHtml = rest.length === 0 ? "" : `<details class="diff-rest-lines"><summary>其余变更行（${rest.length}）</summary><pre class="diff-pre">${rest.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("")}</pre></details>`;
+                return segments.map((segment) => renderChangesSegment(root, file, segment.change, segment.located)).join("") + restHtml;
+              }
+            note: |
+                单文件先定位全部 changes 锚点，再渲染逐段 diff；注解骨架外的变更行收进折叠区，避免漏报也不淹没核心讲解。
+          - snippet: |
+              function renderReviewPage(site, review, root) {
+              const { base } = review;
+              const diff = collectReviewDiff(root, base);
+              const byPath = new Map(diff.files.map((file) => [file.path, file]));
+              const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
+              const page = site.changes.get(slug);
+              const current = "review.html";
+              const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
+              const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
+              const scale = page.scale ?? {};
+              const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
+              const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
+              const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
+              const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
+              const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
+
+              const rank = { "must-read": 0, skim: 1, skip: 2 };
+              const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
+              const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
+              const rest = diff.files.filter((file) => !covered.has(file.path));
+            note: |
+                检视页从基线采集 diff，探测当前变更页，并按 must-read/skim/skip 排序；已归位文件进入路径树，其余文件单独折叠列出。
+          - snippet: |
+              const attentionCounts = (current) => {
+                const totals = new Map();
+                const add = (attention) => totals.set(attention, (totals.get(attention) ?? 0) + 1);
+                for (const file of current.files) {
+                  if (metadata.get(file).file) add(metadata.get(file).group.attention);
+                }
+                for (const child of current.dirs.values()) {
+                  for (const [attention, value] of attentionCounts(child)) totals.set(attention, (totals.get(attention) ?? 0) + value);
+                }
+                return totals;
+              };
+            note: |
+              目录行聚合子树的 attention 计数：直属文件直接累计，子目录递归合并；徽章复用文件行三色体系。
+          - snippet: |
+              const attentionChips = (current) => {
+                const counts = attentionCounts(current);
+                return ["must-read", "skim", "skip"]
+                  .filter((attention) => (counts.get(attention) ?? 0) > 0)
+                  .map((attention) => `<span class="attention-badge attention-${attention}">${counts.get(attention)} ${attention}</span>`)
+                  .join("");
+              };
+            note: |
+              徽章只显示数量大于零的类型，顺序固定 must-read → skim → skip。
+          - snippet: |
+              #!/usr/bin/env node
+              // Walkthrough 静态站生成器：装载并校验站点 YAML，构建期定位真实源码锚点，
+              // 产零外部资源、（除变更史搜索框外）零脚本的多页 HTML；变更页头部的 Issue
+              // 链接是唯一的出站锚点（链向 flow issue 登记的 github.url，仅导航不加载资源）。
+              // 架构组成树直接按 code-map manifest 渲染两列
+              // 文本树（目录顺序复用 gen-code-map 的 SCAN_ROOTS，不在构建器里重复扫描/推导依赖）。
+
+              import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+              import { execFileSync } from "node:child_process";
+              import path from "node:path";
+              import { posix } from "node:path";
+              import { pathToFileURL } from "node:url";
+              import MarkdownIt from "markdown-it";
+              import { checkAnchors, isReviewableSourcePath, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+              import { parseFlowDocument } from "./flow-lib.mjs";
+              import { SCAN_ROOTS } from "./gen-code-map.mjs";
+              import { collectReviewDiff, hunkForRange } from "./walkthrough-review.mjs";
+
+              const markdown = new MarkdownIt({ html: false, linkify: false });
+
+            note: |
+                构建器固定离线静态站依赖、walkthrough 校验入口和 markdown-it 安全策略；HTML/链接与远程资源都不得绕过这些缝。
+          - snippet: |
+              /** 逐段百分号编码产物内 URL path；分隔符 `/` 与锚点 `#` 保留结构语义。 */
+              function encodeHrefPath(value) {
+                return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+              }
+
+              /** 生成任意两个站点产物间的 POSIX 相对链接；path 与 anchor 分开传入，避免字面 # 歧义。 */
+              function relativeHref(fromPage, toPage, anchor = "") {
+                const relative = posix.relative(posix.dirname(fromPage), toPage);
+                const href = relative === "" ? posix.basename(toPage) : relative;
+                const path = anchor ? `${encodeHrefPath(href)}#${encodeURIComponent(anchor)}` : encodeHrefPath(href);
+                return escapeHtml(path);
+              }
+
+              /** 拒绝能逃出站点或使用绝对 URL 的产物内链接。 */
+              function safeSitePath(value, label) {
+                if (typeof value !== "string" || value === "") throw new Error(`${label}: 必须是非空字符串`);
+                const normalized = posix.normalize(value.replaceAll("\\", "/"));
+                if (posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../")) {
+                  throw new Error(`${label}: 不能指向站点外（${value}）`);
+                }
+            note: |
+                产物内链接先逐段编码 path 与 anchor，再拒绝绝对路径和 .. 逃逸，保证空格、# 与反向链接不破坏 HTML 属性。
+          - snippet: |
+              /** 读取 code-map manifest；构建产物没有它就无法生成可信架构页。 */
+              function readCodeMap(root) {
+                const relative = "scripts/code-map.manifest.json";
+                let value;
+                try {
+                  value = JSON.parse(readFileSync(path.join(root, relative), "utf8"));
+                } catch (error) {
+                  throw new Error(`${relative}: ${error instanceof Error ? error.message : String(error)}`);
+                }
+                if (!isPlainObject(value)) throw new Error(`${relative}: 必须是扁平对象映射`);
+                for (const [key, description] of Object.entries(value)) {
+                  if (key !== "//" && typeof description !== "string") {
+                    throw new Error(`${relative}: ${key} 职责必须是字符串`);
+                  }
+                }
+                return value;
+              }
+
+              /** 计算文本显示宽度；中文按两列，保证实际仓库里的树仍可读。 */
+              function displayWidth(value) {
+            note: |
+                构建器只读取扁平 code-map 登记快照；损坏 JSON、非扁平形状或非字符串职责都会让构建失败。
+          - snippet: |
+              /**
+               * 按 code-map manifest 渲染两列组成树。选型理由：build 只需要同源登记快照；
+               * gen-code-map 的依赖推导属于仓库扫描职责，重复进构建器会让临时夹具站点更难装配。
+               * 信任边界：未知键、缺 scan root 与磁盘新鲜度故意保持原样渲染，不在这里重建
+               * gen-code-map 对账；该职责归 code-map/文档新鲜度门禁。
+               * @param {Record<string, string>} codeMap - code-map 登记处。
+               * @returns {string} `<pre><code>` 内的树文本。
+               */
+              function renderCodeMapTree(codeMap) {
+                const rows = [];
+                for (const { display, dir } of SCAN_ROOTS) {
+                  const rootDescription = codeMap[display];
+                  if (typeof rootDescription !== "string") continue;
+                  const files = Object.keys(codeMap)
+                    .filter((key) => key.startsWith(`${dir}/`) && key !== "//")
+                    .sort();
+                  const labels = [`${display}/`, ...files.map((file) => `  ${file.slice(dir.length + 1)}`)];
+                  const width = Math.max(...labels.map((label) => displayWidth(label))) + 2;
+                  rows.push(`${display}/`.padEnd(width) + rootDescription);
+                  for (const file of files) {
+            note: |
+                架构组成树按登记 manifest 渲染两列文本；扫描 root 与新鲜度对账仍归 gen-code-map，构建器不重复推导依赖。
+          - snippet: |
+              /** 渲染包含锚定真实源码的代码块，并把 note 放在代码旁边。 */
+              function renderAnnotatedCode(source, located, noteHtml, sourceHref, anchorPrefix, sourceLabel) {
+                const lines = source.replaceAll(/\r\n?/g, "\n").split("\n");
+                const used = new Set();
+                const rendered = [];
+                for (let line = located.start; line <= located.end; line += 1) {
+                  const text = lines[line - 1] ?? "";
+                  const anchor = anchorPrefix ? `${anchorPrefix}-L${line}` : `L${line}`;
+                  const id = used.has(line) ? "" : ` id="${anchor}"`;
+                  used.add(line);
+                  rendered.push(
+                    `<span class="code-line"${id}><span class="line-number">${line}</span><span class="line-text">${escapeHtml(text)}</span></span>`,
+                  );
+                }
+                const range = located.start === located.end ? `L${located.start}` : `L${located.start}-L${located.end}`;
+                const label = `${sourceLabel}:${located.start}${located.end === located.start ? "" : `-${located.end}`}`;
+                return `<figure class="annotated-code"><figcaption><a href="${sourceHref}#${range}">${escapeHtml(label)}</a></figcaption><div class="code-note"><pre><code>${rendered.join("\n")}</code></pre><aside class="note">${noteHtml}</aside></div></figure>`;
+              }
+
+              /** 渲染页首面包屑和显式返回链接。 */
+            note: |
+                锚定代码渲染保留源码原始尾随空白，并把逐段 note 放在代码旁，使检视讲解与真实行区间同屏。
+          - snippet: |
+              function renderBreadcrumb(fromPage, segments) {
+                const trail = segments.map((segment, index) => {
+                  const isLast = index === segments.length - 1;
+                  return isLast || !segment.href
+                    ? `<span aria-current="page">${escapeHtml(segment.label)}</span>`
+                    : `<a href="${relativeHref(fromPage, segment.href, segment.anchor)}">${escapeHtml(segment.label)}</a>`;
+                });
+                const back = segments.length > 1 ? segments[segments.length - 2] : { href: "index.html" };
+                return `<nav class="breadcrumb" aria-label="面包屑">${trail.join('<span class="separator">/</span>')}</nav><a class="back-link" href="${relativeHref(fromPage, back.href, back.anchor)}">返回</a>`;
+              }
+
+              /** 生成所有页共用的左侧导航。 */
+              function renderNavigation(fromPage, site) {
+                const group = (title, items) => `
+                  <section class="nav-group"><h2>${escapeHtml(title)}</h2>${items.map((item) => `<a href="${relativeHref(fromPage, item.href)}">${escapeHtml(item.label)}</a>`).join("")}</section>`;
+                const fileTree = renderFileTreeNav(fromPage, site);
+                const fileSection = `
+                  <section class="nav-group"><h2>文件</h2>${fileTree}</section>`;
+                const reviewGroup = activeReviewNav
+                  ? `<section class="nav-group"><h2>本 PR</h2><a href="${relativeHref(fromPage, "review.html")}">本 PR 检视</a></section>`
+            note: |
+                面包屑和左侧导航生成相对链接，形成文件页、功能页、变更页与首页之间的稳定回路的骨架。
+          - snippet: |
+              /** 变更史排序：标题以 #PR 编号开头者降序，无编号者按 slug 排后。 */
+              function sortedChanges(site) {
+                const num = (title) => Number((/^#(\d+)/.exec(title ?? "") ?? [])[1] ?? -1);
+                return [...site.changes.entries()].sort((a, b) => num(b[1].title) - num(a[1].title) || a[0].localeCompare(b[0]));
+              }
+
+              /** 文件页导航树：按源码目录嵌套为可折叠 details（纯 HTML，零脚本），summary 带目录下文件总数。 */
+              function renderFileTreeNav(fromPage, site) {
+                const root = { dirs: new Map(), files: [] };
+                for (const source of [...site.filePages.keys()].sort()) {
+                  let node = root;
+                  const parts = source.split("/");
+                  for (const part of parts.slice(0, -1)) {
+                    if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+                    node = node.dirs.get(part);
+                  }
+                  node.files.push(source);
+                }
+                const count = (node) => node.files.length + [...node.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+                const render = (node) => {
+            note: |
+                变更史按标题中的 PR 编号降序，文件导航按源码目录折叠；两者都保持纯 HTML，不引入站点脚本。
+          - snippet: |
+              /** 把 touches 封闭语法渲染成站点内链接。 */
+              function renderTouches(touches, current, site) {
+                return `<ul class="touch-list">${touches.map((touch) => {
+                  if (touch.startsWith("file:")) {
+                    const source = safeSitePath(touch.slice("file:".length), "touches file");
+                    return site.filePages.has(source)
+                      ? `<li><a href="${relativeHref(current, `files/${source}.html`)}">${escapeHtml(source)}</a></li>`
+                      : `<li><code>${escapeHtml(source)}</code></li>`;
+                  }
+                  if (touch.startsWith("feature:")) {
+                    const slug = touch.slice("feature:".length);
+                    return site.features.has(slug)
+                      ? `<li><a href="${relativeHref(current, `features/${slug}.html`)}">${escapeHtml(site.features.get(slug).title ?? slug)}</a></li>`
+                      : `<li><code>${escapeHtml(slug)}</code></li>`;
+                  }
+                  return `<li>${markdown.renderInline(touch)}</li>`;
+                }).join("")}</ul>`;
+              }
+
+              /** 读取 flow issue 登记的 github.url；缺失或损坏时软降级为 null（纯文本展示）。 */
+            note: |
+                touches 的 file:/feature: 封闭语法分别渲染成文件页链接或功能链接；无法登记的路径退化为 code，不伪造成链接。
+          - snippet: |
+              /** 渲染变更地图：must-read 组展开置顶，skim/skip 组默认 <details> 折叠。 */
+              function renderCodeMapGroups(codeMap, current, site) {
+                const order = { "must-read": 0, skim: 1, skip: 2 };
+                const groups = codeMap
+                  .map((group, index) => ({ group, index }))
+                  .sort(
+                    (a, b) =>
+                      (order[a.group.attention] ?? 3) - (order[b.group.attention] ?? 3) ||
+                      a.index - b.index,
+                  );
+                return groups
+                  .map(({ group }) => {
+                    const why =
+                      typeof group.why === "string" && group.why !== ""
+                        ? `<div class="group-why">${markdown.renderInline(group.why)}</div>`
+                        : "";
+                    const rows = group.files
+                      .map((file) => {
+                        const target = site.filePages.has(file.path) ? `files/${file.path}.html` : null;
+                        const cell = target
+            note: |
+                变更地图按 must-read/skim/skip 排序；组 why、文件 note 和逐段 changes note 一并进入静态 HTML。
+          - snippet: |
+              /** 渲染变更史页（v2 schema：scale 徽章 + feature/userFlow/codeMap/reviewGuide/verification）。 */
+              function renderChangePage(issue, page, current, site) {
+                const issueUrl = resolveIssueUrl(site.root, issue);
+                const issuePart = issueUrl
+                  ? `<a class="issue-link" href="${escapeHtml(issueUrl)}">Issue ${escapeHtml(issue)}</a>`
+                  : `<span class="issue-link">Issue ${escapeHtml(issue)}</span>`;
+                const chips = `<div class="scale-chips"><span class="chip">${page.scale.files} 个文件</span><span class="chip add">+${page.scale.additions}</span><span class="chip del">−${page.scale.deletions}</span></div>`;
+                const userFlow = `<ol class="user-flow">${page.userFlow.map((step) => `<li>${markdown.renderInline(step)}</li>`).join("")}</ol>`;
+                const guide = page.reviewGuide;
+                const reviewOrder = `<ol class="review-order">${guide.order.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ol>`;
+                const risks = guide.risks.length
+                  ? `<ul class="risk-list">${guide.risks.map((risk) => `<li>${markdown.renderInline(risk)}</li>`).join("")}</ul>`
+                  : '<p class="meta">无登记风险。</p>';
+                const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
+                const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
+                const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section>${page.design ? `<section><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
+                return renderPage({
+                  title: page.title,
+                  current,
+                  site,
+            note: |
+                变更页渲染把 Issue 链接、规模徽章、用户路径、检视指引和验证证据编排成静态页，未登记的外链降级为文本。
+          - snippet: |
+              /** 从 flow 树读 issue 状态（review 模式探测当前 PR 页用）。 */
+              function flowStatuses(root) {
+                const statuses = new Map();
+                const dir = path.join(root, ".agents/flow/issues");
+                if (!existsSync(dir)) return statuses;
+                for (const name of readdirSync(dir)) {
+                  if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+                  const text = readFileSync(path.join(dir, name), "utf8");
+                  const status = /status: (\w[\w-]*)/u.exec(text)?.[1];
+                  if (status) statuses.set(name.replace(/\.md$/u, ""), status);
+                }
+                return statuses;
+              }
+
+              /** 探测当前 PR 对应的变更页：提交标题 (#N) → issue 编号 → slug；其次 in-progress issue 且其页在 diff 中。 */
+              function detectReviewPage(root, site, diffFiles, base) {
+                const numbers = new Set(
+                  (execGit(root, ["log", "--format=%s", `${base}..HEAD`]).match(/\(#(\d+)\)/gu) ?? [])
+                    .map((tag) => Number(tag.replace(/\D/gu, ""))),
+                );
+            note: |
+                flowStatuses 只读取中文 issue 侧的 status 行并建立 slug 映射，review 模式用它把 in-progress 页映射到当前 diff。
+          - snippet: |
+              /** 探测当前 PR 对应的变更页：提交标题 (#N) → issue 编号 → slug；其次 in-progress issue 且其页在 diff 中。 */
+              function detectReviewPage(root, site, diffFiles, base) {
+                const numbers = new Set(
+                  (execGit(root, ["log", "--format=%s", `${base}..HEAD`]).match(/\(#(\d+)\)/gu) ?? [])
+                    .map((tag) => Number(tag.replace(/\D/gu, ""))),
+                );
+                if (numbers.size > 0) {
+                  const dir = path.join(root, ".agents/flow/issues");
+                  for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+                    if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+                    const text = readFileSync(path.join(dir, name), "utf8");
+                    const number = /number: (\d+)/u.exec(text)?.[1];
+                    if (number && numbers.has(Number(number))) {
+                      const slug = name.replace(/\.md$/u, "");
+                      if (site.changes.has(slug)) return slug;
+                    }
+                  }
+                }
+                const statuses = flowStatuses(root);
+                const changed = new Set(diffFiles
+            note: |
+                review 页优先用提交标题中的 PR 编号匹配 flow 登记；找不到时才退回 in-progress 且变更页在 diff 中的 slug。
+          - snippet: |
+              /** 渲染 review 路径树上方的分组图例：只保留组名、attention 与 why。 */
+              function renderReviewLegend(groups) {
+                if (groups.length === 0) return "";
+                return `<div class="tree-legend">${groups.map((group) => `<section class="codemap-group attention-${escapeHtml(group.attention)}"><h3>${escapeHtml(group.group)} <span class="attention-badge">${escapeHtml(group.attention)}</span></h3><p class="meta">${renderMarkdown(group.why ?? "")}</p></section>`).join("")}</div>`;
+              }
+
+              /** 渲染 diff 行；after 行号优先，删除行保留 before 行号。 */
+              function renderReviewDiffLine(line) {
+                const sign = line.type === "add" ? "+" : line.type === "del" ? "−" : " ";
+                const no = line.newNo ?? line.oldNo ?? "";
+                return `<span class="diff-line diff-${line.type}"><span class="line-number">${no}</span><span class="diff-sign">${sign}</span><span class="diff-text">${escapeHtml(line.text)}</span></span>`;
+              }
+
+              /** 计算某 after 区间内的 add/ctx diff 行；删除行保留在“其余变更行”里。 */
+              function diffLinesForRange(lines, range) {
+                const selected = new Set();
+                lines.forEach((line, index) => {
+                  if (line.newNo === null || line.newNo < range.start || line.newNo > range.end) return;
+                  selected.add(line);
+                });
+            note: |
+                review 路径树先把组名、attention 与 why 渲染成图例；diff 行渲染保留 after 行号，删除行保留 before 行号。
+          - snippet: |
+              /** 用 groups 中的文件元数据建立嵌套路径树。 */
+              function buildReviewTree(groups, byPath) {
+                const root = { dirs: new Map(), files: [] };
+                const metadata = new Map();
+                for (const group of groups) {
+                  for (const entry of group.files ?? []) {
+                    if (metadata.has(entry.path)) continue;
+                    metadata.set(entry.path, { entry, group, file: byPath.get(entry.path) });
+                    let node = root;
+                    for (const part of entry.path.split("/").slice(0, -1)) {
+                      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+                      node = node.dirs.get(part);
+                    }
+                    node.files.push(entry.path);
+                  }
+                }
+                return { root, metadata };
+              }
+
+              /** 渲染 review 专属文件正文：must-read reviewable 文件展开逐段 diff，其余只分诊。 */
+            note: |
+                buildReviewTree 把 codeMap 文件按目录聚合成可折叠树，同时记录每条路径的 entry、组元数据和 diff 数据。
+          - snippet: |
+              if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+                const argv = process.argv.slice(2);
+                const reviewIndex = argv.indexOf("--review");
+                if (argv.some((arg) => arg.startsWith("--") && arg !== "--review")) {
+                  console.error(`build-walkthrough: 未知参数（仅支持 [root] [outDir] [--review <base>]）`);
+                  process.exit(2);
+                }
+                if (reviewIndex !== -1 && argv[reviewIndex + 1] === undefined) {
+                  console.error("build-walkthrough: --review 需要 <base> 值");
+                  process.exit(2);
+                }
+                const positional = argv.filter((_, index) => index !== reviewIndex && index !== reviewIndex + 1);
+                const [rootArg, outArg] = positional;
+                try {
+                  const options = reviewIndex === -1 ? {} : { review: { base: argv[reviewIndex + 1] } };
+                  buildSite(rootArg ?? process.cwd(), outArg, options);
+                } catch (error) {
+                  console.error(`build-walkthrough: ${error instanceof Error ? error.message : String(error)}`);
+                  process.exit(1);
+                }
+            note: |
+                CLI 只接受位置参数与 --review <base>；未知 flag、缺 base 和构建异常都输出清晰错误并返回非零。
+      - path: scripts/walkthrough-review.mjs
+        note: PR 检视 diff 数据层：numstat + 统一 diff hunk 解析 + 注解归位。
+        changes:
+          - snippet: |
+              export function collectReviewDiff(root, base, deps = {}) {
+                const exec = deps.exec ?? ((argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" }));
+                const numstat = exec(["diff", "--numstat", `${base}...HEAD`])
+                  .split("\n")
+                  .filter(Boolean)
+                  .map((line) => {
+                    const [a, d, ...rest] = line.split("\t");
+                    return { path: rest.join("\t"), additions: Number(a), deletions: Number(d) };
+                  });
+                const statuses = new Map(
+                  exec(["diff", "--name-status", `${base}...HEAD`])
+                    .split("\n")
+                    .filter(Boolean)
+                    .map((line) => {
+                      const [status, ...rest] = line.split("\t");
+                      return [rest.join("\t"), status];
+                    }),
+                );
+            note: |
+                检视数据层先注入可替换的 git 执行缝，再把 numstat 和 name-status 分别归一成增删统计与 A/D/M 状态映射，供后续覆盖率与 diff 页共用。
+          - snippet: |
+              /**
+               * 解析统一 diff 文本为 hunk 数组（行号按 @@ 头推进）。
+               * @param {string} diffText
+               * @returns {Array<{oldStart: number, newStart: number, lines: DiffLine[]}>}
+               */
+              export function parseUnifiedDiff(diffText) {
+                const hunks = [];
+                for (const line of diffText.split("\n")) {
+                  const head = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+                  if (head) {
+                    hunks.push({ oldStart: Number(head[1]), newStart: Number(head[2]), lines: [] });
+                    continue;
+                  }
+                  const hunk = hunks[hunks.length - 1];
+                  if (!hunk) continue;
+                  if (line.startsWith("+")) {
+                    hunk.lines.push({ type: "add", text: line.slice(1), oldNo: null, newNo: nextNew(hunk) });
+                  } else if (line.startsWith("-")) {
+                    hunk.lines.push({ type: "del", text: line.slice(1), oldNo: nextOld(hunk), newNo: null });
+            note: |
+                统一 diff 解析器从 @@ 头建立 hunk 行号基准，并把 add/del 行推进到正确的 after/before 行号，为注解定位提供可靠坐标。
+          - snippet: |
+              /** after 侧下一行号。 */
+              function nextNew(hunk) {
+                return hunk.newStart + hunk.lines.filter((l) => l.type !== "del").length;
+              }
+
+              /** before 侧下一行号。 */
+              function nextOld(hunk) {
+                return hunk.oldStart + hunk.lines.filter((l) => l.type !== "add").length;
+              }
+
+              /**
+               * 把变更注解挂到 hunk：注解锚定的 after 行区间与 hunk 的 add/ctx 行区间相交即归属。
+               * @param {Array<{oldStart, newStart, lines: DiffLine[]}>} hunks
+               * @param {{start: number, end: number}} range 注解锚定的 after 行区间（1-based）
+               * @returns {number} 归属 hunk 下标，不相交时返回 -1
+               */
+              export function hunkForRange(hunks, range) {
+                return hunks.findIndex((hunk) => hunk.lines.some((l) => l.newNo !== null && l.newNo >= range.start && l.newNo <= range.end));
+              }
+            note: |
+                nextNew/nextOld 在 hunk 内推进 after/before 行号；hunkForRange 只把注解挂到 after 内容行与区间相交的 hunk。
+      - path: scripts/walkthrough-review.spec.mjs
+        note: 数据层自测试（真实 git 夹具）。
+        changes:
+          - snippet: |
+              describe("walkthrough-review 数据层", () => {
+                it("解析统一 diff：行号与增删分类", () => {
+                  const hunks = parseUnifiedDiff(SAMPLE);
+                  expect(hunks).toHaveLength(2);
+                  const [h1, h2] = hunks;
+                  expect(h1.newStart).toBe(2);
+                  expect(h1.lines.map((l) => l.type)).toEqual(["ctx", "del", "add", "add", "ctx"]);
+                  expect(h1.lines[1].oldNo).toBe(3); // del 行取 before 行号
+                  expect(h1.lines[2].newNo).toBe(3); // 第一行 add 的 after 行号
+                  expect(h1.lines[3].newNo).toBe(4);
+                  expect(h2.oldStart).toBe(20);
+                  expect(h2.newStart).toBe(22);
+                });
+
+                it("注解按 after 行区间归位到所属 hunk", () => {
+                  const hunks = parseUnifiedDiff(SAMPLE);
+                  expect(hunkForRange(hunks, { start: 3, end: 4 })).toBe(0);
+                  expect(hunkForRange(hunks, { start: 100, end: 101 })).toBe(-1);
+                });
+            note: |
+                测试先锁定统一 diff 的行号与增删分类，再验证注解只在 after 区间命中所属 hunk，越界区间不能被误挂到第一个块。
+      - path: scripts/build-walkthrough.spec.mjs
+        note: 产物与导航回归。
+        changes:
+          - snippet: |
+              describe("build-walkthrough", () => {
+                it("生成五层多页静态站并渲染锚定区间的真实源码", () => {
+                  const root = tempRoot("studywiki-build-walkthrough-");
+                  const outDir = path.join(root, "site-output");
+                  writeValidSite(root);
+
+                  buildSite(root, outDir);
+
+                  const home = readFileSync(path.join(outDir, "index.html"), "utf8");
+                  expect(home).toContain("这是什么工程");
+                  expect(home).toContain('<img src="assets/space%20%23image.svg"');
+                  expect(readFileSync(path.join(outDir, "architecture.html"), "utf8")).toContain("src/demo.ts");
+                  expect(readFileSync(path.join(outDir, "features/demo.html"), "utf8")).toContain("const covered = 1;");
+                  expect(readFileSync(path.join(outDir, `files/${"src/demo.ts"}.html`), "utf8")).toContain("const coveredToo = 2;");
+
+                  // 导航文件区：按源码目录嵌套的可折叠树（details/summary，零脚本）
+                  const nestedSource = "src/host/nested.ts";
+                  write(root, nestedSource, "export const nested = true;\n");
+                  write(
+                    root,
+            note: |
+                回归先构建完整夹具站点，再断言五层页面都引用锚定源码，并用嵌套源文件锁定首页文件导航的可折叠目录结构。
+
+          - snippet: |
+              /** 生成新 schema 的 change 页 YAML 文本。 */
+              function changeYaml(issue, title, sourcePath) {
+                return `kind: change
+              issue: ${issue}
+              title: ${title}
+              scale:
+                files: 2
+                additions: 30
+                deletions: 4
+              feature: |
+                功能行为变化。
+              userFlow:
+                - 打开演示页面
+                - 确认演示行为
+              architectural: |
+                架构不变。
+              codeMap:
+                - group: 实现
+                  attention: must-read
+                  why: 核心变化
+            note: |
+                changeYaml 夹具生成完整 v2 变更页：规模、叙事、must-read/skim 地图、注解、检视指引和 touches 都被 schema 与渲染同时消费。
+          - snippet: |
+              function writeValidSite(root, sourcePath = "src/demo.ts") {
+                write(
+                  root,
+                  "walkthrough/overview.yaml",
+                  `kind: overview
+              sections:
+                - heading: 总览
+                  body: |
+                    这是什么工程。
+                  images: [assets/space #image.svg]
+              `,
+                );
+                write(
+                  root,
+                  "walkthrough/architecture.yaml",
+                  `kind: architecture
+              sections:
+                - heading: 分层
+                  body: |
+                    三层结构。
+            note: |
+                writeValidSite 先写总览和架构页夹具，锁定 generated 架构树与站点正文的最小合法输入。
+          - snippet: |
+              describe("review 模式", () => {
+                it("--review 变更区渲染折叠路径树、分组图例与逐段注解 diff", () => {
+                  const root = mkdtempSync(path.join(tmpdir(), "walkthrough-review-build-"));
+                  dirs.push(root);
+                  const git = (argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" });
+                  git(["init", "-q", "-b", "main"]);
+                  write(root, "src/demo.ts", "export const covered = 1;\nexport const keep = 2;\n");
+                  write(root, "src/nested/skim.ts", "export const skimOld = 1;\n");
+                  write(root, "scripts/code-map.manifest.json", "{\"src/demo.ts\": \"演示源文件\"}");
+                  write(root, "walkthrough/manifest.json", "{\"lineCoverage\": {\"threshold\": 0.9, \"exemptions\": {}}}");
+                  write(root, "walkthrough/overview.yaml", "kind: overview\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
+                  write(root, "walkthrough/architecture.yaml", "kind: architecture\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
+                  write(root, "walkthrough/features.yaml", "features: []\n");
+                  git(["add", "."]);
+                  git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]);
+                  write(
+                    root,
+                    "walkthrough/changes/demo-pr.yaml",
+                    `kind: change
+              issue: demo-pr
+            note: |
+                review 模式测试创建真实 git 仓库与两文件 diff，并用 must-read/skim 变更页驱动折叠树和逐段 diff 的产物断言。
+  - group: 功能页
+    attention: skim
+    why: 13 个用户可见功能与登记处互链。
+    files:
+      - path: walkthrough/features.yaml
+        note: 功能登记处。
+      - path: walkthrough/features/file-tree.yaml
+        note: 文件树浏览。
+      - path: walkthrough/features/markdown-read.yaml
+        note: Markdown 阅读与编辑。
+      - path: walkthrough/features/excel-view.yaml
+        note: Excel 查看。
+      - path: walkthrough/features/excel-edit.yaml
+        note: Excel 编辑。
+      - path: walkthrough/features/video-play.yaml
+        note: 视频播放。
+      - path: walkthrough/features/multi-window.yaml
+        note: 多窗口与关窗守卫。
+      - path: walkthrough/features/llm-settings.yaml
+        note: 模型 endpoint 配置。
+      - path: walkthrough/features/plugin-load.yaml
+        note: 外置插件装载。
+      - path: walkthrough/features/plugin-manage.yaml
+        note: 外置插件管理。
+      - path: walkthrough/features/agent-chat.yaml
+        note: agent 对话与回合。
+      - path: walkthrough/features/approval-gate.yaml
+        note: 写与越权读审批。
+      - path: walkthrough/features/grep-search.yaml
+        note: agent 检索。
+      - path: walkthrough/features/attachments.yaml
+        note: 附件三源。
+  - group: 文件页代表
+    attention: skim
+    why: 六批文件页按镜像路径覆盖登记源；这里给出每批入口样例。
+    files:
+      - path: walkthrough/files/src/loader/boot.ts.yaml
+        note: 启动与装载批。
+      - path: walkthrough/files/src/host/windows.ts.yaml
+        note: 宿主服务批。
+      - path: walkthrough/files/src/plugins/agent-core/loop.ts.yaml
+        note: agent 线批。
+      - path: walkthrough/files/src/plugins/doc-excel/index.ts.yaml
+        note: 阅读面批。
+      - path: walkthrough/files/src/plugins/app-shell/index.ts.yaml
+        note: 壳与 UI 批。
+      - path: walkthrough/files/src-tauri/src/lib.rs.yaml
+        note: Rust 侧批。
+  - group: 流程文档与机械伴生
+    attention: skim
+    why: 计划、issue 与配对记录支撑回填可对账。
+    files:
+      - path: plans/2026-10-15-walkthrough-backfill.md
+        note: 六批实施计划与验收。
+      - path: .agents/flow/issues/m2-walkthrough-backfill.md
+        note: 回填目标与验收。
+      - path: .agents/flow/issues/m2-walkthrough-site.md
+        note: 骨架 issue 收尾状态。
+      - path: .agents/notes/implemented/process/2026-10-15-walkthrough-site.md
+        note: 覆盖率定版与快照粒度经验。
+      - path: .agents/flow/issues/m2-walkthrough-backfill.i18n.yaml
+        note: 双语配对记录。
+  - group: 流程与契约英文侧 + 门禁自测
+    attention: skim
+    why: 本 PR 的双语流程件英文侧与覆盖率/对账门禁自测试更新。
+    files:
+      - path: .agents/flow/issues/m2-walkthrough-backfill.en.md
+        note: 回填 issue 英文侧。
+      - path: .agents/flow/issues/m2-walkthrough-site.en.md
+        note: 骨架 issue 英文侧收尾。
+      - path: .agents/notes/implemented/process/2026-10-15-walkthrough-site.en.md
+        note: 决策记录英文侧校准段。
+      - path: scripts/verify-walkthrough.spec.mjs
+        note: 覆盖率与对账门禁的自测试更新。
+      - path: plans/2026-10-15-walkthrough-backfill.md
+        note: 回填实施计划执行蓝本。
+  - group: 变更页生成 skill
+    attention: skim
+    why: 叙事质量生成规范固化为 skill，供后续 PR 复用。
+    files:
+      - path: scripts/check-review-freshness.mjs
+        note: pre-push 保鲜检查：skill_gen_commit_id 与分支最新提交对账。
+      - path: scripts/check-review-freshness.spec.mjs
+        note: 保鲜检查自测试（git 夹具 + gh 注入）。
+      - path: .agents/skills/walkthrough-change-metadata-gen/SKILL.md
+        note: 生成纪律入口：硬性工作流、质量红线、自检与分册路由。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/narrative-guide.md
+        note: 四层叙事写作规范与通俗性标准。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/diagram-guide.md
+        note: SVG 图示类型选择、制作标准与引用规则。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/code-map-guide.md
+        note: attention 分诊、逐段注解与覆盖率口径。
+reviewGuide:
+  order:
+    - walkthrough/manifest.json
+    - walkthrough/changes/m2-walkthrough-backfill.yaml
+    - walkthrough/changes/m2-03-basic-agent.yaml
+    - walkthrough/features/agent-chat.yaml
+    - walkthrough/files/src/plugins/agent-core/loop.ts.yaml
+    - scripts/build-walkthrough.spec.mjs
+  risks:
+    - 90% 覆盖率只证明锚点覆盖行数，不证明讲解质量；重复片段或过大视窗仍可能通过门禁。
+    - bootstrap 摘除后，旧的文件页、变更对账和覆盖率 WARN 立即转红；合入前必须按最终 diff 复核 scale 与全部页面。
+    - 文件页 summary 必须与 code-map 登记逐字一致，手工润色一侧会造成静态对账失败。
+  acceptance:
+    - item: 全部门禁绿
+      evidence: pnpm verify:walkthrough、pnpm walkthrough、pnpm test、pnpm verify:docs、pnpm verify:flow
+    - item: bootstrap 摘除后，文件页、变更页与覆盖率三档由警告转全量红并通过
+      evidence: walkthrough/manifest.json 与 node scripts/verify-walkthrough.mjs
+    - item: 功能页、文件页和变更页 diff 通过维护者扫读，讲解“为什么/干什么”
+      evidence: PR 人工 review 结论
+verification:
+  - node scripts/verify-walkthrough.mjs
+  - node scripts/build-walkthrough.mjs
+  - pnpm test（vitest）
+  - pnpm build
+  - pnpm verify:docs
+  - pnpm verify:flow
+touches:
+  - feature:file-tree
+  - feature:excel-view
+  - feature:markdown-read
+  - feature:plugin-load
+  - feature:agent-chat
+  - feature:multi-window
+  - file:walkthrough/manifest.json
+  - file:walkthrough/changes/m2-walkthrough-backfill.yaml

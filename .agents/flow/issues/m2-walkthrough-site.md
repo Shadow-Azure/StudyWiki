@@ -6,7 +6,7 @@
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-walkthrough-site.*
   - walkthrough/**
@@ -53,3 +53,4 @@ AI 产出代码的速度远超维护者读码与检视速度。仓库已具备 d
 - pnpm test、pnpm verify:docs、pnpm verify:flow 全绿。
 - pnpm walkthrough 构建成功，产物 file:// 下总览→架构→导航互链走通。
 - 文档登记完成且 verify:commands 绿。
+- 骨架已随 PR #58 合入，全量回填与覆盖率达标见 walkthrough-backfill。

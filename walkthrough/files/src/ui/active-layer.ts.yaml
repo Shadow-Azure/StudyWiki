@@ -1,0 +1,226 @@
+kind: file-page
+source: src/ui/active-layer.ts
+summary: 窗口级浮层层序栈：登记/释放浮层、判定栈顶所有权、派发 Escape 并通知排队接管恢复
+segments:
+  - snippet: |
+      /** A dismissible surface registered by the window-wide layer stack. */
+      export interface ActiveLayer {
+        /** Escape and shortcuts may ask this layer to close. */
+        close(): void;
+      }
+
+      type ActiveLayerListener = () => void;
+
+      interface ActiveLayerEntry {
+        readonly layer: object;
+        readonly surface: ActiveLayer;
+      }
+
+      /**
+       * Order dismissible surfaces so only the newest one consumes Escape. The
+       * shared instance is per JavaScript window, matching browser UI ownership.
+       */
+      export class ActiveLayerStack {
+        readonly #layers: ActiveLayerEntry[] = [];
+        readonly #listeners = new Set<ActiveLayerListener>();
+
+        /** Register a surface and return an idempotent release function. */
+        push(layer: object, surface: ActiveLayer): () => void {
+          const entry: ActiveLayerEntry = { layer, surface };
+          this.#layers.push(entry);
+          this.#notify();
+          let active = true;
+          return () => {
+            if (!active) return;
+            active = false;
+            const index = this.#layers.lastIndexOf(entry);
+            if (index !== -1) this.#layers.splice(index, 1);
+            this.#notify();
+          };
+        }
+
+        /** Whether this exact surface is the current Escape owner. */
+        isActive(layer: object): boolean {
+          return this.#layers.at(-1)?.layer === layer;
+        }
+
+        /** Whether any floating surface currently owns Escape. */
+        get size(): number {
+          return this.#layers.length;
+        }
+
+        /** Close only when `layer` owns the stack; report whether it consumed Escape. */
+        escape(layer: object): boolean {
+          const entry = this.#layers.at(-1);
+          if (!entry || entry.layer !== layer) return false;
+          this.#layers.pop();
+          this.#notify();
+          entry.surface.close();
+          return true;
+        }
+
+        /** Observe push/release changes, for example to reveal a queued approval. */
+        subscribe(listener: ActiveLayerListener): () => void {
+          this.#listeners.add(listener);
+          return () => {
+            this.#listeners.delete(listener);
+          };
+        }
+
+        #notify(): void {
+          for (const listener of [...this.#listeners]) listener();
+        }
+      }
+
+      /** The browser-window layer stack used by built-in floating surfaces. */
+      export const activeLayers = new ActiveLayerStack();
+    note: |
+      完整文件视窗展示一个窗口级小栈：对象身份决定浮层归属，栈顶消费 Escape，push/release 通知订阅者。它不管理焦点或动画，只解决“谁的关闭意图生效”。
+  - snippet: |
+      /** A dismissible surface registered by the window-wide layer stack. */
+      export interface ActiveLayer {
+        /** Escape and shortcuts may ask this layer to close. */
+        close(): void;
+      }
+
+      type ActiveLayerListener = () => void;
+
+      interface ActiveLayerEntry {
+        readonly layer: object;
+        readonly surface: ActiveLayer;
+      }
+
+      /**
+       * Order dismissible surfaces so only the newest one consumes Escape. The
+       * shared instance is per JavaScript window, matching browser UI ownership.
+       */
+    note: |
+      ActiveLayer 只要求 close，类型刻意不绑定 DOM；entry 用 object 身份登记，避免两个相似面板互相顶替。
+  - snippet: |
+      /**
+       * Order dismissible surfaces so only the newest one consumes Escape. The
+       * shared instance is per JavaScript window, matching browser UI ownership.
+       */
+      export class ActiveLayerStack {
+        readonly #layers: ActiveLayerEntry[] = [];
+        readonly #listeners = new Set<ActiveLayerListener>();
+
+        /** Register a surface and return an idempotent release function. */
+        push(layer: object, surface: ActiveLayer): () => void {
+          const entry: ActiveLayerEntry = { layer, surface };
+          this.#layers.push(entry);
+          this.#notify();
+          let active = true;
+          return () => {
+            if (!active) return;
+            active = false;
+            const index = this.#layers.lastIndexOf(entry);
+            if (index !== -1) this.#layers.splice(index, 1);
+            this.#notify();
+          };
+        }
+    note: |
+      push 把新面放到栈顶并返回幂等释放函数。active 标志保证重复调用只移除一次，lastIndexOf 允许同一对象身份精确对位。
+  - snippet: |
+      export class ActiveLayerStack {
+        readonly #layers: ActiveLayerEntry[] = [];
+        readonly #listeners = new Set<ActiveLayerListener>();
+
+        /** Register a surface and return an idempotent release function. */
+        push(layer: object, surface: ActiveLayer): () => void {
+          const entry: ActiveLayerEntry = { layer, surface };
+          this.#layers.push(entry);
+          this.#notify();
+          let active = true;
+          return () => {
+            if (!active) return;
+            active = false;
+            const index = this.#layers.lastIndexOf(entry);
+            if (index !== -1) this.#layers.splice(index, 1);
+            this.#notify();
+          };
+        }
+
+        /** Whether this exact surface is the current Escape owner. */
+        isActive(layer: object): boolean {
+          return this.#layers.at(-1)?.layer === layer;
+        }
+
+        /** Whether any floating surface currently owns Escape. */
+        get size(): number {
+          return this.#layers.length;
+        }
+
+        /** Close only when `layer` owns the stack; report whether it consumed Escape. */
+        escape(layer: object): boolean {
+          const entry = this.#layers.at(-1);
+          if (!entry || entry.layer !== layer) return false;
+          this.#layers.pop();
+          this.#notify();
+          entry.surface.close();
+          return true;
+        }
+    note: |
+      从完整类视窗看 isActive 和 escape 的所有权判定：只有栈顶 layer 能消费 Escape，escape 先弹出再调用 close， close 内部若还释放也不会重复 splice。
+  - snippet: |
+      export class ActiveLayerStack {
+        readonly #layers: ActiveLayerEntry[] = [];
+        readonly #listeners = new Set<ActiveLayerListener>();
+
+        /** Register a surface and return an idempotent release function. */
+        push(layer: object, surface: ActiveLayer): () => void {
+          const entry: ActiveLayerEntry = { layer, surface };
+          this.#layers.push(entry);
+          this.#notify();
+          let active = true;
+          return () => {
+            if (!active) return;
+            active = false;
+            const index = this.#layers.lastIndexOf(entry);
+            if (index !== -1) this.#layers.splice(index, 1);
+            this.#notify();
+          };
+        }
+
+        /** Whether this exact surface is the current Escape owner. */
+        isActive(layer: object): boolean {
+          return this.#layers.at(-1)?.layer === layer;
+        }
+
+        /** Whether any floating surface currently owns Escape. */
+        get size(): number {
+          return this.#layers.length;
+        }
+
+        /** Close only when `layer` owns the stack; report whether it consumed Escape. */
+        escape(layer: object): boolean {
+          const entry = this.#layers.at(-1);
+          if (!entry || entry.layer !== layer) return false;
+          this.#layers.pop();
+          this.#notify();
+          entry.surface.close();
+          return true;
+        }
+
+        /** Observe push/release changes, for example to reveal a queued approval. */
+        subscribe(listener: ActiveLayerListener): () => void {
+          this.#listeners.add(listener);
+          return () => {
+            this.#listeners.delete(listener);
+          };
+        }
+
+        #notify(): void {
+          for (const listener of [...this.#listeners]) listener();
+        }
+      }
+
+      /** The browser-window layer stack used by built-in floating surfaces. */
+      export const activeLayers = new ActiveLayerStack();
+    note: |
+      完整类加共享实例视窗说明订阅器在每次 push/release 时触发，供审批接管等排队 UI 感知浮层让位。activeLayers 是浏览器窗口内共享实例，天然匹配每窗口 UI。
+  - snippet: |
+      /** The browser-window layer stack used by built-in floating surfaces. */
+      export const activeLayers = new ActiveLayerStack();
+    note: |
+      共享实例是内置浮层的约定入口。它不是全局服务注册表，只是当前 JS window 的层序事实。

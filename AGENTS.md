@@ -13,7 +13,8 @@ pnpm install             # 依赖
 pnpm ripgrep:provision   # 按 Rust target 供给 pinned ripgrep sidecar（-- --target <triple>）
 pnpm tauri dev           # 开发
 pnpm tauri build         # 发布构建
-pnpm walkthrough         # 工程讲解站：构建并输出产物路径
+pnpm walkthrough         # 讲解站构建
+pnpm walkthrough:review  # 讲解站 PR 检视页
 pnpm verify:walkthrough  # 工程讲解站门禁
 pnpm lint:docs           # 快速文档门禁
 pnpm verify:docs         # 全量文档门禁

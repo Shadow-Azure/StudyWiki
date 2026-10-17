@@ -1,0 +1,72 @@
+kind: feature
+slug: video-play
+title: 视频播放
+behavior: |
+  选中视频文件后阅读面创建原生 controls 播放器，经 asset protocol 加载本地媒体；可用空格播放暂停、左右键快退快进，加载中与失败分别显示状态提示。
+
+modules: [src/host/files.ts, src/plugins/doc-video/index.ts, src/ui/viewer.ts, src/host/workspace.ts]
+steps:
+  - ref:
+      file: src/host/workspace.ts
+      snippet: |
+        export class WorkspaceService {
+          readonly facade: WorkspaceFacade;
+          #root: string | null = null;
+
+    note: |
+        视频和其他文档一样由 file-opened 事件驱动，播放器不抢占工作区状态机。
+
+  - ref:
+      file: src/host/files.ts
+      snippet: |
+        export class FilesService {
+          readonly #deps: FilesDeps;
+          readonly #events = createEmitter<{ "fs-changed": string }>();
+          #unlisten: (() => void) | null = null;
+
+    note: |
+        本地媒体 URL 统一由宿主文件服务生成；Rust 侧 asset 授权决定该路径能否进入播放器。
+
+  - ref:
+      file: src/plugins/doc-video/index.ts
+      snippet: |
+        export function apply(ctx: Context): () => void {
+          let host: HTMLElement | null = null;
+          let offShortcuts: (() => void) | null = null;
+          let renderGeneration = 0;
+
+    note: |
+        播放器使用浏览器原生 controls 和 asset URL，不引入解码器、外链播放器或网络依赖。
+
+  - ref:
+      file: src/plugins/doc-video/index.ts
+      snippet: |
+        export function apply(ctx: Context): () => void {
+          let host: HTMLElement | null = null;
+          let offShortcuts: (() => void) | null = null;
+          let renderGeneration = 0;
+
+          const render = (): void => {
+            renderGeneration += 1;
+            const generation = renderGeneration;
+
+    note: |
+        canplay 移除加载态，error 换成错误条；renderGeneration 保证旧视频事件不影响新文件视图。
+
+  - ref:
+      file: src/plugins/doc-video/index.ts
+      snippet: |
+        export function apply(ctx: Context): () => void {
+          let host: HTMLElement | null = null;
+          let offShortcuts: (() => void) | null = null;
+          let renderGeneration = 0;
+
+          const render = (): void => {
+            renderGeneration += 1;
+
+    note: |
+        快捷键只在视频视图活跃且焦点不在输入控件时接管；控件自身操作不会被重复解释。
+
+related:
+  notes:
+    - 参见 [阅读体验优化](../../.agents/notes/implemented/feature/2026-09-27-reading-polish.md)

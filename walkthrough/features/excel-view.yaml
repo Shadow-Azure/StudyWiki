@@ -1,0 +1,83 @@
+kind: feature
+slug: excel-view
+title: Excel 查看
+behavior: |
+  打开 .xlsx 后按工作表显示网格，保留单元格样式、数字/日期格式、合并与列宽；大表按可视行窗口渲染，滚动时只重画当前窗口，可切换 sheet 或滚动浏览。
+
+modules: [src/host/excel.ts, src/plugins/doc-excel/index.ts, src/plugins/doc-excel/model.ts, src/host/files.ts, src/plugins/doc-excel/editing.ts]
+steps:
+  - ref:
+      file: src/host/excel.ts
+      snippet: |
+        export class ExcelService {
+          readonly #files: ExcelFiles;
+          readonly #parse: (bytes: Uint8Array) => Promise<Workbook>;
+
+          constructor(files: ExcelFiles, deps: ExcelDeps = {}) {
+            this.#files = files;
+            this.#parse = deps.parseWorkbook ?? parseWorkbook;
+          }
+
+          /** Read and parse an xlsx workbook; rejects corrupt files and workbooks whose
+           * declared dimensions (rowCount × columnCount per sheet) exceed the cell cap. */
+          async read(path: string): Promise<Workbook> {
+            let bytes: Uint8Array;
+            try {
+              bytes = await this.#files.readBinary(path);
+            } catch (error) {
+              throw new Error(`读取 Excel 失败：${(error as Error).message}`);
+            }
+
+    note: |
+        宿主服务读取二进制并交给 ExcelJS；解析失败归一为稳定中文文案，超大解析错误则原样穿透。
+
+  - ref:
+      file: src/plugins/doc-excel/index.ts
+      snippet: |
+        export function apply(ctx: Context, _config: Record<string, never>): () => void {
+          let host: HTMLElement | null = null;
+          let current: FileNode | null = null;
+          let workbook: Workbook | null = null;
+          let sheetIndex = -1;
+
+    note: |
+        工作簿打开后立即折成每个 sheet 的渲染模型；过期打开用 openSeq 丢弃，不让旧文件覆盖新视图。
+
+  - ref:
+      file: src/plugins/doc-excel/model.ts
+      snippet: |
+        export function createSheetModel(sheet: SheetSource): ExcelSheetModel {
+          const rows: ExcelCell[][] = Array.from({ length: sheet.rowCount }, () =>
+            Array.from({ length: sheet.columnCount }, emptyCell),
+          );
+          const columnWidths = Array.from({ length: sheet.columnCount }, (_, index) => {
+            const width = sheet.getColumn(index + 1).width;
+            return Math.min(240, Math.max(64, Math.round((width ?? 7) * 8 + 8)));
+          });
+
+    note: |
+        合并信息在纯模型里拆成锚格跨距与被覆盖格；渲染层据此生成 CSS grid，不再解释 Excel 引用。
+
+  - ref:
+      file: src/plugins/doc-excel/model.ts
+      snippet: |
+        ): { start: number; count: number } {
+          const capacity = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
+          const maxStart = Math.max(0, totalRows - capacity);
+          const start = Math.min(maxStart, Math.max(0, Math.floor(scrollTop / rowHeight) - overscan));
+
+    note: |
+        虚拟滚动按视口高度加 overscan 计算安全行窗口，长表只保留当前需要绘制的数据和 DOM。
+
+  - ref:
+      file: src/plugins/doc-excel/index.ts
+      snippet: |
+        export function apply(ctx: Context, _config: Record<string, never>): () => void {
+          let host: HTMLElement | null = null;
+
+    note: |
+        滚动重绘把行模板和子元素数量约束在可视窗口内，样式与合并模型共同决定最终网格外观。
+
+related:
+  notes:
+    - 参见 [Excel 查看器决策](../../.agents/notes/implemented/feature/2026-09-20-excel-viewer.md)

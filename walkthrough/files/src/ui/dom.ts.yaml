@@ -1,0 +1,79 @@
+kind: file-page
+source: src/ui/dom.ts
+summary: DOM 小件工厂：labelButton（图标+文案按钮，类名/无障碍名可配；点击监听归调用方）
+segments:
+  - snippet: |
+      import { icon, type IconName } from "./icons";
+
+      /** labelButton 的可选修饰。 */
+      export interface LabelButtonOptions {
+        /** 整串类名，覆盖默认 "btn"（如 "btn btn-ghost"；空串 = 不带类）。 */
+        className?: string;
+        /** 无障碍名；纯图标按钮必给，默认取文案。 */
+        ariaLabel?: string;
+      }
+
+      /** 造一枚「图标 + 文案」按钮（btn 视觉体系，图标居文案左侧；点击监听由调用方挂）。
+       * 图标不产生 textContent，按钮文本保持纯文案。
+       * @param name 图标名。
+       * @param text 按钮文案；空串为纯图标按钮，此时必须给 ariaLabel。
+       * @param opts 修饰项（整串类名/无障碍名）。
+       * @returns 未挂载的 button 元素。 */
+      export function labelButton(name: IconName, text: string, opts: LabelButtonOptions = {}): HTMLButtonElement {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = opts.className ?? "btn";
+        b.append(icon(name, 15));
+        if (text) b.append(document.createTextNode(text));
+        if (opts.ariaLabel) b.setAttribute("aria-label", opts.ariaLabel);
+        else if (!text) b.setAttribute("aria-label", name);
+        return b;
+      }
+    note: |
+      完整文件视窗说明 DOM 工厂很薄：只负责把图标和文案组成 button，类名与无障碍名交给调用方，点击语义不在这里偷偷绑定。
+  - snippet: |
+      import { icon, type IconName } from "./icons";
+    note: |
+      唯一导入是图标库及其名字类型，让编译期就拒绝未登记图标，避免运行时字符串拼写漂移。
+  - snippet: |
+      /** labelButton 的可选修饰。 */
+      export interface LabelButtonOptions {
+        /** 整串类名，覆盖默认 "btn"（如 "btn btn-ghost"；空串 = 不带类）。 */
+        className?: string;
+        /** 无障碍名；纯图标按钮必给，默认取文案。 */
+        ariaLabel?: string;
+      }
+    note: |
+      LabelButtonOptions 用整串类名而非零散修饰布尔，方便复用既有按钮体系；ariaLabel 显式要求纯图标按钮提供无障碍名。
+  - snippet: |
+      /** 造一枚「图标 + 文案」按钮（btn 视觉体系，图标居文案左侧；点击监听由调用方挂）。
+       * 图标不产生 textContent，按钮文本保持纯文案。
+       * @param name 图标名。
+       * @param text 按钮文案；空串为纯图标按钮，此时必须给 ariaLabel。
+       * @param opts 修饰项（整串类名/无障碍名）。
+       * @returns 未挂载的 button 元素。 */
+      export function labelButton(name: IconName, text: string, opts: LabelButtonOptions = {}): HTMLButtonElement {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = opts.className ?? "btn";
+        b.append(icon(name, 15));
+        if (text) b.append(document.createTextNode(text));
+        if (opts.ariaLabel) b.setAttribute("aria-label", opts.ariaLabel);
+        else if (!text) b.setAttribute("aria-label", name);
+        return b;
+      }
+    note: |
+      labelButton 先设置 button type，再 append SVG 与文本节点。图标保持 aria-hidden 且不产生 textContent，按钮文本因此仍是纯文本；空文案时回退到图标名，显式 ariaLabel 优先。
+  - snippet: |
+      export function labelButton(name: IconName, text: string, opts: LabelButtonOptions = {}): HTMLButtonElement {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = opts.className ?? "btn";
+        b.append(icon(name, 15));
+        if (text) b.append(document.createTextNode(text));
+        if (opts.ariaLabel) b.setAttribute("aria-label", opts.ariaLabel);
+        else if (!text) b.setAttribute("aria-label", name);
+        return b;
+      }
+    note: |
+      从函数体看默认行为：没有传入类名时用基础 btn，text 为空且没有无障碍名时用图标名兜底。返回未挂载元素，挂载和事件仍由插件控制。

@@ -1,0 +1,89 @@
+kind: file-page
+source: src/plugins/app-windows/index.ts
+summary: app-windows 插件：Activity Rail 新建窗口（携带当前 root）与打开文件夹入口
+segments:
+  - snippet: |
+      import type { Context } from "cordis";
+      import { labelButton } from "../../ui/dom";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "app-windows";
+      /** Service keys awaited before apply runs. */
+      export const inject = ["files", "windows", "workspace", "slots"];
+
+      /** Activity Rail entries: open-folder, then new window.
+       * "打开文件夹…" re-picks and switches only this window's root; "新建窗口"
+       * forwards that root (null → welcome state in the new window).
+       * @param ctx Host context (files/windows/workspace/slots injected).
+       * @returns Teardown removing both Activity Rail buttons. */
+      export function apply(ctx: Context): () => void {
+        return ctx.slots.register("activity.left", (el) => {
+          const openBtn = labelButton("folder-open", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "打开文件夹…" });
+          openBtn.title = "打开文件夹…";
+          openBtn.addEventListener("click", async () => {
+            const root = await ctx.files.pickFolder();
+            // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。
+            if (root) await ctx.windows.changeRoot(root);
+          });
+          const newBtn = labelButton("window", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "新建窗口" });
+          newBtn.title = "新建窗口";
+          newBtn.addEventListener("click", () => void ctx.windows.create(ctx.workspace.root ?? undefined));
+          el.append(openBtn, newBtn);
+        });
+      }
+    note: |
+      完整文件视窗说明这个插件很小但职责明确：只向 Activity Rail 注入两个入口，真正的选目录、换根和建窗都委托宿主服务，UI 不直接绕过授权。
+  - snippet: |
+      import type { Context } from "cordis";
+      import { labelButton } from "../../ui/dom";
+
+    note: |
+      类型与 DOM 工厂导入划清依赖：插件只拿 Context 抽象和共享按钮工厂，不接触 Tauri 绑定，也便于内存宿主预览。
+  - snippet: |
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "app-windows";
+      /** Service keys awaited before apply runs. */
+      export const inject = ["files", "windows", "workspace", "slots"];
+    note: |
+      插件 id 和注入清单登记在静态模块表契约中。它需要 files 提供选目录、windows 执行窗口操作、workspace 读当前 root，slots 提供挂载点。
+  - snippet: |
+      /** Activity Rail entries: open-folder, then new window.
+       * "打开文件夹…" re-picks and switches only this window's root; "新建窗口"
+       * forwards that root (null → welcome state in the new window).
+       * @param ctx Host context (files/windows/workspace/slots injected).
+       * @returns Teardown removing both Activity Rail buttons. */
+      export function apply(ctx: Context): () => void {
+        return ctx.slots.register("activity.left", (el) => {
+          const openBtn = labelButton("folder-open", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "打开文件夹…" });
+          openBtn.title = "打开文件夹…";
+          openBtn.addEventListener("click", async () => {
+            const root = await ctx.files.pickFolder();
+            // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。
+            if (root) await ctx.windows.changeRoot(root);
+          });
+          const newBtn = labelButton("window", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "新建窗口" });
+          newBtn.title = "新建窗口";
+          newBtn.addEventListener("click", () => void ctx.windows.create(ctx.workspace.root ?? undefined));
+          el.append(openBtn, newBtn);
+        });
+      }
+    note: |
+      apply 返回槽位反订阅，两个按钮的生命周期随 Activity Rail 槽位管理。打开文件夹先等到用户真的选择 root，再走 windows.changeRoot 的授权与登记单路；新建窗口显式携带当前 root 或 undefined，让新窗口落入欢迎态。
+  - snippet: |
+      export function apply(ctx: Context): () => void {
+        return ctx.slots.register("activity.left", (el) => {
+          const openBtn = labelButton("folder-open", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "打开文件夹…" });
+          openBtn.title = "打开文件夹…";
+          openBtn.addEventListener("click", async () => {
+            const root = await ctx.files.pickFolder();
+            // 换根单路：授权+登记成功才切前端工作区（顺序不变式住宿主服务）。
+            if (root) await ctx.windows.changeRoot(root);
+          });
+          const newBtn = labelButton("window", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "新建窗口" });
+          newBtn.title = "新建窗口";
+          newBtn.addEventListener("click", () => void ctx.windows.create(ctx.workspace.root ?? undefined));
+          el.append(openBtn, newBtn);
+        });
+      }
+    note: |
+      从 apply 顶部再看挂载闭包，可见按钮文本用 Node 创建、图标不产生 textContent，点击行为也都挂在本插件内。这个组织让槽位卸载时按钮和监听一起离开 DOM。

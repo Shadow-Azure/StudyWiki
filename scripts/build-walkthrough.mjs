@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // Walkthrough 静态站生成器：装载并校验站点 YAML，构建期定位真实源码锚点，
-// 产零外链、零脚本的多页 HTML。架构组成树直接按 code-map manifest 渲染两列
+// 产零外部资源、（除变更史搜索框外）零脚本的多页 HTML；变更页头部的 Issue
+// 链接是唯一的出站锚点（链向 flow issue 登记的 github.url，仅导航不加载资源）。
+// 架构组成树直接按 code-map manifest 渲染两列
 // 文本树（目录顺序复用 gen-code-map 的 SCAN_ROOTS，不在构建器里重复扫描/推导依赖）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import MarkdownIt from "markdown-it";
-import { checkAnchors, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+import { checkAnchors, isReviewableSourcePath, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+import { parseFlowDocument } from "./flow-lib.mjs";
 import { SCAN_ROOTS } from "./gen-code-map.mjs";
+import { collectReviewDiff, hunkForRange } from "./walkthrough-review.mjs";
 
 const markdown = new MarkdownIt({ html: false, linkify: false });
 
@@ -143,7 +148,40 @@ function renderBreadcrumb(fromPage, segments) {
 function renderNavigation(fromPage, site) {
   const group = (title, items) => `
     <section class="nav-group"><h2>${escapeHtml(title)}</h2>${items.map((item) => `<a href="${relativeHref(fromPage, item.href)}">${escapeHtml(item.label)}</a>`).join("")}</section>`;
-  return `<nav class="site-nav" aria-label="站点导航">${group("总览", [{ href: "index.html", label: "站点总览" }])}${group("架构", [{ href: "architecture.html", label: "架构组成" }])}${group("功能", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug })))}${group("文件", [...site.filePages.keys()].sort().map((source) => ({ href: `files/${source}.html`, label: source })))}${group("变更史", [...site.changes.keys()].sort().map((issue) => ({ href: `changes/${issue}.html`, label: site.changes.get(issue).title ?? issue })))}</nav>`;
+  const fileTree = renderFileTreeNav(fromPage, site);
+  const fileSection = `
+    <section class="nav-group"><h2>文件</h2>${fileTree}</section>`;
+  const reviewGroup = activeReviewNav
+    ? `<section class="nav-group"><h2>本 PR</h2><a href="${relativeHref(fromPage, "review.html")}">本 PR 检视</a></section>`
+    : "";
+  return `<nav class="site-nav" aria-label="站点导航">${reviewGroup}${group("总览", [{ href: "index.html", label: "站点总览" }])}${group("架构", [{ href: "architecture.html", label: "架构组成" }])}${group("功能", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug })))}${fileSection}${group("变更史", sortedChanges(site).map(([issue, page]) => ({ href: `changes/${issue}.html`, label: page.title ?? issue })))}</nav>`;
+}
+
+/** 变更史排序：标题以 #PR 编号开头者降序，无编号者按 slug 排后。 */
+function sortedChanges(site) {
+  const num = (title) => Number((/^#(\d+)/.exec(title ?? "") ?? [])[1] ?? -1);
+  return [...site.changes.entries()].sort((a, b) => num(b[1].title) - num(a[1].title) || a[0].localeCompare(b[0]));
+}
+
+/** 文件页导航树：按源码目录嵌套为可折叠 details（纯 HTML，零脚本），summary 带目录下文件总数。 */
+function renderFileTreeNav(fromPage, site) {
+  const root = { dirs: new Map(), files: [] };
+  for (const source of [...site.filePages.keys()].sort()) {
+    let node = root;
+    const parts = source.split("/");
+    for (const part of parts.slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+      node = node.dirs.get(part);
+    }
+    node.files.push(source);
+  }
+  const count = (node) => node.files.length + [...node.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+  const render = (node) => {
+    const dirs = [...node.dirs.entries()].map(([name, child]) => `<details class="nav-dir"><summary>${escapeHtml(name)}/ (${count(child)})</summary>${render(child)}</details>`).join("");
+    const files = node.files.map((source) => `<a href="${relativeHref(fromPage, `files/${source}.html`)}">${escapeHtml(source.split("/").pop())}</a>`).join("");
+    return dirs + files;
+  };
+  return render(root);
 }
 
 /** 生成 HTML 外壳、内联 CSS 与共同导航。 */
@@ -155,12 +193,160 @@ function renderPage({ title, current, site, breadcrumb, content }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} · StudyWiki Walkthrough</title>
 <style>
-:root { color-scheme: light dark; --line:#d9d9e3; --text:#1c1c21; --muted:#5f6068; --surface:#fff; --panel:#f5f5f7; --accent:#7452ff; }
-@media (prefers-color-scheme: dark) { :root { --line:#3a3a42; --text:#ededf0; --muted:#a7a7b0; --surface:#17171a; --panel:#202024; --accent:#a48fff; } }
-* { box-sizing:border-box } body { margin:0; display:grid; grid-template-columns:270px minmax(0,1fr); min-height:100vh; background:var(--surface); color:var(--text); font:15px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif } .sidebar { padding:24px 18px; border-right:1px solid var(--line); background:var(--panel) } .brand,.site-nav a { display:block; color:inherit; text-decoration:none } .brand { font-weight:700; margin-bottom:20px } .nav-group { margin:0 0 20px } .nav-group h2 { margin:0 0 7px; font-size:12px; line-height:1.2; color:var(--muted); text-transform:uppercase; letter-spacing:.06em } .site-nav a { padding:5px 7px; border-radius:6px; overflow-wrap:anywhere } .site-nav a:hover,.site-nav a.active { background:color-mix(in srgb,var(--accent) 16%,transparent) } main { padding:min(6vw,52px); max-width:1080px } .breadcrumb,.back-link { color:var(--muted); font-size:13px } .breadcrumb { display:flex; gap:7px; flex-wrap:wrap } .breadcrumb a,.back-link,.annotated-code figcaption a { color:var(--accent) } .back-link { display:inline-block; margin-top:10px } h1 { font-size:clamp(28px,4vw,38px); line-height:1.15; margin:16px 0 20px } h2 { margin-top:34px; font-size:23px } .content :not(pre)>code { background:var(--panel); padding:.1em .32em; border-radius:4px } .annotated-code { margin:22px 0; padding:0; border:1px solid var(--line); border-radius:10px; overflow:hidden } .annotated-code figcaption { padding:9px 13px; border-bottom:1px solid var(--line); background:var(--panel); font-size:13px } .code-note { display:grid; grid-template-columns:minmax(0,1fr) minmax(220px,34%); align-items:start } pre { margin:0; padding:14px; overflow:auto; font:13px/1.55 ui-monospace,SFMono-Regular,monospace; background:color-mix(in srgb,var(--panel) 48%,transparent) } .code-note pre { min-height:100% } .code-line { display:block } .line-number { display:inline-block; width:2.7em; margin-right:.7em; color:var(--muted); text-align:right; user-select:none } aside.note { padding:14px; font-size:14px; background:var(--panel); border-left:1px solid var(--line) } .card-list,.touch-list { padding-left:0; list-style:none } .card-list li,.touch-list li { margin:10px 0 } .meta { color:var(--muted); font-size:13px } @media (max-width:820px) { body { grid-template-columns:1fr } .sidebar { border-right:0; border-bottom:1px solid var(--line) } .code-note { grid-template-columns:1fr } aside.note { border-left:0; border-top:1px solid var(--line) } }
+:root { color-scheme: light dark;
+  --bg:#f7f7f8; --surface:#ffffff; --panel:#f4f4f6; --panel-strong:#ebebef;
+  --line:#e6e6ec; --line-strong:#d7d7e0;
+  --text:#1a1b1f; --muted:#676975; --faint:#9b9da8;
+  --accent:#5454d4; --accent-soft:color-mix(in srgb,var(--accent) 9%,transparent);
+  --add:#1a7f37; --del:#cf222e; --risk:#b45309;
+  --risk-soft:color-mix(in srgb,var(--risk) 9%,transparent);
+  --code-bg:#f8f8fa; --shadow:0 1px 2px rgba(18,18,28,.04),0 10px 28px -14px rgba(18,18,28,.14);
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg:#111114; --surface:#191a1f; --panel:#202127; --panel-strong:#282932;
+  --line:#282932; --line-strong:#393a45;
+  --text:#e9e9ee; --muted:#a0a1ad; --faint:#6f707c;
+  --accent:#9a9af5; --accent-soft:color-mix(in srgb,var(--accent) 13%,transparent);
+  --add:#56d364; --del:#ff7b72; --risk:#e3a55b;
+  --risk-soft:color-mix(in srgb,var(--risk) 13%,transparent);
+  --code-bg:#15161a; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.5);
+} }
+* { box-sizing:border-box }
+html { scroll-behavior:smooth }
+body { margin:0; display:grid; grid-template-columns:288px minmax(0,1fr); min-height:100vh; background:var(--bg); color:var(--text); font:15px/1.75 system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; -webkit-font-smoothing:antialiased }
+::selection { background:color-mix(in srgb,var(--accent) 22%,transparent) }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px }
+
+/* ---- 侧栏 ---- */
+.sidebar { position:sticky; top:0; height:100vh; overflow-y:auto; padding:22px 16px 32px; border-right:1px solid var(--line); background:var(--surface); scrollbar-width:thin }
+.sidebar::-webkit-scrollbar { width:8px }
+.sidebar::-webkit-scrollbar-thumb { background:var(--panel-strong); border-radius:99px }
+.brand { display:block; font-weight:800; font-size:15px; letter-spacing:-.01em; color:inherit; text-decoration:none; padding:0 8px }
+.brand::before { content:""; display:inline-block; width:9px; height:9px; border-radius:3px; background:var(--accent); margin-right:8px; transform:translateY(-1px) }
+.brand-sub { display:block; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.14em; margin:3px 0 20px; padding-left:17px }
+.nav-group { margin:0 0 22px }
+.nav-group h2 { margin:0 0 6px; padding:0 8px; font-size:11px; font-weight:700; line-height:1.2; color:var(--faint); text-transform:uppercase; letter-spacing:.1em }
+.site-nav a { display:block; color:inherit; text-decoration:none; padding:5px 8px; border-radius:8px; font-size:13.5px; overflow-wrap:anywhere; transition:background .12s,color .12s }
+.site-nav a:hover { background:var(--accent-soft) }
+.site-nav a.active { background:var(--accent-soft); color:var(--accent); font-weight:600 }
+
+/* 折叠文件树 */
+.site-nav details { margin:1px 0 }
+.site-nav details details { margin-left:10px; padding-left:8px; border-left:1px solid var(--line) }
+.site-nav summary { display:flex; align-items:center; gap:6px; cursor:pointer; list-style:none; padding:4px 8px; font-size:13px; color:var(--muted); border-radius:8px; user-select:none; transition:background .12s }
+.site-nav summary::-webkit-details-marker { display:none }
+.site-nav summary::before { content:""; width:0; height:0; border-left:4.5px solid var(--faint); border-top:3.5px solid transparent; border-bottom:3.5px solid transparent; transition:transform .15s }
+.site-nav details[open] > summary::before { transform:rotate(90deg) }
+.site-nav summary:hover { background:var(--accent-soft); color:var(--text) }
+.site-nav details a { margin-left:6px }
+
+/* ---- 主区 ---- */
+main { min-width:0 }
+.topbar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:11px 24px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--surface) 86%,transparent); backdrop-filter:blur(10px) }
+.breadcrumb { display:flex; gap:8px; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:13px }
+.breadcrumb .separator { color:var(--faint) }
+.breadcrumb a,.back-link,.annotated-code figcaption a { color:var(--accent); text-decoration:none }
+.breadcrumb a:hover,.back-link:hover { text-decoration:underline }
+.back-link { margin-left:auto; font-size:13px }
+article.content { max-width:920px; margin:0 auto; padding:34px 40px 90px }
+h1 { font-size:clamp(26px,3.4vw,34px); font-weight:800; letter-spacing:-.02em; line-height:1.2; margin:10px 0 22px }
+h2 { font-size:19px; font-weight:700; letter-spacing:-.01em; margin:42px 0 16px; padding-bottom:9px; border-bottom:1px solid var(--line) }
+h3 { font-size:16px; margin:26px 0 10px }
+p { margin:10px 0 }
+.content :not(pre)>code { background:var(--panel); border:1px solid var(--line); padding:.08em .34em; border-radius:5px; font-size:.88em }
+.meta { color:var(--muted); font-size:12.5px }
+
+/* 注解代码块 */
+.annotated-code { margin:24px 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow) }
+.annotated-code figcaption { display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel); font:12.5px ui-monospace,SFMono-Regular,monospace; color:var(--muted) }
+.annotated-code figcaption::before { content:""; width:8px; height:8px; border-radius:99px; background:var(--accent) }
+.code-note { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(240px,38%); align-items:stretch }
+pre { margin:0; padding:14px 0; overflow:auto; font:13px/1.6 ui-monospace,SFMono-Regular,"SF Mono",Consolas,monospace; background:var(--code-bg) }
+.code-note pre { min-height:100% }
+.code-line { display:block; padding:0 16px }
+.code-line:hover { background:var(--accent-soft) }
+.line-number { display:inline-block; width:2.9em; margin-right:12px; color:var(--faint); text-align:right; user-select:none }
+aside.note { position:relative; padding:16px 18px; font-size:13.5px; background:var(--panel); border-left:1px solid var(--line) }
+aside.note::before { content:"讲解"; display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.12em; color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); border-radius:99px; padding:1px 9px; margin-bottom:10px }
+aside.note p { margin:8px 0 }
+
+/* 列表：卡片与 chips */
+.card-list { display:grid; gap:10px; padding:0; list-style:none }
+.card-list li { margin:0 }
+.card-list li > a { display:block; padding:13px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:inherit; text-decoration:none; transition:border-color .12s,transform .12s,box-shadow .12s }
+.card-list li > a:hover { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); transform:translateY(-1px); box-shadow:var(--shadow) }
+.card-list .card-title { display:block; font-weight:650; font-size:14px; color:var(--text) }
+.card-list li > a:hover .card-title { color:var(--accent) }
+.card-list .card-desc { display:block; margin-top:3px; font-size:13px; color:var(--muted) }
+.touch-list { display:flex; flex-wrap:wrap; gap:8px; padding:0; list-style:none }
+.touch-list li { margin:0 }
+.touch-list a,.touch-list code { display:inline-flex; align-items:center; padding:3px 11px; border:1px solid var(--line-strong); border-radius:999px; font-size:12.5px; background:var(--surface); color:var(--text); text-decoration:none }
+.touch-list a:hover { border-color:var(--accent); color:var(--accent) }
+.backlinks { margin:14px 0 }
+
+/* 变更页：头部徽章、变更地图、检视指引 */
+.change-head { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:-8px 0 4px }
+.issue-link { font-size:13px; font-weight:600; color:var(--muted); text-decoration:none }
+a.issue-link:hover { color:var(--accent) }
+.scale-chips { display:flex; flex-wrap:wrap; gap:8px }
+.chip { display:inline-flex; align-items:center; padding:2px 11px; border:1px solid var(--line-strong); border-radius:999px; background:var(--accent-soft); font-size:12.5px; font-weight:600 }
+.chip.add { color:var(--add); background:color-mix(in srgb,var(--add) 10%,transparent); border-color:color-mix(in srgb,var(--add) 35%,transparent) }
+.chip.del { color:var(--del); background:color-mix(in srgb,var(--del) 8%,transparent); border-color:color-mix(in srgb,var(--del) 32%,transparent) }
+.badge { display:inline-flex; align-items:center; padding:1px 9px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.08em; white-space:nowrap }
+.badge-must-read { color:var(--accent); background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent) }
+.badge-skim,.badge-skip { color:var(--muted); background:var(--panel); border:1px solid var(--line-strong) }
+.map-group { margin:16px 0; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden }
+.map-group .group-head,.map-group > summary { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:11px 16px; background:var(--panel); border-bottom:1px solid var(--line) }
+.map-group .group-head h3 { margin:0; font-size:14.5px }
+.map-group > summary { cursor:pointer; list-style:none; font-weight:650; font-size:14px }
+.map-group > summary::-webkit-details-marker { display:none }
+.map-group > summary::before { content:"▸"; color:var(--faint); font-size:11px }
+.map-group[open] > summary::before { content:"▾" }
+details.map-group:not([open]) > summary { border-bottom:0 }
+details.map-group.skim > summary { opacity:.72 }
+details.map-group.skip > summary { opacity:.55 }
+.map-group .group-why { padding:10px 16px 0; font-size:13px; color:var(--muted) }
+.map-files { width:100%; border-collapse:collapse; font-size:13px }
+.map-files td { padding:7px 16px; border-top:1px solid var(--line); vertical-align:top }
+.map-files tr:first-child td { border-top:0 }
+.map-files td.map-path { width:46%; font-family:ui-monospace,SFMono-Regular,monospace; font-size:12.5px; overflow-wrap:anywhere }
+.map-files td.map-note { color:var(--muted) }
+.map-files td.map-note p { margin:0 }
+ol.user-flow { padding-left:22px }
+ol.user-flow li { margin:5px 0 }
+.risk-list { display:grid; gap:8px; padding:0; list-style:none }
+.risk-list li { margin:0; padding:8px 13px; border-left:3px solid var(--risk); border-radius:8px; background:var(--risk-soft); font-size:13.5px }
+.risk-list li p { margin:0 }
+.acceptance { width:100%; border-collapse:collapse; font-size:13.5px; border:1px solid var(--line); background:var(--surface) }
+.acceptance th,.acceptance td { padding:8px 14px; border-top:1px solid var(--line); text-align:left; vertical-align:top }
+.acceptance thead th { border-top:0; background:var(--panel); font-size:12.5px; color:var(--muted) }
+.acceptance td p { margin:0 }
+.verify-list { padding:0; list-style:none }
+.verify-list li { margin:5px 0; padding-left:24px; position:relative; font-size:13.5px }
+.verify-list li::before { content:"✓"; position:absolute; left:2px; color:var(--add); font-weight:700 }
+
+.search { width:100%; margin:0 0 12px; padding:8px 12px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); color:var(--text); font:inherit; font-size:13.5px } .search::placeholder { color:var(--faint) } .search:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft) } .diff-file { margin:14px 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface) } .diff-file h4 { margin:0; padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); font:12.5px ui-monospace,SFMono-Regular,monospace; font-weight:600; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap } .diff-file > .meta { padding:8px 14px; border-bottom:1px solid var(--line); font-size:13px }
+.hunk { border-top:1px solid var(--line) } .hunk-head { padding:5px 14px; background:var(--panel); font-size:12px; font-family:ui-monospace,SFMono-Regular,monospace }
+.diff-pre { padding:8px 0; background:var(--code-bg) } .diff-line { display:flex; padding:0; white-space:pre-wrap; word-break:break-all }
+.diff-line .line-number { flex:0 0 3.4em; padding:0 10px 0 14px } .diff-line .diff-sign { flex:0 0 1.4em; text-align:center; user-select:none } .diff-line .diff-text { flex:1; padding-right:14px }
+.diff-add { background:color-mix(in srgb,#2da44e 12%,transparent) } .diff-add .diff-sign { color:#2da44e } .diff-del { background:color-mix(in srgb,#cf222e 11%,transparent) } .diff-del .diff-sign { color:#cf222e } .diff-ctx { color:var(--muted) }
+.attention-badge { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.08em; padding:1px 9px; border-radius:99px; vertical-align:middle; margin-left:8px }
+.attention-must-read .attention-badge { color:#cf222e; border:1px solid color-mix(in srgb,#cf222e 45%,transparent) } .attention-skim .attention-badge { color:var(--muted); border:1px solid var(--line-strong) } .attention-skip .attention-badge { color:var(--faint); border:1px solid var(--line) } .attention-badge.attention-must-read { color:#cf222e; border:1px solid color-mix(in srgb,#cf222e 45%,transparent) } .attention-badge.attention-skim { color:var(--muted); border:1px solid var(--line-strong) } .attention-badge.attention-skip { color:var(--faint); border:1px solid var(--line) }
+.attention-skim .diff-file,.attention-skip .diff-file { opacity:.86 }
+.review-tree { display:grid; gap:8px } .tree-legend { display:grid; gap:10px; margin-bottom:12px } .review-dir { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden } .review-dir > summary { padding:8px 12px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-dir[open] > summary { border-bottom:1px solid var(--line) } .review-dir > details { margin:6px } .review-file > summary { display:flex; gap:8px; align-items:center; padding:7px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-wrap:anywhere } .review-file > summary .meta { margin-left:auto } .review-file[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0 } .review-file-body { padding:0 10px 10px } .review-dir > summary { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-unclassified > summary { color:var(--muted) } .review-file > summary { display:block; padding:10px 12px; cursor:pointer } .review-file > summary .file-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font:12.5px ui-monospace,SFMono-Regular,monospace } .review-file > summary .file-chips { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap } .status-chip,.stat-chip { display:inline-block; padding:1px 8px; border:1px solid var(--line-strong); border-radius:99px; font:11px ui-monospace,SFMono-Regular,monospace; color:var(--muted) } .review-file > summary .summary-line { display:flex; gap:7px; align-items:baseline; margin-top:5px; font-size:12.8px; line-height:1.45; color:var(--muted) } .review-file > summary .summary-label { flex:0 0 auto; white-space:nowrap; color:var(--faint); user-select:none } .review-file > summary .summary-text { flex:1 1 auto; display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow-wrap:anywhere }
+.diff-note { margin:0; border-left:3px solid var(--accent); border-radius:0 }
+table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top } th { color:var(--muted); font-size:12.5px }
+@media (max-width:860px) {
+  body { grid-template-columns:1fr }
+  .sidebar { position:static; height:auto; max-height:42vh; border-right:0; border-bottom:1px solid var(--line) }
+  .topbar { position:static }
+  article.content { padding:24px 20px 70px }
+  .code-note { grid-template-columns:1fr }
+  aside.note { border-left:0; border-top:1px solid var(--line) }
+}
 </style>
 </head>
-<body><aside class="sidebar"><a class="brand" href="${relativeHref(current, "index.html")}">StudyWiki 讲解站</a>${renderNavigation(current, site)}</aside><main>${breadcrumb}<article class="content">${content}</article></main></body>
+<body><aside class="sidebar"><a class="brand" href="${relativeHref(current, "index.html")}">StudyWiki<span class="brand-sub">工程讲解站 · Walkthrough</span></a>${renderNavigation(current, site)}</aside><main><div class="topbar">${breadcrumb}</div><article class="content">${content}</article></main></body>
 </html>
 `;
 }
@@ -285,9 +471,79 @@ function renderTouches(touches, current, site) {
   }).join("")}</ul>`;
 }
 
-/** 渲染变更史页。 */
+/** 读取 flow issue 登记的 github.url；缺失或损坏时软降级为 null（纯文本展示）。 */
+function resolveIssueUrl(root, issue) {
+  try {
+    const file = path.join(root, ".agents/flow/issues", `${issue}.md`);
+    if (!existsSync(file)) return null;
+    const { data } = parseFlowDocument(readFileSync(file, "utf8"), file);
+    const url = data?.github?.url;
+    return typeof url === "string" && url !== "" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+const ATTENTION_BADGES = { "must-read": "必读", skim: "可扫读", skip: "可跳过" };
+
+/** attention 徽章；未知值已先被 schema 拦截，这里只做兜底转义。 */
+function attentionBadge(attention) {
+  return `<span class="badge badge-${escapeHtml(attention)}">${ATTENTION_BADGES[attention] ?? escapeHtml(attention)}</span>`;
+}
+
+/** 渲染变更地图：must-read 组展开置顶，skim/skip 组默认 <details> 折叠。 */
+function renderCodeMapGroups(codeMap, current, site) {
+  const order = { "must-read": 0, skim: 1, skip: 2 };
+  const groups = codeMap
+    .map((group, index) => ({ group, index }))
+    .sort(
+      (a, b) =>
+        (order[a.group.attention] ?? 3) - (order[b.group.attention] ?? 3) ||
+        a.index - b.index,
+    );
+  return groups
+    .map(({ group }) => {
+      const why =
+        typeof group.why === "string" && group.why !== ""
+          ? `<div class="group-why">${markdown.renderInline(group.why)}</div>`
+          : "";
+      const rows = group.files
+        .map((file) => {
+          const target = site.filePages.has(file.path) ? `files/${file.path}.html` : null;
+          const cell = target
+            ? `<a href="${relativeHref(current, target)}">${escapeHtml(file.path)}</a>`
+            : `<code>${escapeHtml(file.path)}</code>`;
+          const notes = Array.isArray(file.changes)
+            ? file.changes.map((change) => `<tr class="map-change-note"><td></td><td class="map-note"><aside class="note diff-note"><span class="meta">检视注解：</span>${markdown.renderInline(change.note)}</aside></td></tr>`).join("")
+            : "";
+          return `<tr><td class="map-path">${cell}</td><td class="map-note">${markdown.renderInline(file.note)}</td></tr>${notes}`;
+        })
+        .join("");
+      const table = `<table class="map-files"><tbody>${rows}</tbody></table>`;
+      if (group.attention === "must-read") {
+        return `<section class="map-group must-read"><div class="group-head"><h3>${escapeHtml(group.group)}</h3>${attentionBadge(group.attention)}</div>${why}${table}</section>`;
+      }
+      return `<details class="map-group ${escapeHtml(group.attention)}"><summary>${escapeHtml(group.group)}${attentionBadge(group.attention)}</summary>${why}${table}</details>`;
+    })
+    .join("");
+}
+
+/** 渲染变更史页（v2 schema：scale 徽章 + feature/userFlow/codeMap/reviewGuide/verification）。 */
 function renderChangePage(issue, page, current, site) {
-  const content = `<h1>${escapeHtml(page.title)}</h1><p class="meta">Issue ${escapeHtml(issue)}</p>${renderTouches(page.touches, current, site)}<section><h2>功能层</h2>${renderMarkdown(page.functional)}</section><section><h2>架构层</h2>${renderMarkdown(page.architectural)}</section><section><h2>代码细节层</h2>${renderMarkdown(page.code)}</section>`;
+  const issueUrl = resolveIssueUrl(site.root, issue);
+  const issuePart = issueUrl
+    ? `<a class="issue-link" href="${escapeHtml(issueUrl)}">Issue ${escapeHtml(issue)}</a>`
+    : `<span class="issue-link">Issue ${escapeHtml(issue)}</span>`;
+  const chips = `<div class="scale-chips"><span class="chip">${page.scale.files} 个文件</span><span class="chip add">+${page.scale.additions}</span><span class="chip del">−${page.scale.deletions}</span></div>`;
+  const userFlow = `<ol class="user-flow">${page.userFlow.map((step) => `<li>${markdown.renderInline(step)}</li>`).join("")}</ol>`;
+  const guide = page.reviewGuide;
+  const reviewOrder = `<ol class="review-order">${guide.order.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ol>`;
+  const risks = guide.risks.length
+    ? `<ul class="risk-list">${guide.risks.map((risk) => `<li>${markdown.renderInline(risk)}</li>`).join("")}</ul>`
+    : '<p class="meta">无登记风险。</p>';
+  const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
+  const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
+  const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section>${page.design ? `<section><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
   return renderPage({
     title: page.title,
     current,
@@ -309,8 +565,13 @@ function renderOverviewPage(site) {
       : "";
     return `<section><h2>${escapeHtml(section.heading)}</h2>${renderMarkdown(section.body)}${images}</section>`;
   }).join("");
-  const entries = (title, id, items) => `<section id="${escapeHtml(id)}"><h2>${escapeHtml(title)}</h2><ul class="card-list">${items.map((item) => `<li><a href="${relativeHref("index.html", item.href)}">${escapeHtml(item.label)}</a>${item.description ? `<span class="meta"> — ${escapeHtml(item.description)}</span>` : ""}</li>`).join("")}</ul></section>`;
-  const content = `<h1>StudyWiki Walkthrough</h1>${overview}${entries("功能导览", "features", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug, description: site.featureIndex?.features?.find((feature) => feature.slug === slug)?.summary })))}${entries("文件注解", "files", [...site.filePages.keys()].sort().map((source) => ({ href: `files/${source}.html`, label: source, description: site.filePages.get(source).summary })))}${entries("变更史", "changes", [...site.changes.keys()].sort().map((issue) => ({ href: `changes/${issue}.html`, label: site.changes.get(issue).title ?? issue })))}`;
+  const entries = (title, id, items) => `<section id="${escapeHtml(id)}"><h2>${escapeHtml(title)}</h2><ul class="card-list">${items.map((item) => `<li><a href="${relativeHref("index.html", item.href)}"><span class="card-title">${escapeHtml(item.label)}</span>${item.description ? `<span class="card-desc">${escapeHtml(item.description)}</span>` : ""}</a></li>`).join("")}</ul></section>`;
+  const content = `<h1>StudyWiki Walkthrough</h1>${overview}${entries("功能导览", "features", [...site.features.keys()].sort().map((slug) => ({ href: `features/${slug}.html`, label: site.features.get(slug).title ?? slug, description: site.featureIndex?.features?.find((feature) => feature.slug === slug)?.summary })))}${entries("文件注解", "files", [...site.filePages.keys()].sort().map((source) => ({ href: `files/${source}.html`, label: source, description: site.filePages.get(source).summary })))}${(() => {
+  const cards = sortedChanges(site).map(([issue, page]) => `<li><a href="${relativeHref("index.html", `changes/${issue}.html`)}"><span class="card-title">${escapeHtml(page.title ?? issue)}</span><span class="card-desc">Issue ${escapeHtml(issue)}</span></a></li>`).join("");
+  const filter = `<input class="search" type="search" placeholder="搜索 PR 编号或关键词…" aria-label="搜索变更史" data-filter="changes-cards">`;
+  const script = `<script>(() => { const input = document.querySelector('input[data-filter="changes-cards"]'); const list = document.getElementById('changes-cards'); if (!input || !list) return; input.addEventListener('input', () => { const q = input.value.trim().toLowerCase(); for (const li of list.children) li.style.display = li.textContent.toLowerCase().includes(q) ? '' : 'none'; }); })();<\/script>`;
+  return `<section id="changes"><h2>变更史</h2>${filter}<ul class="card-list" id="changes-cards">${cards}</ul></section>${script}`;
+})()}`;
   return renderPage({
     title: "总览",
     current: "index.html",
@@ -326,7 +587,10 @@ function renderOverviewPage(site) {
  * @param {string} [outDir] - 输出目录；默认解析到 root 下的 walkthrough/dist。
  * @returns {void} 构建成功时无返回值；多处锚点命中会向 stdout 输出 WARN。
  */
-export function buildSite(root, outDir) {
+let activeReviewNav = false;
+
+export function buildSite(root, outDir, options = {}) {
+  activeReviewNav = Boolean(options.review);
   const resolvedRoot = path.resolve(root);
   const resolvedOut = path.resolve(outDir ?? path.join(resolvedRoot, "walkthrough/dist"));
   const site = parseSite(resolvedRoot);
@@ -368,6 +632,9 @@ export function buildSite(root, outDir) {
   }
   for (const [issue, change] of site.changes) {
     output(`changes/${issue}.html`, renderChangePage(issue, change, `changes/${issue}.html`, site));
+  if (options.review) {
+    output("review.html", renderReviewPage(site, options.review, root));
+  }
   }
 
   const assets = path.join(resolvedRoot, "walkthrough/assets");
@@ -376,10 +643,296 @@ export function buildSite(root, outDir) {
   }
 }
 
+
+/** 从 flow 树读 issue 状态（review 模式探测当前 PR 页用）。 */
+function flowStatuses(root) {
+  const statuses = new Map();
+  const dir = path.join(root, ".agents/flow/issues");
+  if (!existsSync(dir)) return statuses;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+    const text = readFileSync(path.join(dir, name), "utf8");
+    const status = /status: (\w[\w-]*)/u.exec(text)?.[1];
+    if (status) statuses.set(name.replace(/\.md$/u, ""), status);
+  }
+  return statuses;
+}
+
+/** 探测当前 PR 对应的变更页：提交标题 (#N) → issue 编号 → slug；其次 in-progress issue 且其页在 diff 中。 */
+function detectReviewPage(root, site, diffFiles, base) {
+  const numbers = new Set(
+    (execGit(root, ["log", "--format=%s", `${base}..HEAD`]).match(/\(#(\d+)\)/gu) ?? [])
+      .map((tag) => Number(tag.replace(/\D/gu, ""))),
+  );
+  if (numbers.size > 0) {
+    const dir = path.join(root, ".agents/flow/issues");
+    for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+      if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+      const text = readFileSync(path.join(dir, name), "utf8");
+      const number = /number: (\d+)/u.exec(text)?.[1];
+      if (number && numbers.has(Number(number))) {
+        const slug = name.replace(/\.md$/u, "");
+        if (site.changes.has(slug)) return slug;
+      }
+    }
+  }
+  const statuses = flowStatuses(root);
+  const changed = new Set(diffFiles
+    .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+    .filter(Boolean)
+    .filter((slug) => site.changes.has(slug)));
+  for (const [slug] of site.changes) {
+    if (statuses.get(slug) === "in-progress" && changed.has(slug)) return slug;
+  }
+  if (changed.size > 0) return [...changed][0];
+  throw new Error("review 模式：未找到当前 PR 的变更页（提交标题无 (#N) 可映射到带 changes 页的 issue）");
+}
+
+/** git 命令出口（review 探测用）。 */
+function execGit(root, argv) {
+  return execFileSync("git", argv, { cwd: root, encoding: "utf8" });
+}
+
+/** 渲染普通 unified hunks：所有 diff 行完整输出，不挂 changes 注解。 */
+function renderUnifiedHunks(file) {
+  return file.hunks.map((hunk) => {
+    const lines = hunk.lines.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("");
+    return `<div class="hunk"><div class="hunk-head meta">@@ 旧 ${hunk.oldStart} → 新 ${hunk.newStart} @@</div><pre class="diff-pre">${lines}</pre></div>`;
+  }).join("");
+}
+
+/** 渲染 review 路径树上方的分组图例：只保留组名、attention 与 why。 */
+function renderReviewLegend(groups) {
+  if (groups.length === 0) return "";
+  return `<div class="tree-legend">${groups.map((group) => `<section class="codemap-group attention-${escapeHtml(group.attention)}"><h3>${escapeHtml(group.group)} <span class="attention-badge">${escapeHtml(group.attention)}</span></h3><p class="meta">${renderMarkdown(group.why ?? "")}</p></section>`).join("")}</div>`;
+}
+
+/** 渲染 diff 行；after 行号优先，删除行保留 before 行号。 */
+function renderReviewDiffLine(line) {
+  const sign = line.type === "add" ? "+" : line.type === "del" ? "−" : " ";
+  const no = line.newNo ?? line.oldNo ?? "";
+  return `<span class="diff-line diff-${line.type}"><span class="line-number">${no}</span><span class="diff-sign">${sign}</span><span class="diff-text">${escapeHtml(line.text)}</span></span>`;
+}
+
+/** 计算某 after 区间内的 add/ctx diff 行；删除行保留在“其余变更行”里。 */
+function diffLinesForRange(lines, range) {
+  const selected = new Set();
+  lines.forEach((line, index) => {
+    if (line.newNo === null || line.newNo < range.start || line.newNo > range.end) return;
+    selected.add(line);
+  });
+  return lines.filter((line) => selected.has(line));
+}
+
+/** 找删除行之后的第一条 after 侧行号。 */
+function nextAfterLine(lines, deletion) {
+  const index = lines.indexOf(deletion);
+  return lines.slice(index + 1).find((line) => line.newNo !== null)?.newNo ?? null;
+}
+
+/** 渲染一个 changes 锚定段：完整 after 骨架 + 段内 add/ctx 着色 + 段下注解。 */
+function renderChangesSegment(root, file, change, located) {
+  const lines = file.hunks.flatMap((hunk) => hunk.lines);
+  const selected = new Set(diffLinesForRange(lines, located));
+  const sourceLines = existsSync(path.join(root, file.path))
+    ? readFileSync(path.join(root, file.path), "utf8").replace(/\r\n?/g, "\n").split("\n")
+    : [];
+  const rows = [];
+  for (let lineNo = located.start; lineNo <= located.end; lineNo += 1) {
+    for (const line of lines) {
+      if (line.type === "del" && line.newNo === null && selected.has(line) &&
+          !rows.includes(line) && nextAfterLine(lines, line) === lineNo) {
+        rows.push(line);
+      }
+    }
+    const diffLine = lines.find((line) => line.newNo === lineNo);
+    rows.push(diffLine ?? { type: "ctx", text: sourceLines[lineNo - 1] ?? "", oldNo: lineNo, newNo: lineNo });
+  }
+  const range = located.start === located.end ? `L${located.start}` : `L${located.start}-L${located.end}`;
+  const segmentLines = rows.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("");
+  return `<div class="changes-segment" data-path="${escapeHtml(file.path)}" data-start="${located.start}" data-end="${located.end}"><div class="hunk-head meta">${escapeHtml(range)} · ${located.end - located.start + 1} 行</div><pre class="diff-pre">${segmentLines}</pre><aside class="note diff-note">${renderMarkdown(change.note)}</aside></div>`;
+}
+
+/** 渲染单文件逐段注解 diff；未纳入注解骨架的 diff 行折叠到尾部。 */
+function renderSegmentedDiff(file, entry, root) {
+  const sourceText = existsSync(path.join(root, file.path)) ? readFileSync(path.join(root, file.path), "utf8") : "";
+  const segments = (entry.changes ?? []).map((change) => ({
+    change,
+    located: sourceText ? locateSnippet(sourceText, change.snippet) : null,
+  })).filter((segment) => segment.located);
+  const lines = file.hunks.flatMap((hunk) => hunk.lines);
+  const selected = new Set();
+  for (const segment of segments) {
+    for (const line of diffLinesForRange(lines, segment.located)) selected.add(line);
+  }
+  const rest = lines.filter((line) => !selected.has(line));
+  const restHtml = rest.length === 0 ? "" : `<details class="diff-rest-lines"><summary>其余变更行（${rest.length}）</summary><pre class="diff-pre">${rest.map((line) => `<div>${renderReviewDiffLine(line)}</div>`).join("")}</pre></details>`;
+  return segments.map((segment) => renderChangesSegment(root, file, segment.change, segment.located)).join("") + restHtml;
+}
+
+/** 用 groups 中的文件元数据建立嵌套路径树。 */
+function buildReviewTree(groups, byPath) {
+  const root = { dirs: new Map(), files: [] };
+  const metadata = new Map();
+  for (const group of groups) {
+    for (const entry of group.files ?? []) {
+      if (metadata.has(entry.path)) continue;
+      metadata.set(entry.path, { entry, group, file: byPath.get(entry.path) });
+      let node = root;
+      for (const part of entry.path.split("/").slice(0, -1)) {
+        if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+        node = node.dirs.get(part);
+      }
+      node.files.push(entry.path);
+    }
+  }
+  return { root, metadata };
+}
+
+/** 渲染 review 专属文件正文：must-read reviewable 文件展开逐段 diff，其余只分诊。 */
+function renderReviewFileBody(metadata, root) {
+  const { entry, group, file } = metadata;
+  if (group.attention === "must-read" && isReviewableSourcePath(entry.path) && file.hunks.length > 0) {
+    return renderSegmentedDiff(file, entry, root);
+  }
+  return renderUnifiedHunks(file);
+}
+
+/** 生成 summary 中的两行摘要：文件职责与 changes 修改点；未归类用占位符。 */
+function reviewFileSummaryLines(metadata) {
+  if (metadata.unclassified) {
+    return `
+      <div class="summary-line"><span class="summary-label">文件主要实现：</span><span class="summary-text">—</span></div>
+      <div class="summary-line"><span class="summary-label">当前PR修改点：</span><span class="summary-text">—</span></div>`;
+  }
+  const changeNotes = (metadata.entry.changes ?? [])
+    .map((change) => typeof change?.note === "string" ? change.note.trim() : "")
+    .filter(Boolean);
+  const changeSummary = changeNotes.length > 0 ? changeNotes.join("；") : "（无逐段注解）";
+  return `
+    <div class="summary-line"><span class="summary-label">文件主要实现：</span><span class="summary-text">${escapeHtml(metadata.entry.note)}</span></div>
+    <div class="summary-line"><span class="summary-label">当前PR修改点：</span><span class="summary-text">${escapeHtml(changeSummary)}</span></div>`;
+}
+
+/** 渲染一个默认折叠的文件节点；summary 承载路径、chips 与两行摘要。 */
+function renderReviewFile(path, metadata, site, root) {
+  const { file } = metadata;
+  const href = site.filePages.has(path) ? `<a href="${relativeHref("review.html", `files/${path}.html`)}"><code>${escapeHtml(path)}</code></a>` : `<code>${escapeHtml(path)}</code>`;
+  const status = file ? (file.status === "A" ? "新增" : file.status === "D" ? "删除" : "修改") : "未变更";
+  const stats = file ? `+${file.additions} −${file.deletions}` : "+0 −0";
+  const attention = metadata.unclassified
+    ? ""
+    : `<span class="attention-badge">${escapeHtml(metadata.group.attention)}</span>`;
+  const attentionClass = metadata.unclassified ? "" : ` attention-${escapeHtml(metadata.group.attention)}`;
+  const body = metadata.unclassified ? renderUnifiedHunks(file) : renderReviewFileBody(metadata, root);
+  return `<details class="review-file${attentionClass}"><summary><span class="file-head">${href}<span class="file-chips"><span class="status-chip">${escapeHtml(status)}</span><span class="stat-chip">${escapeHtml(stats)}</span>${attention}</span></span>${reviewFileSummaryLines(metadata)}</summary><div class="review-file-body">${body}</div></details>`;
+}
+
+/** 渲染默认展开的目录 details 与其下文件；目录 summary 显示路径、文件数与 attention 计数徽章。 */
+function renderReviewDirTree(node, metadata, site, root) {
+  const count = (current) => current.files.filter((file) => metadata.get(file).file).length +
+    [...current.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+  const attentionCounts = (current) => {
+    const totals = new Map();
+    const add = (attention) => totals.set(attention, (totals.get(attention) ?? 0) + 1);
+    for (const file of current.files) {
+      if (metadata.get(file).file) add(metadata.get(file).group.attention);
+    }
+    for (const child of current.dirs.values()) {
+      for (const [attention, value] of attentionCounts(child)) totals.set(attention, (totals.get(attention) ?? 0) + value);
+    }
+    return totals;
+  };
+  const attentionChips = (current) => {
+    const counts = attentionCounts(current);
+    return ["must-read", "skim", "skip"]
+      .filter((attention) => (counts.get(attention) ?? 0) > 0)
+      .map((attention) => `<span class="attention-badge attention-${attention}">${counts.get(attention)} ${attention}</span>`)
+      .join("");
+  };
+  const render = (current) => {
+    const dirs = [...current.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) =>
+      `<details class="review-dir" open><summary>${escapeHtml(name)}/ (${count(child)})${attentionChips(child)}</summary>${render(child)}</details>`).join("");
+    const files = current.files
+      .filter((file) => metadata.get(file).file)
+      .sort()
+      .map((file) => renderReviewFile(file, metadata.get(file), site, root))
+      .join("");
+    return dirs + files;
+  };
+  return render(node);
+}
+
+/** review 变更区路径树：grouped 文件按路径嵌套，未归类文件挂独立默认展开子树。 */
+function renderReviewFileTree(diffFiles, groups, byPath, site, root, restHtml) {
+  const { root: tree, metadata } = buildReviewTree(groups, byPath);
+  return `<section class="review-tree">${renderReviewDirTree(tree, metadata, site, root)}${restHtml}</section>`;
+}
+
+/** 渲染未归类子树：文件级 note/changes 摘要位均为占位符，展开体仍是完整 diff。 */
+function renderUnclassifiedTree(rest, site, root) {
+  if (rest.length === 0) return "";
+  const files = rest.sort((a, b) => a.path.localeCompare(b.path))
+    .map((file) => renderReviewFile(file.path, { file, unclassified: true }, site, root))
+    .join("");
+  return `<details class="review-dir review-unclassified" open><summary>未归类 (${rest.length})</summary>${files}</details>`;
+}
+
+/** 渲染 PR 检视页：分组图例 + 默认展开路径树，所有文件详情默认折叠但完整渲染 diff。 */
+function renderReviewPage(site, review, root) {
+  const { base } = review;
+  const diff = collectReviewDiff(root, base);
+  const byPath = new Map(diff.files.map((file) => [file.path, file]));
+  const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
+  const page = site.changes.get(slug);
+  const current = "review.html";
+  const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
+  const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
+  const scale = page.scale ?? {};
+  const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
+  const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
+  const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
+  const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
+  const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
+
+  const rank = { "must-read": 0, skim: 1, skip: 2 };
+  const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
+  const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
+  const rest = diff.files.filter((file) => !covered.has(file.path));
+  const restHtml = rest.length
+    ? renderUnclassifiedTree(rest, site, root)
+    : "";
+  const codeSection = `<section id="code-changes"><h2>代码变更（路径树）</h2>${renderReviewLegend(groups)}${renderReviewFileTree(diff.files, groups, byPath, site, root, restHtml)}</section>`;
+  const guide = page.reviewGuide
+    ? `<section><h2>检视指引</h2><h3>建议阅读顺序</h3><ol>${page.reviewGuide.order.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ol><h3>风险点</h3><ul>${page.reviewGuide.risks.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul><h3>验收对照</h3><table><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${page.reviewGuide.acceptance.map((row) => `<tr><td>${renderMarkdown(row.item)}</td><td>${renderMarkdown(row.evidence)}</td></tr>`).join("")}</tbody></table></section>`
+    : "";
+  const verification = `<section><h2>验证证据</h2><ul>${(page.verification ?? []).map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul></section>`;
+  const content = `<h1>本 PR 检视：${escapeHtml(page.title ?? slug)}</h1>${meta}${flowSection}${userFlow}${archSection}${designSection}${codeSection}${guide}${verification}`;
+  return renderPage({
+    title: `本 PR 检视 · ${page.title ?? slug}`,
+    current,
+    site,
+    breadcrumb: renderBreadcrumb(current, [{ label: "首页", href: "index.html" }, { label: "本 PR 检视" }]),
+    content,
+  });
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [rootArg, outArg] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const reviewIndex = argv.indexOf("--review");
+  if (argv.some((arg) => arg.startsWith("--") && arg !== "--review")) {
+    console.error(`build-walkthrough: 未知参数（仅支持 [root] [outDir] [--review <base>]）`);
+    process.exit(2);
+  }
+  if (reviewIndex !== -1 && argv[reviewIndex + 1] === undefined) {
+    console.error("build-walkthrough: --review 需要 <base> 值");
+    process.exit(2);
+  }
+  const positional = argv.filter((_, index) => index !== reviewIndex && index !== reviewIndex + 1);
+  const [rootArg, outArg] = positional;
   try {
-    buildSite(rootArg ?? process.cwd(), outArg);
+    const options = reviewIndex === -1 ? {} : { review: { base: argv[reviewIndex + 1] } };
+    buildSite(rootArg ?? process.cwd(), outArg, options);
   } catch (error) {
     console.error(`build-walkthrough: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
