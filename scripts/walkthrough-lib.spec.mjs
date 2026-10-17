@@ -1059,6 +1059,24 @@ touches: [file:src/demo.ts]
   });
 });
 
+describe("change freshness metadata schema", () => {
+  it("skill_gen_commit_id 可选且只接受 7-40 位十六进制 commit hash", () => {
+    const site = emptySite();
+    site.changes.set("demo-change", { ...validChange(), skill_gen_commit_id: "1234567890abcdef" });
+    expect(validateSchema(site)).not.toContain(
+      "walkthrough/changes/demo-change.yaml: skill_gen_commit_id 必须是 7-40 位十六进制 commit hash",
+    );
+
+    for (const id of ["", "12345", "G123456", 123, null]) {
+      const bad = emptySite();
+      bad.changes.set("demo-change", { ...validChange(), skill_gen_commit_id: id });
+      expect(validateSchema(bad)).toContain(
+        "walkthrough/changes/demo-change.yaml: skill_gen_commit_id 必须是 7-40 位十六进制 commit hash",
+      );
+    }
+  });
+});
+
 describe("review segment gates", () => {
   function reviewSite() {
     const site = emptySite();

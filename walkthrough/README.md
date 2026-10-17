@@ -57,6 +57,10 @@
 
 变更页的叙事层（功能/用户操作路径/架构变化/方案设计 `design` 字段/图示/逐段注解的写法）**质量唯一 home 是 skill**：[.agents/skills/walkthrough-change-metadata-gen/SKILL.md](../.agents/skills/walkthrough-change-metadata-gen/SKILL.md)。门禁只看护机械面（锚点/覆盖率/schema/对账）；写得通不通俗、图配得好不好，由该 skill 的生成纪律约束。生成或更新 changes 页元数据时必须使用该 skill。
 
+## 保鲜门禁
+
+变更页带 `skill_gen_commit_id`（上次由生成 skill 对齐时的分支最新 commit）。pre-push 检查：分支关联 PR 时，diff 内变更页的该字段必须等于最新提交，或其后的提交仅触碰 `walkthrough/changes/**`（纯元数据对账放行）；落后则拦截并提示调用生成 skill 增量更新。实现：`scripts/check-review-freshness.mjs`。
+
 ## 门禁
 
 `node scripts/verify-walkthrough.mjs` 执行静态 1-7，diff 模式追加 8-12：

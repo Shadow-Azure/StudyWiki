@@ -47,6 +47,17 @@ describe("install-git-hooks", () => {
     expect(hook).toContain("command -v cargo");
   });
 
+  it("pre-push 在 doc-quick 后执行检视元数据保鲜门禁", async () => {
+    const dir = await installOnce();
+    const hook = readFileSync(path.join(dir, ".git/hooks/pre-push"), "utf8");
+    const docEnd = hook.indexOf("doc-quick 未过");
+    const freshness = hook.indexOf('node scripts/check-review-freshness.mjs "$@" || exit 1');
+    const cargo = hook.indexOf("command -v cargo");
+    expect(docEnd).toBeGreaterThan(-1);
+    expect(freshness).toBeGreaterThan(docEnd);
+    expect(cargo).toBeGreaterThan(freshness);
+  });
+
   it("commit-msg 行为：标题带 (#N) 或全宽括号放行，缺失拦截", async () => {
     const dir = await installOnce();
     const hook = path.join(dir, ".git/hooks/commit-msg");

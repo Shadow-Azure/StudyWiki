@@ -40,6 +40,7 @@ const CHANGE_KEYS = new Set([
   "reviewGuide",
   "verification",
   "touches",
+  "skill_gen_commit_id",
 ]);
 const SCALE_KEYS = new Set(["files", "additions", "deletions"]);
 const CODE_MAP_GROUP_KEYS = new Set(["group", "attention", "why", "files"]);
@@ -480,6 +481,13 @@ export function validateSchema(site) {
     requireNonEmptyStringArray(change.verification, "verification", label, errors);
     if (!isNonEmptyStringArray(change.touches)) {
       push(errors, label, "touches 必须是非空字符串数组");
+    }
+    if (
+      change.skill_gen_commit_id !== undefined &&
+      (typeof change.skill_gen_commit_id !== "string" ||
+        !/^[0-9a-f]{7,40}$/u.test(change.skill_gen_commit_id))
+    ) {
+      push(errors, label, "skill_gen_commit_id 必须是 7-40 位十六进制 commit hash");
     }
   }
 

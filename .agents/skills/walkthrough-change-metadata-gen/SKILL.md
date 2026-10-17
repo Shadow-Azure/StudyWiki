@@ -28,6 +28,15 @@ description: 生成或更新 walkthrough/changes/*.yaml 变更页元数据（功
 5. **补检视指引与验证**：reviewGuide（order/risks/acceptance）与 verification 如实填写，证据必须真实可跑。
 6. **自检**：跑本文件末尾的自检清单与验证命令，全过才算完成。
 
+## 更新已有变更页（增量对账）
+
+yaml 已存在时（字段 `skill_gen_commit_id` 记录上次对齐的最新 commit），**不要从零重写**，按增量流程：
+
+1. `git log --oneline <skill_gen_commit_id>..HEAD` 列出其间提交；`git diff --name-only <id>..HEAD -- ':(exclude)walkthrough/changes/**'` 列出实质变更文件。
+2. 逐文件判断影响：叙事层（feature/userFlow/architectural/design）是否仍成立 → 修订；新触碰的源码文件 → 补进 codeMap 与逐段注解；既有注解锚定失配 → 修 snippet/note。
+3. 把 `skill_gen_commit_id` 更新为当前 HEAD（短 hash）。**只有 skill 更新流程可以推进该字段**；其余提交不得手改。
+4. 容错语义：pre-push 检查允许"id 之后仅触碰 walkthrough/changes/** 的对账提交"——即元数据对账本身不会制造新的落后。
+
 ## 质量红线
 
 - **写现状，不写变更史**：页面语义是"这个 PR 是什么"，不是"开发过程中发生了什么"。
