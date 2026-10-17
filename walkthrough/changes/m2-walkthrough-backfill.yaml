@@ -803,6 +803,10 @@ codeMap:
     attention: skim
     why: 叙事质量生成规范固化为 skill，供后续 PR 复用。
     files:
+      - path: scripts/check-review-freshness.mjs
+        note: pre-push 保鲜检查：skill_gen_commit_id 与分支最新提交对账。
+      - path: scripts/check-review-freshness.spec.mjs
+        note: 保鲜检查自测试（git 夹具 + gh 注入）。
       - path: .agents/skills/walkthrough-change-metadata-gen/SKILL.md
         note: 生成纪律入口：硬性工作流、质量红线、自检与分册路由。
       - path: .agents/skills/walkthrough-change-metadata-gen/references/narrative-guide.md
