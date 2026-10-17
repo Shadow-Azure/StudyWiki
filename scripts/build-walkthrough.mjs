@@ -6,6 +6,7 @@
 // 文本树（目录顺序复用 gen-code-map 的 SCAN_ROOTS，不在构建器里重复扫描/推导依赖）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { posix } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +14,7 @@ import MarkdownIt from "markdown-it";
 import { checkAnchors, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
 import { parseFlowDocument } from "./flow-lib.mjs";
 import { SCAN_ROOTS } from "./gen-code-map.mjs";
+import { collectReviewDiff, hunkForRange } from "./walkthrough-review.mjs";
 
 const markdown = new MarkdownIt({ html: false, linkify: false });
 
@@ -180,7 +182,7 @@ function renderFileTreeNav(fromPage, site) {
 }
 
 /** 生成 HTML 外壳、内联 CSS 与共同导航。 */
-function renderPage({ title, current, site, breadcrumb, content }) {
+function renderPage({ title, current, site, breadcrumb, content, reviewNav = false }) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -320,7 +322,17 @@ ol.user-flow li { margin:5px 0 }
 .verify-list li { margin:5px 0; padding-left:24px; position:relative; font-size:13.5px }
 .verify-list li::before { content:"✓"; position:absolute; left:2px; color:var(--add); font-weight:700 }
 
-.search { width:100%; margin:0 0 12px; padding:8px 12px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); color:var(--text); font:inherit; font-size:13.5px } .search::placeholder { color:var(--faint) } .search:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft) } @media (max-width:860px) {
+.search { width:100%; margin:0 0 12px; padding:8px 12px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); color:var(--text); font:inherit; font-size:13.5px } .search::placeholder { color:var(--faint) } .search:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft) } .diff-file { margin:14px 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface) } .diff-file h4 { margin:0; padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); font:12.5px ui-monospace,SFMono-Regular,monospace; font-weight:600; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap } .diff-file > .meta { padding:8px 14px; border-bottom:1px solid var(--line); font-size:13px }
+.hunk { border-top:1px solid var(--line) } .hunk-head { padding:5px 14px; background:var(--panel); font-size:12px; font-family:ui-monospace,SFMono-Regular,monospace }
+.diff-pre { padding:8px 0; background:var(--code-bg) } .diff-line { display:flex; padding:0; white-space:pre-wrap; word-break:break-all }
+.diff-line .line-number { flex:0 0 3.4em; padding:0 10px 0 14px } .diff-line .diff-sign { flex:0 0 1.4em; text-align:center; user-select:none } .diff-line .diff-text { flex:1; padding-right:14px }
+.diff-add { background:color-mix(in srgb,#2da44e 12%,transparent) } .diff-add .diff-sign { color:#2da44e } .diff-del { background:color-mix(in srgb,#cf222e 11%,transparent) } .diff-del .diff-sign { color:#cf222e } .diff-ctx { color:var(--muted) }
+.attention-badge { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.08em; padding:1px 9px; border-radius:99px; vertical-align:middle; margin-left:8px }
+.attention-must-read .attention-badge { color:#cf222e; border:1px solid color-mix(in srgb,#cf222e 45%,transparent) } .attention-skim .attention-badge { color:var(--muted); border:1px solid var(--line-strong) } .attention-skip .attention-badge { color:var(--faint); border:1px solid var(--line) }
+.attention-skim .diff-file,.attention-skip .diff-file { opacity:.86 }
+.diff-note { margin:0; border-left:3px solid var(--accent); border-radius:0 }
+table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top } th { color:var(--muted); font-size:12.5px }
+@media (max-width:860px) {
   body { grid-template-columns:1fr }
   .sidebar { position:static; height:auto; max-height:42vh; border-right:0; border-bottom:1px solid var(--line) }
   .topbar { position:static }
@@ -330,7 +342,7 @@ ol.user-flow li { margin:5px 0 }
 }
 </style>
 </head>
-<body><aside class="sidebar"><a class="brand" href="${relativeHref(current, "index.html")}">StudyWiki<span class="brand-sub">工程讲解站 · Walkthrough</span></a>${renderNavigation(current, site)}</aside><main><div class="topbar">${breadcrumb}</div><article class="content">${content}</article></main></body>
+<body><aside class="sidebar"><a class="brand" href="${relativeHref(current, "index.html")}">StudyWiki<span class="brand-sub">工程讲解站 · Walkthrough</span></a>${reviewNav ? `<section class="nav-group"><h2>本 PR</h2><a href="${relativeHref(current, "review.html")}">本 PR 检视</a></section>` : ""}${renderNavigation(current, site)}</aside><main><div class="topbar">${breadcrumb}</div><article class="content">${content}</article></main></body>
 </html>
 `;
 }
@@ -568,7 +580,7 @@ function renderOverviewPage(site) {
  * @param {string} [outDir] - 输出目录；默认解析到 root 下的 walkthrough/dist。
  * @returns {void} 构建成功时无返回值；多处锚点命中会向 stdout 输出 WARN。
  */
-export function buildSite(root, outDir) {
+export function buildSite(root, outDir, options = {}) {
   const resolvedRoot = path.resolve(root);
   const resolvedOut = path.resolve(outDir ?? path.join(resolvedRoot, "walkthrough/dist"));
   const site = parseSite(resolvedRoot);
@@ -610,6 +622,9 @@ export function buildSite(root, outDir) {
   }
   for (const [issue, change] of site.changes) {
     output(`changes/${issue}.html`, renderChangePage(issue, change, `changes/${issue}.html`, site));
+  if (options.review) {
+    output("review.html", renderReviewPage(site, options.review, root));
+  }
   }
 
   const assets = path.join(resolvedRoot, "walkthrough/assets");
@@ -618,10 +633,149 @@ export function buildSite(root, outDir) {
   }
 }
 
+
+/** 从 flow 树读 issue 状态（review 模式探测当前 PR 页用）。 */
+function flowStatuses(root) {
+  const statuses = new Map();
+  const dir = path.join(root, ".agents/flow/issues");
+  if (!existsSync(dir)) return statuses;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+    const text = readFileSync(path.join(dir, name), "utf8");
+    const status = /status: (\w[\w-]*)/u.exec(text)?.[1];
+    if (status) statuses.set(name.replace(/\.md$/u, ""), status);
+  }
+  return statuses;
+}
+
+/** 探测当前 PR 对应的变更页：提交标题 (#N) → issue 编号 → slug；其次 in-progress issue 且其页在 diff 中。 */
+function detectReviewPage(root, site, diffFiles, base) {
+  const numbers = new Set(
+    (execGit(root, ["log", "--format=%s", `${base}..HEAD`]).match(/\(#(\d+)\)/gu) ?? [])
+      .map((tag) => Number(tag.replace(/\D/gu, ""))),
+  );
+  if (numbers.size > 0) {
+    const dir = path.join(root, ".agents/flow/issues");
+    for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+      if (!name.endsWith(".md") || name.endsWith(".en.md")) continue;
+      const text = readFileSync(path.join(dir, name), "utf8");
+      const number = /number: (\d+)/u.exec(text)?.[1];
+      if (number && numbers.has(Number(number))) {
+        const slug = name.replace(/\.md$/u, "");
+        if (site.changes.has(slug)) return slug;
+      }
+    }
+  }
+  const statuses = flowStatuses(root);
+  const changed = new Set(diffFiles
+    .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+    .filter(Boolean)
+    .filter((slug) => site.changes.has(slug)));
+  for (const [slug] of site.changes) {
+    if (statuses.get(slug) === "in-progress" && changed.has(slug)) return slug;
+  }
+  if (changed.size > 0) return [...changed][0];
+  throw new Error("review 模式：未找到当前 PR 的变更页（提交标题无 (#N) 可映射到带 changes 页的 issue）");
+}
+
+/** git 命令出口（review 探测用）。 */
+function execGit(root, argv) {
+  return execFileSync("git", argv, { cwd: root, encoding: "utf8" });
+}
+
+/** 渲染 PR 检视页：v2 叙事区 + 真实 before/after diff 区（must-read 组展开）。 */
+function renderReviewPage(site, review, root) {
+  const { base } = review;
+  const diff = collectReviewDiff(root, base);
+  const byPath = new Map(diff.files.map((file) => [file.path, file]));
+  const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
+  const page = site.changes.get(slug);
+  const current = "review.html";
+  const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
+  const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
+  const scale = page.scale ?? {};
+  const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
+  const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
+  const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
+  const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
+
+  const rank = { "must-read": 0, skim: 1, skip: 2 };
+  const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
+  const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
+  const groupHtml = groups.map((group) => {
+    const files = (group.files ?? []).map((entry) => {
+      const file = byPath.get(entry.path);
+      const stats = file ? `+${file.additions} −${file.deletions}` : "本 PR 未改动";
+      const status = file ? (file.status === "A" ? "新增" : file.status === "D" ? "删除" : "修改") : "";
+      const link = site.filePages.has(entry.path) ? `<a href="${relativeHref(current, `files/${entry.path}.html`)}">${escapeHtml(entry.path)}</a>` : `<code>${escapeHtml(entry.path)}</code>`;
+      let body = "";
+      if (group.attention === "must-read" && file && file.hunks.length > 0) {
+        body = renderDiffHunks(file, entry, site, root);
+      }
+      return `<div class="diff-file"><h4>${link} <span class="meta">${escapeHtml(status)} ${escapeHtml(stats)}</span></h4><div class="meta">${renderMarkdown(entry.note ?? "")}</div>${body}</div>`;
+    }).join("");
+    return `<section class="codemap-group attention-${escapeHtml(group.attention)}"><h3>${escapeHtml(group.group)} <span class="attention-badge">${escapeHtml(group.attention)}</span></h3><p class="meta">${renderMarkdown(group.why ?? "")}</p>${files}</section>`;
+  }).join("");
+  const rest = diff.files.filter((file) => !covered.has(file.path));
+  const restHtml = rest.length
+    ? `<details class="diff-rest"><summary>未归类的其余变更文件（${rest.length}）</summary><ul class="touch-list">${rest.map((file) => `<li><code>${escapeHtml(file.path)}</code> <span class="meta">+${file.additions} −${file.deletions}</span></li>`).join("")}</ul></details>`
+    : "";
+  const codeSection = `<section><h2>代码变更（before/after）</h2>${groupHtml}${restHtml}</section>`;
+  const guide = page.reviewGuide
+    ? `<section><h2>检视指引</h2><h3>建议阅读顺序</h3><ol>${page.reviewGuide.order.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ol><h3>风险点</h3><ul>${page.reviewGuide.risks.map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul><h3>验收对照</h3><table><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${page.reviewGuide.acceptance.map((row) => `<tr><td>${renderMarkdown(row.item)}</td><td>${renderMarkdown(row.evidence)}</td></tr>`).join("")}</tbody></table></section>`
+    : "";
+  const verification = `<section><h2>验证证据</h2><ul>${(page.verification ?? []).map((item) => `<li>${renderMarkdown(item)}</li>`).join("")}</ul></section>`;
+  const content = `<h1>本 PR 检视：${escapeHtml(page.title ?? slug)}</h1>${meta}${flowSection}${userFlow}${archSection}${codeSection}${guide}${verification}`;
+  return renderPage({
+    title: `本 PR 检视 · ${page.title ?? slug}`,
+    current,
+    site,
+    breadcrumb: renderBreadcrumb(current, [{ label: "首页", href: "index.html" }, { label: "本 PR 检视" }]),
+    content,
+    reviewNav: true,
+  });
+}
+
+/** 渲染单文件的 diff hunks：+ 绿 / − 红 / 上下文灰，变更注解挂到所属 hunk 下方。 */
+function renderDiffHunks(file, entry, site, root) {
+  const sourceText = existsSync(path.join(root, file.path)) ? readFileSync(path.join(root, file.path), "utf8") : "";
+  const notes = (entry.changes ?? []).map((change) => {
+    const located = sourceText ? locateSnippet(sourceText, change.snippet) : null;
+    return { note: change.note, hunkIndex: located ? hunkForRange(file.hunks, located) : -1 };
+  });
+  const looseNotes = notes.filter((note) => note.hunkIndex === -1);
+  const headerNotes = looseNotes.length
+    ? looseNotes.map((note) => `<aside class="note diff-note">${renderMarkdown(note.note)}</aside>`).join("")
+    : "";
+  const hunks = file.hunks.map((hunk, index) => {
+    const lines = hunk.lines.map((line) => {
+      const sign = line.type === "add" ? "+" : line.type === "del" ? "−" : " ";
+      const no = line.newNo ?? line.oldNo ?? "";
+      return `<span class="diff-line diff-${line.type}"><span class="line-number">${no}</span><span class="diff-sign">${sign}</span><span class="diff-text">${escapeHtml(line.text)}</span></span>`;
+    }).join("");
+    const attached = notes.filter((note) => note.hunkIndex === index);
+    const attachedHtml = attached.map((note) => `<aside class="note diff-note">${renderMarkdown(note.note)}</aside>`).join("");
+    return `<div class="hunk"><div class="hunk-head meta">@@ 旧 ${hunk.oldStart} → 新 ${hunk.newStart} @@</div><pre class="diff-pre">${lines}</pre>${attachedHtml}</div>`;
+  }).join("");
+  return `${headerNotes}${hunks}`;
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [rootArg, outArg] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const reviewIndex = argv.indexOf("--review");
+  if (argv.some((arg) => arg.startsWith("--") && arg !== "--review")) {
+    console.error(`build-walkthrough: 未知参数（仅支持 [root] [outDir] [--review <base>]）`);
+    process.exit(2);
+  }
+  if (reviewIndex !== -1 && argv[reviewIndex + 1] === undefined) {
+    console.error("build-walkthrough: --review 需要 <base> 值");
+    process.exit(2);
+  }
+  const positional = argv.filter((_, index) => index !== reviewIndex && index !== reviewIndex + 1);
+  const [rootArg, outArg] = positional;
   try {
-    buildSite(rootArg ?? process.cwd(), outArg);
+    const options = reviewIndex === -1 ? {} : { review: { base: argv[reviewIndex + 1] } };
+    buildSite(rootArg ?? process.cwd(), outArg, options);
   } catch (error) {
     console.error(`build-walkthrough: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);

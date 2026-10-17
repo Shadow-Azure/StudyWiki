@@ -42,7 +42,8 @@ const CHANGE_KEYS = new Set([
 ]);
 const SCALE_KEYS = new Set(["files", "additions", "deletions"]);
 const CODE_MAP_GROUP_KEYS = new Set(["group", "attention", "why", "files"]);
-const CODE_MAP_FILE_KEYS = new Set(["path", "note"]);
+const CODE_MAP_FILE_KEYS = new Set(["path", "note", "changes"]);
+const CODE_MAP_CHANGE_KEYS = new Set(["snippet", "note"]);
 const REVIEW_GUIDE_KEYS = new Set(["order", "risks", "acceptance"]);
 const ACCEPTANCE_KEYS = new Set(["item", "evidence"]);
 const CHANGE_ATTENTIONS = new Set(["must-read", "skim", "skip"]);
@@ -303,7 +304,23 @@ function validateCodeMap(codeMap, label, errors) {
         push(errors, fileLabel, `机械变更不得标 must-read: ${file.path}`);
       }
     });
-  });
+  });  // changes（hunk 注解）形状校验：可选，出现则必须是 {snippet,note} 列表。
+  for (const group of codeMap) {
+    if (!isObject(group) || !Array.isArray(group.files)) continue;
+    for (const file of group.files) {
+      if (!isObject(file) || file.changes === undefined) continue;
+      if (!Array.isArray(file.changes)) {
+        errors.push(`${label} codeMap ${file.path ?? "?"}: changes 必须是列表`);
+        continue;
+      }
+      file.changes.forEach((change, index) => {
+        if (!isObject(change) || !Object.keys(change).every((key) => CODE_MAP_CHANGE_KEYS.has(key)) || typeof change.snippet !== "string" || typeof change.note !== "string") {
+          errors.push(`${label} codeMap ${file.path ?? "?"} changes[${index}]: 必须是 {snippet, note}`);
+        }
+      });
+    }
+  }
+
 }
 
 /** change 页 reviewGuide：阅读顺序 + 风险点 + 验收对照。 */

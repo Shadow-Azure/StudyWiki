@@ -32,7 +32,8 @@
     "install:hooks": "node scripts/install-git-hooks.mjs",
     "route:gates": "node scripts/route-gates.mjs",
     "archive:note": "node scripts/archive-agent-note.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "walkthrough:review": "node scripts/build-walkthrough.mjs --review origin/main"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",

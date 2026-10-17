@@ -1,7 +1,7 @@
 // build-walkthrough 规格测试：用 tmpdir 夹具站点锁定产物结构、真实源码锚点、
 // 文件页反链、构建期失败语义与 CLI 干净 stdout。
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -426,5 +426,77 @@ related:
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
     expect(readFileSync(path.join(root, "walkthrough/dist/index.html"), "utf8")).toContain("这是什么工程");
+  });
+});
+
+describe("review 模式", () => {
+  it("--review 产出本 PR 检视页：叙事区 + must-read 组真实 diff + 注解归位", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "walkthrough-review-build-"));
+    dirs.push(root);
+    const git = (argv) => execFileSync("git", argv, { cwd: root, encoding: "utf8" });
+    git(["init", "-q", "-b", "main"]);
+    write(root, "src/demo.ts", "export const covered = 1;\nexport const keep = 2;\n");
+    write(root, "scripts/code-map.manifest.json", "{\"src/demo.ts\": \"演示源文件\"}");
+    write(root, "walkthrough/manifest.json", "{\"lineCoverage\": {\"threshold\": 0.9, \"exemptions\": {}}}");
+    write(root, "walkthrough/overview.yaml", "kind: overview\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
+    write(root, "walkthrough/architecture.yaml", "kind: architecture\nsections:\n  - heading: 演示\n    body: |\n      演示。\n");
+    write(root, "walkthrough/features.yaml", "features: []\n");
+    git(["add", "."]);
+    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]);
+    write(
+      root,
+      "walkthrough/changes/demo-pr.yaml",
+      `kind: change
+issue: demo-pr
+title: #7 演示 PR
+scale:
+  files: 2
+  additions: 10
+  deletions: 1
+feature: |
+  演示功能。
+userFlow:
+  - 打开演示
+architectural: |
+  无。
+codeMap:
+  - group: 核心变更
+    attention: must-read
+    why: 语义核心。
+    files:
+      - path: src/demo.ts
+        note: 演示文件。
+        changes:
+          - snippet: |
+              export const changed = 2;
+            note: |
+              这是本次修改的那行。
+reviewGuide:
+  order:
+    - 先看 demo.ts
+  risks:
+    - 演示风险
+  acceptance:
+    - item: 演示验收
+      evidence: pnpm test
+verification:
+  - pnpm test
+touches: []
+`,
+    );
+    write(root, "src/demo.ts", "export const covered = 1;\nexport const changed = 2;\nexport const keep = 2;\n");
+    git(["add", "."]);
+    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "work"]);
+    const outDir = path.join(root, "walkthrough/dist");
+    buildSite(root, outDir, { review: { base: "HEAD~1" } });
+    const review = readFileSync(path.join(outDir, "review.html"), "utf8");
+    expect(review).toContain("本 PR 检视");
+    expect(review).toContain("演示功能");
+    expect(review).toContain("diff-add");
+    expect(review).toContain("export const changed = 2;");
+    expect(review).toContain("这是本次修改的那行。");
+    expect(review).toContain("attention-must-read");
+    // 导航置顶链接
+    expect(review).toContain("本 PR 检视</a>");
   });
 });
