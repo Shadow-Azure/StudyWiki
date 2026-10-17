@@ -178,17 +178,29 @@ codeMap:
         note: 安装 commit-msg 提醒钩子。
         changes:
           - snippet: |
-              # Installed by scripts/install-git-hooks.mjs — do not edit.
-              # 开发流程的本地提醒：提交标题须挂 flow issue 引用 (#N)（契约见
-              # .agents/flow/README.md；穷尽覆盖归 CI 的 verify-flow --diff）。
-              grep -Eq '[([]#[0-9]+[)]]' "$1" || {
+              grep -Eq '[(（]#[0-9]+[)）]' "$1" || {
                 echo "commit-msg: 提交标题缺 issue 引用 (#N)（--no-verify 可跳过，风险自担）" >&2
                 exit 1
               }
-              `,
+            note: |
+              本次变更加入了 commit-msg 本地提醒，促使提交标题带上流程引用；穷尽校验仍由 CI 的 diff 门禁承担。括号正则已修复 BSD grep 兼容（原写法永不命中），行为测试随安装器 spec 落地。
+      - path: scripts/install-git-hooks.spec.mjs
+        note: 安装器 spec（commit-msg 括号正则行为测试）。
+        changes:
+          - snippet: |
+                  expect(run("功能：演示 (#59)")).toBe("pass");
+                  expect(run("功能：演示（#59）")).toBe("pass");
+                  expect(run("功能：演示")).toBe("block");
+            note: |
+              commit-msg 钩子的行为测试：ASCII 与全宽括号放行、缺失拦截——本次变更顺带修复了原正则在 BSD grep 下永不命中的潜伏缺陷。
+      - path: docs/development.en.md
+        note: 开发文档英文侧钩子描述同步。
+        changes:
+          - snippet: |
+              Local hooks are deliberately narrow: `pnpm install:hooks` installs pre-commit (staged trailing whitespace), commit-msg (`#N` reminder), post-commit (refreshes the review page on walkthrough commits), and pre-push (doc-quick), and registers the fail-closed merge driver for `.i18n.yaml`; exhaustive coverage belongs to CI — hooks are reminders, not gates. Gate scripts carry vitest tests, also run in CI.
 
             note: |
-                本次变更加入了 commit-msg 本地提醒，促使提交标题带上流程引用；穷尽校验仍由 CI 的 diff 门禁承担。
+                本次变更在开发文档登记了新增的 commit-msg 与 post-commit 钩子，并压缩句子回到词数预算；英文侧同步。
 
   - group: 门禁接线
     attention: skim

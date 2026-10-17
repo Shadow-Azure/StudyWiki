@@ -578,7 +578,7 @@ export function parseSite(root) {
 }
 
 /**
- * 定位 trimEnd 归一化后的跨行 snippet。
+ * 定位整行 trim 归一化后的跨行 snippet（行首缩进差异不敏感——YAML 块标量必然剥统一缩进，顶格复制是常态）。
  * @param {string} sourceText - 源码文本。
  * @param {string} snippet - 内容锚点。
  * @returns {{start:number,end:number,count:number}|null} 1-based 首个匹配区间与匹配次数。
@@ -587,7 +587,7 @@ export function locateSnippet(sourceText, snippet) {
   if (typeof sourceText !== "string" || typeof snippet !== "string" || snippet === "") {
     return null;
   }
-  const normalize = (text) => text.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd());
+  const normalize = (text) => text.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim());
   const haystack = normalize(sourceText).join("\n");
   // 块标量天然保留末尾换行；定位前只剥掉恰好一个归一化换行，
   // 使 end 表示内容最后一行，并避免空尾行灌大覆盖率。
