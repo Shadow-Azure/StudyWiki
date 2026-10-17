@@ -1,5 +1,6 @@
 kind: change
 issue: m1-03-excel-editing
+skill_gen_commit_id: 7297a86
 title: #43 excel 页面编辑
 scale:
   files: 38
