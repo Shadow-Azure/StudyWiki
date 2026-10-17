@@ -802,7 +802,7 @@ function renderReviewFileBody(metadata, root) {
 function reviewFileSummaryLines(metadata) {
   if (metadata.unclassified) {
     return `
-      <div class="summary-line"><span class="summary-label">①</span><span class="summary-text">—</span></div>
+      <div class="summary-line"><span class="summary-label">文件主要实现：</span><span class="summary-text">—</span></div>
       <div class="summary-line"><span class="summary-label">②</span><span class="summary-text">—</span></div>`;
   }
   const changeNotes = (metadata.entry.changes ?? [])
@@ -810,8 +810,8 @@ function reviewFileSummaryLines(metadata) {
     .filter(Boolean);
   const changeSummary = changeNotes.length > 0 ? changeNotes.join("；") : "（无逐段注解）";
   return `
-    <div class="summary-line"><span class="summary-label">①</span><span class="summary-text">${escapeHtml(metadata.entry.note)}</span></div>
-    <div class="summary-line"><span class="summary-label">②</span><span class="summary-text">${escapeHtml(changeSummary)}</span></div>`;
+    <div class="summary-line"><span class="summary-label">文件主要实现：</span><span class="summary-text">${escapeHtml(metadata.entry.note)}</span></div>
+    <div class="summary-line"><span class="summary-label">当前PR修改点：</span><span class="summary-text">${escapeHtml(changeSummary)}</span></div>`;
 }
 
 /** 渲染一个默认折叠的文件节点；summary 承载路径、chips 与两行摘要。 */
