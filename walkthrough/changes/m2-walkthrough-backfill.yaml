@@ -44,6 +44,10 @@ codeMap:
         note: 定版 90% 阈值并移除 bootstrap 标志。
       - path: scripts/build-walkthrough.mjs
         note: 回填后继续执行构建即校验。
+      - path: scripts/walkthrough-review.mjs
+        note: PR 检视 diff 数据层：numstat + 统一 diff hunk 解析 + 注解归位。
+      - path: scripts/walkthrough-review.spec.mjs
+        note: 数据层自测试（真实 git 夹具）。
       - path: scripts/build-walkthrough.spec.mjs
         note: 产物与导航回归。
   - group: 功能页
