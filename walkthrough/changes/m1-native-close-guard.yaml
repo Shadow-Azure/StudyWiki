@@ -1,18 +1,85 @@
 kind: change
 issue: m1-native-close-guard
 title: #46 修复原生关窗退出丢脏稿
-functional: |
+scale:
+  files: 35
+  additions: 1255
+  deletions: 338
+feature: |
   macOS 原生红点、Close Window、Cmd+W 和 Cmd+Q 不再绕过前端确认；有脏文档时先逐个询问，任一取消就保留窗口或进程，干净窗口直接关闭。
+userFlow:
+  - 点击红点、选择 Close Window 或按 Cmd+W 关闭窗口；干净窗口直接关，脏稿先弹确认。
+  - 在确认框选择取消则窗口保留，选择丢弃才关闭。
+  - 用 Cmd+Q 或应用菜单退出时，有脏文档的窗口逐个确认，全部放行后进程才结束。
 architectural: |
   原生生命周期先进入主进程同步拦截，再调用前端聚合守卫；Rust 只维护“守卫已武装”这一同步事实，文档脏语义仍留在前端插件。确认后由前端显式销毁，避免把文档状态镜像进壳层。
-code: |
-  - `src-tauri/src/native_close.rs` 拦截关闭 selector、改接红点动作，并钩住应用 terminate 逐窗走同一桥接。
-  - `src-tauri/src/windows.rs` 维护 CloseGuardRegistry，装载守卫即武装，退订或确认后恢复原生路径。
-  - `src/host/windows.ts` 聚合多个文档守卫，任一取消即停留，全部放行才销毁。
-  - `src/bootstrap.ts` 在每窗口启动时接好原生关闭桥与前端守卫生命周期。
+codeMap:
+  - group: 原生拦截与守卫注册表
+    attention: must-read
+    why: macOS 四条关闭出口在这里被统一桥接到同一条确认流程。
+    files:
+      - path: src-tauri/src/native_close.rs
+        note: 拦截 performClose、close、_close 和 terminate，红点动作改接原生关闭桥。
+      - path: src-tauri/src/windows.rs
+        note: CloseGuardRegistry 维护武装状态，处理并发装载、退订和确认后的恢复。
+      - path: src-tauri/src/lib.rs
+        note: ExitRequested 先阻止退出，再把每个 webview 导回前端关闭桥。
+  - group: 前端守卫聚合
+    attention: must-read
+    why: 多文档插件的脏状态只在前端聚合，决定是否显式销毁。
+    files:
+      - path: src/host/windows.ts
+        note: 聚合同窗守卫，任一取消即停留，全部放行才调用 destroy。
+      - path: src/bootstrap.ts
+        note: 每窗口接通原生关闭桥，并把生命周期绑定到前端守卫。
+  - group: 行为测试
+    attention: skim
+    why: 无脏、确认、取消与多守卫竞争由测试钉住。
+    files:
+      - path: tests/bootstrap.test.ts
+        note: 原生桥接与窗口启动生命周期回归。
+      - path: tests/host-services.test.ts
+        note: 守卫注册、聚合和同步取消行为。
+      - path: tests/doc-excel-editing-dom.test.ts
+        note: 脏 Excel 的关窗确认语义。
+  - group: 文档与机械伴生
+    attention: skim
+    why: 架构现状和生成区随新守卫同步。
+    files:
+      - path: docs/architecture.md
+        note: 记录原生关闭守卫分层。
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: docs/architecture.i18n.yaml
+        note: 双语配对记录。
+reviewGuide:
+  order:
+    - src-tauri/src/native_close.rs
+    - src-tauri/src/windows.rs
+    - src/host/windows.ts
+    - src/bootstrap.ts
+    - tests/host-services.test.ts
+  risks:
+    - `_close:` 是 macOS 26 实测必需的私有 selector；系统行为变化时只能跳过该路钩子，不能让启动失败。
+    - 守卫武装必须幂等；重复读取红点 target/action 可能把桥接动作误存为原始动作并破坏后续关闭。
+    - 本 PR 只收口单窗原生关闭与退出；多窗口串行退出与混合顺序继续由 m1-serial-quit 处理。
+  acceptance:
+    - item: 前端覆盖无脏、确认丢弃、取消丢弃与多守卫竞争
+      evidence: tests/bootstrap.test.ts 与 tests/host-services.test.ts
+    - item: Rust 覆盖守卫就绪注册表；未就绪或全退订窗口不启用原生同步取消
+      evidence: src-tauri/src/windows.rs 与 tests/host-services.test.ts
+    - item: pnpm test、cargo test 与相关文档、流程、分层门禁通过
+      evidence: 本仓门禁套件
+verification:
+  - pnpm test（vitest）
+  - cargo test
+  - pnpm lint:docs
+  - pnpm verify:flow
+  - pnpm verify:layering
 touches:
   - feature:multi-window
   - file:src-tauri/src/native_close.rs
   - file:src-tauri/src/windows.rs
+  - file:src-tauri/src/lib.rs
   - file:src/host/windows.ts
   - file:src/bootstrap.ts

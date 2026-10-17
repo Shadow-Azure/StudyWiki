@@ -1,18 +1,101 @@
 kind: change
 issue: m0-01-dev-flow-gates
 title: #26 开发流程门禁落地
-functional: |
+scale:
+  files: 62
+  additions: 2219
+  deletions: 19
+feature: |
   开发者在开工前必须把需求落成 flow issue，并在 roadmap 既有 milestone 内推进；提交与 PR 由本地钩子和离线门禁检查引用、状态与改动面，`flow:sync` 负责把本地流程树同步到 GitHub。
+userFlow:
+  - 无用户面变化（开发流程）
 architectural: |
   流程事实源收敛为 `.agents/flow/` 的 roadmap、milestone、issue 三层；ADR 复用 Agent Note 并由 issue 的 `adr` 字段关联。状态机、双语围栏一致性、GitHub 双侧一致与 diff 改动面校验分成可组合的门禁，而不是把约束散落在人工 review。
-code: |
-  - `scripts/flow-lib.mjs` 解析 flow YAML 子集并承载流程树、状态与 diff 校验的公共规则。
-  - `scripts/verify-flow.mjs` 执行离线状态机检查，`--diff` 模式补充提交引用与 issue scope 覆盖。
-  - `scripts/flow-sync.mjs` 以 gh 为唯一外部写入口，回填 GitHub 编号并同步状态映射。
-  - `scripts/flow-new-issue.mjs` 生成中英三件套骨架，`scripts/install-git-hooks.mjs` 提供提交信息提醒。
+codeMap:
+  - group: 流程引擎
+    attention: must-read
+    why: 状态机、编号回填与双侧一致的全部语义都在这组脚本里。
+    files:
+      - path: scripts/flow-lib.mjs
+        note: 解析 flow YAML 子集，承载流程树、状态与 diff 校验的公共规则。
+      - path: scripts/verify-flow.mjs
+        note: 离线状态机门禁；--diff 模式补充提交引用与 issue scope 覆盖。
+      - path: scripts/verify-flow-online.mjs
+        note: 与 GitHub 双侧一致的在线 lane，只校验不修改。
+      - path: scripts/flow-sync.mjs
+        note: 以 gh 为唯一外部写入口，回填编号并同步状态映射。
+      - path: scripts/flow-new-issue.mjs
+        note: 生成 issue 中英三件套骨架。
+      - path: scripts/install-git-hooks.mjs
+        note: 安装 commit-msg 提醒钩子。
+  - group: 门禁接线
+    attention: skim
+    why: 新门禁挂进 CI 与既有编排，扫一眼接线点即可。
+    files:
+      - path: .github/workflows/ci.yml
+        note: CI 挂载 verify-flow --diff 与在线 lane。
+      - path: scripts/run-gates.mjs
+        note: 门禁编排入口登记新门禁。
+      - path: scripts/route-gates.mjs
+        note: 按改动面推荐门禁组合。
+      - path: package.json
+        note: 新增 verify:flow、flow:sync 等命令。
+  - group: 流程树与文档
+    attention: skim
+    why: 首批流程工作文件与契约文档，内容型改动。
+    files:
+      - path: .agents/flow/roadmap.md
+        note: 愿景与 m0 至 m4 milestone 有序序列。
+      - path: .agents/flow/README.md
+        note: 流程契约 home。
+      - path: .agents/flow/milestones/m0-flow-infra.md
+        note: 本 issue 所在 milestone。
+      - path: docs/development.md
+        note: 流程惯例进开发文档。
+  - group: 测试
+    attention: skim
+    why: 门禁行为由 spec 钉住。
+    files:
+      - path: scripts/verify-flow.spec.mjs
+        note: 状态机与 diff 校验用例。
+      - path: scripts/flow-sync.spec.mjs
+        note: 同步写入口用例。
+      - path: scripts/verify-flow-online.spec.mjs
+        note: 在线一致性用例。
+  - group: 机械伴生
+    attention: skip
+    why: null
+    files:
+      - path: .agents/flow/roadmap.i18n.yaml
+        note: 配对记录，代表全部 i18n 伴生文件。
+      - path: scripts/doc-budgets.manifest.json
+        note: 文档词数预算登记。
+reviewGuide:
+  order:
+    - scripts/flow-lib.mjs
+    - scripts/verify-flow.mjs
+    - scripts/flow-sync.mjs
+    - .github/workflows/ci.yml
+    - .agents/flow/README.md
+  risks:
+    - 在线 lane 的 project 关联依赖 gh 登录态与 FLOW_TOKEN，未配置时该项降级为提醒。
+    - commit-msg 钩子是提醒级，可被 --no-verify 绕过，强制力在 CI 的 --diff 档。
+  acceptance:
+    - item: pnpm verify:flow 绿，verify:docs 与 pnpm test 绿
+      evidence: scripts/verify-flow.spec.mjs 用例加本仓门禁套件
+    - item: 流程树包含 roadmap、m0 至 m4 milestone 与本 issue
+      evidence: .agents/flow/roadmap.md 与 .agents/flow/milestones/
+    - item: 编号已回填且 PR 标题带引用
+      evidence: scripts/flow-sync.mjs 回填，issue 文件 github.number 字段
+verification:
+  - pnpm verify:flow
+  - pnpm verify:docs
+  - pnpm test
+  - CI verify:flow-online 在线 lane
 touches:
   - file:scripts/flow-lib.mjs
   - file:scripts/verify-flow.mjs
+  - file:scripts/verify-flow-online.mjs
   - file:scripts/flow-sync.mjs
   - file:scripts/flow-new-issue.mjs
   - file:scripts/install-git-hooks.mjs

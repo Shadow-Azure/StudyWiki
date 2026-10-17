@@ -1,19 +1,102 @@
 kind: change
 issue: m2-01-ai-inference-supply
 title: #49 模型供给定论与推理服务
-functional: |
+scale:
+  files: 39
+  additions: 4099
+  deletions: 66
+feature: |
   用户可以在 LLM 设置面板用厂商预设或自定义表单配置 chat 与 ASR endpoint、模型、key、视觉/语音能力与默认模型；配置能保存、脱敏展示并探测可用性，错误会归一成可理解的中文提示。
+userFlow:
+  - 打开 LLM 设置，新建或从厂商预设实例化 chat / ASR endpoint。
+  - 填 base URL、模型和用户自己的 key，勾选视觉、语音或工具能力并保存；配置写入 0600 的用户设置文件。
+  - 点探测确认 endpoint 可用性，保存后把 endpoint 设为默认。
+  - 在推理功能中选择模型；请求失败时看到按原因归一的提示。
 architectural: |
   模型供给采用用户显式配置的 OpenAI 兼容远程 endpoint，支持自托管闭环；这是登记过的环境无关豁免。配置、脱敏投影与联网出口归 Rust，前端通过宿主 `ctx.llm` 服务消费，不内置密钥。
-code: |
-  - `src-tauri/src/config.rs` 解析 `~/.studywiki/settings.json`，做版本检查、旧域迁移、endpoint 校验、原子写 0600 与脱敏投影。
-  - `src-tauri/src/llm.rs` 提供厂商预设、endpoint CRUD、`GET /models` 探测与非流式 chat，并归一 UNREACHABLE、UNAUTHORIZED、TIMEOUT 等错误词。
-  - `src/host/llm.ts` 暴露 list、upsert、remove、probe、chat facade，并用 MODEL_* 三码路由错误。
-  - `src/plugins/llm-settings/model.ts` 与面板共同完成预设实例化、表单校验、探测和删除流程。
+codeMap:
+  - group: 配置契约与命令边界
+    attention: must-read
+    why: settings.json、迁移、脱敏和命令授权决定所有模型能力的输入。
+    files:
+      - path: src-tauri/src/config.rs
+        note: 解析、迁移、校验、原子写 0600 并生成脱敏投影。
+      - path: src-tauri/src/lib.rs
+        note: 暴露 endpoint CRUD、探测和 chat 命令，并接入插件服务。
+  - group: 推理服务与宿主 facade
+    attention: must-read
+    why: HTTP 出口、错误归一和前端三码是跨进程契约。
+    files:
+      - path: src-tauri/src/llm.rs
+        note: 提供厂商预设、OpenAI 兼容探测与非流式 chat，归一网络与协议错误。
+      - path: src/host/llm.ts
+        note: 暴露 list、upsert、remove、probe、chat，并把错误路由为 MODEL_*。
+  - group: 设置面板入口
+    attention: must-read
+    why: 用户配置、能力位和默认模型的语义都从模块入口进入。
+    files:
+      - path: src/plugins/llm-settings/index.ts
+        note: 渲染表单、探测、保存与删除流程。
+      - path: src/plugins/llm-settings/model.ts
+        note: 预设实例化、表单状态与提交模型。
+  - group: 测试与伴生边界
+    attention: skim
+    why: 行为边界和分层由测试与登记文件钉住。
+    files:
+      - path: tests/host-llm.test.ts
+        note: 宿主服务与 Rust 错误映射。
+      - path: tests/llm-settings.test.ts
+        note: 表单、能力和配置持久化行为。
+      - path: src/loader/guard.ts
+        note: 外置插件服务白名单边界。
+      - path: scripts/dep-allowlist.json
+        note: 依赖白名单登记。
+  - group: 文档与机械伴生
+    attention: skim
+    why: 环境豁免与架构现状在此说明。
+    files:
+      - path: docs/environment-independence.md
+        note: 登记远程推理豁免与理由。
+      - path: docs/architecture.md
+        note: 记录模型供给分层。
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: docs/architecture.i18n.yaml
+        note: 双语配对记录。
+reviewGuide:
+  order:
+    - src-tauri/src/config.rs
+    - src-tauri/src/llm.rs
+    - src/host/llm.ts
+    - src/plugins/llm-settings/index.ts
+    - tests/host-llm.test.ts
+  risks:
+    - key 保存在用户 home 的明文 settings.json，仅靠 0600 和脱敏展示降低暴露；产品不得内置或复制密钥。
+    - 远程 HTTP 是登记过的环境无关豁免，新增出口必须继续经 Rust 薄能力层，不能移进前端或外置插件。
+    - 探测 `GET /models` 只能证明协议可达，不完全等价于某个模型可完成 chat、vision、audio 或 tools 请求。
+  acceptance:
+    - item: chat 与 ASR endpoint 可配置、可探测，错误语义明确
+      evidence: tests/host-llm.test.ts 与 tests/llm-settings.test.ts
+    - item: 产品不内置密钥，list 投影脱敏
+      evidence: src-tauri/src/config.rs 与 src-tauri/src/llm.rs
+    - item: 环境豁免与 ADR 登记完成
+      evidence: docs/environment-independence.md 与 .agents/notes/proposed/architecture/2026-09-19-ai-inference-supply.md
+    - item: verify:env-independence、verify:dep-audit、verify:layering 绿
+      evidence: 本仓门禁套件
+verification:
+  - pnpm test（vitest）
+  - cargo test
+  - pnpm verify:env-independence
+  - pnpm verify:dep-audit
+  - pnpm verify:layering
+  - pnpm verify:flow
+  - pnpm verify:commands
+  - pnpm lint:docs
 touches:
   - feature:llm-settings
   - file:src-tauri/src/config.rs
   - file:src-tauri/src/llm.rs
+  - file:src-tauri/src/lib.rs
   - file:src/host/llm.ts
   - file:src/plugins/llm-settings/model.ts
   - file:src/plugins/llm-settings/index.ts

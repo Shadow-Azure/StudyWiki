@@ -1,15 +1,139 @@
 kind: change
 issue: m2-walkthrough-backfill
 title: #60 Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
-functional: |
-  维护者和检视者从任一功能、源文件或变更页都能进入同一套中文讲解：13 个用户可见功能有行为与跨文件步骤，65 个登记源文件有职责与逐段注解，10 个流程 issue 有三层变更叙事；回填验收后不再需要 bootstrap 降级提示。
+scale:
+  files: 100
+  additions: 32600
+  deletions: 15
+feature: |
+  维护者和检视者从任一功能、源文件或变更页都能进入同一套中文讲解：13 个用户可见功能有行为与跨文件步骤，65 个登记源文件有职责与逐段注解，10 个流程 issue 有三层变更叙事；回填验收后不再需要 bootstrap 降级提示。scale 是估算值（files 100、+32600/−15），合入前按最终 diff 校准。
+userFlow:
+  - 无用户面变化（开发流程）
 architectural: |
   回填把 walkthrough 从机制骨架推进到可强制保鲜的五层内容：文件页与 code-map 一一对应，功能页与登记处一一对应，变更页与 active flow issue 一一对应；源码锚点、summary 逐字一致、行覆盖率和 touches 覆盖都由共享库机械校验。
-code: |
-  - 六批文件页覆盖启动装载、宿主服务、agent 线、阅读面、壳与 Rust 侧，优先公共出口、状态机和失败边界。
-  - 13 个功能页用真实源码锚点串起行为路径，并保留到相关文件页的互链。
-  - 10 个变更页从 issue、Agent Note 与历史提交重建功能、架构和代码细节叙事。
-  - 覆盖率校准和 bootstrap 摘除使三档降级缺口转为正式红门禁。
+codeMap:
+  - group: 变更页全覆盖
+    attention: must-read
+    why: 十个 active/done issue 的三层叙事是本 PR 的语义索引。
+    files:
+      - path: walkthrough/changes/m0-01-dev-flow-gates.yaml
+        note: 开发流程门禁。
+      - path: walkthrough/changes/m1-01-excel-viewer.yaml
+        note: Excel 查看器。
+      - path: walkthrough/changes/m1-02-reading-polish.yaml
+        note: 三格式阅读统一。
+      - path: walkthrough/changes/m1-03-excel-editing.yaml
+        note: Excel 页面编辑。
+      - path: walkthrough/changes/m1-native-close-guard.yaml
+        note: 原生关窗守卫。
+      - path: walkthrough/changes/m2-01-ai-inference-supply.yaml
+        note: 模型供给与推理服务。
+      - path: walkthrough/changes/m2-02-agent-host.yaml
+        note: agent 宿主流式缝。
+      - path: walkthrough/changes/m2-03-basic-agent.yaml
+        note: 基础 agent 插件。
+      - path: walkthrough/changes/m2-walkthrough-site.yaml
+        note: 讲解站机制骨架。
+      - path: walkthrough/changes/m2-walkthrough-backfill.yaml
+        note: 本回填自身。
+  - group: 覆盖率与 bootstrap 收口
+    attention: must-read
+    why: 90% 覆盖率和降级摘除把三档 WARN 转成正式红门禁。
+    files:
+      - path: walkthrough/manifest.json
+        note: 定版 90% 阈值并移除 bootstrap 标志。
+      - path: scripts/build-walkthrough.mjs
+        note: 回填后继续执行构建即校验。
+      - path: scripts/build-walkthrough.spec.mjs
+        note: 产物与导航回归。
+  - group: 功能页
+    attention: skim
+    why: 13 个用户可见功能与登记处互链。
+    files:
+      - path: walkthrough/features.yaml
+        note: 功能登记处。
+      - path: walkthrough/features/file-tree.yaml
+        note: 文件树浏览。
+      - path: walkthrough/features/markdown-read.yaml
+        note: Markdown 阅读与编辑。
+      - path: walkthrough/features/excel-view.yaml
+        note: Excel 查看。
+      - path: walkthrough/features/excel-edit.yaml
+        note: Excel 编辑。
+      - path: walkthrough/features/video-play.yaml
+        note: 视频播放。
+      - path: walkthrough/features/multi-window.yaml
+        note: 多窗口与关窗守卫。
+      - path: walkthrough/features/llm-settings.yaml
+        note: 模型 endpoint 配置。
+      - path: walkthrough/features/plugin-load.yaml
+        note: 外置插件装载。
+      - path: walkthrough/features/plugin-manage.yaml
+        note: 外置插件管理。
+      - path: walkthrough/features/agent-chat.yaml
+        note: agent 对话与回合。
+      - path: walkthrough/features/approval-gate.yaml
+        note: 写与越权读审批。
+      - path: walkthrough/features/grep-search.yaml
+        note: agent 检索。
+      - path: walkthrough/features/attachments.yaml
+        note: 附件三源。
+  - group: 文件页代表
+    attention: skim
+    why: 六批文件页按镜像路径覆盖登记源；这里给出每批入口样例。
+    files:
+      - path: walkthrough/files/src/loader/boot.ts.yaml
+        note: 启动与装载批。
+      - path: walkthrough/files/src/host/windows.ts.yaml
+        note: 宿主服务批。
+      - path: walkthrough/files/src/plugins/agent-core/loop.ts.yaml
+        note: agent 线批。
+      - path: walkthrough/files/src/plugins/doc-excel/index.ts.yaml
+        note: 阅读面批。
+      - path: walkthrough/files/src/plugins/app-shell/index.ts.yaml
+        note: 壳与 UI 批。
+      - path: walkthrough/files/src-tauri/src/lib.rs.yaml
+        note: Rust 侧批。
+  - group: 流程文档与机械伴生
+    attention: skim
+    why: 计划、issue 与配对记录支撑回填可对账。
+    files:
+      - path: plans/2026-10-15-walkthrough-backfill.md
+        note: 六批实施计划与验收。
+      - path: .agents/flow/issues/m2-walkthrough-backfill.md
+        note: 回填目标与验收。
+      - path: .agents/flow/issues/m2-walkthrough-site.md
+        note: 骨架 issue 收尾状态。
+      - path: .agents/notes/implemented/process/2026-10-15-walkthrough-site.md
+        note: 覆盖率定版与快照粒度经验。
+      - path: .agents/flow/issues/m2-walkthrough-backfill.i18n.yaml
+        note: 双语配对记录。
+reviewGuide:
+  order:
+    - walkthrough/manifest.json
+    - walkthrough/changes/m2-walkthrough-backfill.yaml
+    - walkthrough/changes/m2-03-basic-agent.yaml
+    - walkthrough/features/agent-chat.yaml
+    - walkthrough/files/src/plugins/agent-core/loop.ts.yaml
+    - scripts/build-walkthrough.spec.mjs
+  risks:
+    - 90% 覆盖率只证明锚点覆盖行数，不证明讲解质量；重复片段或过大视窗仍可能通过门禁。
+    - bootstrap 摘除后，旧的文件页、变更对账和覆盖率 WARN 立即转红；合入前必须按最终 diff 复核 scale 与全部页面。
+    - 文件页 summary 必须与 code-map 登记逐字一致，手工润色一侧会造成静态对账失败。
+  acceptance:
+    - item: 全部门禁绿
+      evidence: pnpm verify:walkthrough、pnpm walkthrough、pnpm test、pnpm verify:docs、pnpm verify:flow
+    - item: bootstrap 摘除后，文件页、变更页与覆盖率三档由警告转全量红并通过
+      evidence: walkthrough/manifest.json 与 node scripts/verify-walkthrough.mjs
+    - item: 功能页、文件页和变更页 diff 通过维护者扫读，讲解“为什么/干什么”
+      evidence: PR 人工 review 结论
+verification:
+  - node scripts/verify-walkthrough.mjs
+  - node scripts/build-walkthrough.mjs
+  - pnpm test（vitest）
+  - pnpm build
+  - pnpm verify:docs
+  - pnpm verify:flow
 touches:
   - feature:file-tree
   - feature:excel-view
@@ -17,3 +141,5 @@ touches:
   - feature:plugin-load
   - feature:agent-chat
   - feature:multi-window
+  - file:walkthrough/manifest.json
+  - file:walkthrough/changes/m2-walkthrough-backfill.yaml

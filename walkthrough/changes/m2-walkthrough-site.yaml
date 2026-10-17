@@ -1,17 +1,95 @@
 kind: change
 issue: m2-walkthrough-site
 title: #58 Walkthrough 工程讲解站：机制骨架
-functional: |
+scale:
+  files: 34
+  additions: 3530
+  deletions: 17
+feature: |
   维护者和检视者可以构建离线讲解站，从总览、架构、功能、文件与变更史互跳；讲解站展示构建期真实源码，并由锚点把注解定位到当前代码，而不是依赖会漂移的复制粘贴。
+userFlow:
+  - 无用户面变化（开发流程）
 architectural: |
   站点源是封闭 schema 的 YAML 五层结构：overview、architecture、features、files、changes。零依赖 YAML 子集解析器、共享校验库、九条门禁与静态构建器共同形成机制骨架；bootstrap 标志先把文件页、变更页和覆盖率缺口降级为 WARN，回填完成后再转硬门禁。
-code: |
-  - `scripts/walkthrough-yaml.mjs` fail-loud 解析仓内受限 YAML 子集，不引入外部 YAML 依赖。
-  - `scripts/walkthrough-lib.mjs` 统一 schema、锚点、文件/功能/变更对账、行覆盖率和 diff 检查。
-  - `scripts/verify-walkthrough.mjs` 输出静态与 PR diff 门禁结果。
-  - `scripts/build-walkthrough.mjs` 渲染多页 file:// 可开的 HTML，并复制非空资源。
+codeMap:
+  - group: 解析与共享规则
+    attention: must-read
+    why: YAML 子集和封闭 schema、锚点、对账规则是全站契约。
+    files:
+      - path: scripts/walkthrough-yaml.mjs
+        note: fail-loud 解析仓内受限 YAML 子集，不引入外部 YAML 依赖。
+      - path: scripts/walkthrough-lib.mjs
+        note: 统一 schema、锚点、文件/功能/变更对账、行覆盖率和 diff 检查。
+      - path: scripts/verify-walkthrough.mjs
+        note: 装配 root、code-map、flow issue 与注入 diff，输出门禁结果。
+  - group: 静态构建器
+    attention: must-read
+    why: 构建成功同时证明锚点可达和产物可离线打开。
+    files:
+      - path: scripts/build-walkthrough.mjs
+        note: 渲染多页 file:// 可开的 HTML，并复制非空资源。
+      - path: walkthrough/overview.yaml
+        note: 总览页源。
+      - path: walkthrough/architecture.yaml
+        note: 架构页源。
+  - group: 门禁接线与测试
+    attention: skim
+    why: 新检查接入既有编排，规则路径由 spec 钉住。
+    files:
+      - path: scripts/run-gates.mjs
+        note: 登记 verify 与 build walkthrough 门禁。
+      - path: scripts/route-gates.mjs
+        note: 按 walkthrough 改动推荐门禁。
+      - path: scripts/walkthrough-lib.spec.mjs
+        note: schema、锚点、对账与 diff 规则用例。
+      - path: scripts/build-walkthrough.spec.mjs
+        note: 构建产物与导航用例。
+      - path: scripts/ci-wiring.spec.mjs
+        note: CI 接线回归。
+  - group: 文档与站点骨架
+    attention: skim
+    why: 契约 home 与命令登记供维护者查找。
+    files:
+      - path: walkthrough/README.md
+        note: schema 与十条门禁契约。
+      - path: AGENTS.md
+        note: 开发命令清单登记。
+      - path: docs/AGENTS.md
+        note: 文档层级与特殊例外登记。
+      - path: package.json
+        note: walkthrough 与 verify 命令入口。
+reviewGuide:
+  order:
+    - walkthrough/README.md
+    - scripts/walkthrough-yaml.mjs
+    - scripts/walkthrough-lib.mjs
+    - scripts/build-walkthrough.mjs
+    - scripts/verify-walkthrough.mjs
+  risks:
+    - 内容快照锚点按 trimEnd 后的首次命中定位；重复片段可能绑到同一文件更早位置，快照必须取语义完整边界。
+    - bootstrap 只降级文件页、变更对账和覆盖率，schema、锚点、功能登记、构建与 diff 仍然红；绿灯不能掩盖 WARN 缺口。
+    - 生成器必须保持 file:// 相对链接与资源复制可用，绝对路径或空资源处理会破坏离线产物。
+  acceptance:
+    - item: 解析器、规则库、校验器和构建器各有 spec，门禁规则有代表路径用例
+      evidence: scripts/*.walkthrough*.spec.mjs、scripts/ci-wiring.spec.mjs
+    - item: pnpm test、pnpm verify:docs、pnpm verify:flow 全绿
+      evidence: 本仓门禁套件
+    - item: pnpm walkthrough 构建成功，产物 file:// 下总览→架构→导航互链走通
+      evidence: scripts/build-walkthrough.spec.mjs 与 pnpm walkthrough
+    - item: 命令与 CI 登记新鲜
+      evidence: pnpm verify:commands 与 .github/workflows/ci.yml
+verification:
+  - pnpm test（vitest）
+  - pnpm walkthrough
+  - pnpm verify:walkthrough
+  - pnpm verify:docs
+  - pnpm verify:flow
+  - pnpm verify:commands
 touches:
   - file:scripts/walkthrough-yaml.mjs
   - file:scripts/walkthrough-lib.mjs
   - file:scripts/verify-walkthrough.mjs
   - file:scripts/build-walkthrough.mjs
+  - file:scripts/run-gates.mjs
+  - file:scripts/route-gates.mjs
+  - file:walkthrough/README.md

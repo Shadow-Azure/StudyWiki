@@ -1,16 +1,124 @@
 kind: change
 issue: m2-03-basic-agent
-title: #56 基础 agent 插件
-functional: |
+title: #51 基础 agent 插件
+scale:
+  files: 99
+  additions: 10236
+  deletions: 1274
+feature: |
   用户在右栏与 agent 多轮对话；agent 能读取活动库内文件、用打包 ripgrep 检索、写新笔记或按 old/new 编辑文件。写操作与越权读取按 ask/auto 审批，人或 Guardian 给出决定；历史会话保存为 JSONL，重开后可恢复继续。
+userFlow:
+  - 打开右栏 agent，选择带 tools 能力的模型。
+  - 让 agent 读取或检索活动库内文件；越授权集合的读取会进入审批。
+  - 让 agent 写新笔记或按 old/new 编辑文件；在请求批准或帮我批准模式中给出决定。
+  - 关闭后重开会话，恢复 JSONL 历史并继续追问。
 architectural: |
   Agent 拆成无 UI 的 `agent-core` 服务插件与右栏 `app-agent` UI 插件：core 提供 `ctx.agent` 的回合状态机、四工具、审批、会话持久化和 compaction，UI 只消费快照与审批接管。工具协议使用 OpenAI 原生 function calling，`app-chat` 被统一取代。
-code: |
-  - `src/plugins/agent-core/loop.ts` 组装 system prompt、工具声明与历史，串行执行 tool calls，并把只有 finish 的完整回答入账。
-  - `src/plugins/agent-core/tools.ts` 实现 read/grep/write/edit，生成有界写预览，并把越权读取升级为审批。
-  - `src/plugins/agent-core/approval.ts` 按 ask/auto 路由，结合 Guardian 审查和取消/切回恢复语义。
-  - `src-tauri/src/grep.rs` 以 pinned ripgrep sidecar 执行 `rg --json`，套用 raw、超时与 limit 预算。
-  - `src/plugins/agent-core/session.ts` 与 service 负责 JSONL 编解码、崩溃尾容错、历史恢复和压缩视图。
+codeMap:
+  - group: 回合与持久化状态机
+    attention: must-read
+    why: 串行 tool loop、历史模型、JSONL 恢复和 compaction 决定 agent 是否可信。
+    files:
+      - path: src/plugins/agent-core/loop.ts
+        note: 组装 system prompt、工具声明和历史，串行执行 tool calls，只有完整回答入账。
+      - path: src/plugins/agent-core/service.ts
+        note: 暴露 ctx.agent 服务，管理会话、审批模式、停止和热重载清理。
+      - path: src/plugins/agent-core/session.ts
+        note: 校验并编解码 JSONL，容忍崩溃尾部损坏，恢复消息与 log-only 事件。
+  - group: 工具与审批边界
+    attention: must-read
+    why: 四工具、越权读取升级和写路径授权是安全核心。
+    files:
+      - path: src/plugins/agent-core/tools.ts
+        note: 实现 read/grep/write/edit，生成有界预览，并把越界读取升级为审批。
+      - path: src/plugins/agent-core/approval.ts
+        note: 按 ask/auto 路由，处理 Guardian 超时、审查、取消与切回恢复。
+      - path: src-tauri/src/grep.rs
+        note: 以 pinned ripgrep sidecar 执行 rg --json，套用 raw、超时和 limit 预算。
+      - path: src/host/files.ts
+        note: 收窄 read、grep、session event 等命令的宿主面。
+  - group: UI 插件与模块切换
+    attention: must-read
+    why: 新右栏入口只消费快照，接管旧 app-chat 的能力。
+    files:
+      - path: src/plugins/app-agent/index.ts
+        note: 注册 sidebar.right，管理会话、输入、审批接管和停止。
+      - path: src/plugins/app-agent/render.ts
+        note: 渲染流式正文、工具结果和审批卡。
+      - path: src/plugins/app-agent/attachments.ts
+        note: 处理多模态附件输入。
+      - path: src/loader/table.ts
+        note: 模块表加入 app-agent 并移除 app-chat。
+  - group: ripgrep 供给
+    attention: must-read
+    why: 环境无关性要求 pinned sidecar 按 target 供给并进入产物。
+    files:
+      - path: scripts/provision-ripgrep.mjs
+        note: 按 Rust target 校验并复制 pinned ripgrep sidecar。
+      - path: scripts/ripgrep-manifest.json
+        note: 记录版本与平台产物指纹。
+      - path: src-tauri/build.rs
+        note: 构建期供给 sidecar。
+      - path: src-tauri/tauri.conf.json
+        note: 把 sidecar 纳入打包资源。
+  - group: 测试
+    attention: skim
+    why: loop、工具、审批、会话和 UI 行为由测试钉住。
+    files:
+      - path: tests/agent-loop.test.ts
+        note: 多轮、tool call 与半截回答语义。
+      - path: tests/agent-tools.test.ts
+        note: read/grep/write/edit 与路径边界。
+      - path: tests/agent-approval.test.ts
+        note: ask/auto、Guardian 和超时取消。
+      - path: tests/agent-session.test.ts
+        note: JSONL 持久化与恢复。
+      - path: tests/app-agent.test.ts
+        note: 右栏交互与审批接管。
+      - path: src-tauri/tests/provisioned_sidecar.rs
+        note: sidecar 可执行与搜索集成。
+  - group: 文档与机械伴生
+    attention: skim
+    why: 插件用法、架构和生成区随 agent 面更新。
+    files:
+      - path: docs/plugins/agent.md
+        note: agent 插件能力与使用边界。
+      - path: docs/environment-independence.md
+        note: pinned ripgrep 供给约束。
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: pnpm-lock.yaml
+        note: 依赖锁文件。
+reviewGuide:
+  order:
+    - src/plugins/agent-core/loop.ts
+    - src/plugins/agent-core/tools.ts
+    - src/plugins/agent-core/approval.ts
+    - src/plugins/agent-core/session.ts
+    - src/plugins/app-agent/index.ts
+    - src-tauri/src/grep.rs
+  risks:
+    - Guardian 审查有 90 秒超时和最多 3 次尝试；取消或切回必须停止旧审查并清空中断期请求，避免决定错挂到新回合。
+    - auto 模式只放宽授权集合内的读取；write/edit 与越权读永远走审批，路径解析和回退不能绕过 workspace 根。
+    - ripgrep sidecar 必须按 Rust target 固定版本并随包分发；遗漏目标或改用系统 rg 会破坏环境无关性。
+  acceptance:
+    - item: 与 agent 多轮对话可用；read/grep 能检索库与 wiki，write/edit 能落笔记
+      evidence: tests/agent-loop.test.ts 与 tests/agent-tools.test.ts
+    - item: 会话落盘为 JSONL，历史会话可恢复加载，发送新消息后继续
+      evidence: tests/agent-session.test.ts
+    - item: 写操作有请求批准/帮我批准；越授权读取经会话级审批，写入任何模式不可越界
+      evidence: tests/agent-approval.test.ts 与 tests/agent-tools.test.ts
+    - item: pnpm test、cargo test 与分层、环境无关性门禁绿
+      evidence: 本仓门禁套件
+verification:
+  - pnpm test（vitest）
+  - cargo test
+  - pnpm verify:layering
+  - pnpm verify:env-independence
+  - pnpm verify:dep-audit
+  - pnpm verify:commands
+  - pnpm verify:flow
+  - pnpm lint:docs
 touches:
   - feature:agent-chat
   - feature:approval-gate
@@ -21,3 +129,5 @@ touches:
   - file:src/plugins/agent-core/approval.ts
   - file:src/plugins/agent-core/service.ts
   - file:src/plugins/agent-core/session.ts
+  - file:src/plugins/app-agent/index.ts
+  - file:src-tauri/src/grep.rs

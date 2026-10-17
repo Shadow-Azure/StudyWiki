@@ -1,19 +1,114 @@
 kind: change
 issue: m2-02-agent-host
 title: #50 agent 宿主能力
-functional: |
+scale:
+  files: 44
+  additions: 5022
+  deletions: 114
+feature: |
   内置与外置插件可以在右栏发起流式对话，逐步看到回答与 reasoning，能停止或重试；用户可粘贴或拖入图片、音频组合进多模态请求，超限或模型能力不足会得到明确错误。
+userFlow:
+  - 打开右栏 chat，选择支持所需能力的模型。
+  - 发送消息，逐块查看正文和 reasoning。
+  - 需要时停止生成；失败请求可重试。
+  - 粘贴或拖入图片、音频，与文本组成多模态消息；能力不足时收到明确错误。
 architectural: |
-  推理仍从 Rust 唯一联网出口发出；流式 chunk 经每次 invoke 独立的 IPC Channel 隔离到窗口，宿主 `llm-stream` 负责唯一 chunk 到消息快照的组装。外置插件只能经 guard 收窄的 `chatStream`/workspace 服务面访问宿主能力，不能直接触达 Tauri。
-code: |
-  - `src-tauri/src/llm_stream.rs` 手写 SSE 行解析，区分传输 `[DONE]` 与 finish_reason，处理 usage、错误和显式中止。
-  - `src/host/llm-stream.ts` 定义 chunk 词表、FIFO 队列和 `ChatStreamHandle.snapshot()`，半截正文只保留界面不入后续上下文。
-  - `src/host/slots.ts` 定义 slot 类型与注册 API，`sidebar.right` 由 shell mount、app-agent register。
-  - `src/host/llm.ts` 在 `chatStream` 入口按模型能力门禁 tools 与 vision/audio，不满足时返回 `UNSUPPORTED_CONTENT`。
+  推理仍从 Rust 唯一联网出口发出；流式 chunk 经每次 invoke 独立的 IPC Channel 隔离到窗口，宿主 `llm-stream` 负责唯一 chunk 到消息快照的组装。外置插件只能经 guard 收窄的 `chatStream`/workspace 服务面访问宿主能力，不能直接触达 Tauri。右栏 UI 后续由基础 agent 的 `app-agent` 接管，本 PR 立起的是宿主缝。
+codeMap:
+  - group: Rust 流式出口
+    attention: must-read
+    why: SSE 解析、Channel 推送、显式中止与错误语义是可靠流的基础。
+    files:
+      - path: src-tauri/src/llm_stream.rs
+        note: 手写 SSE 行解析，区分传输 DONE 与 finish_reason，处理 usage、错误和中止。
+      - path: src-tauri/src/llm.rs
+        note: chatStream 入口组装请求，校验模型能力并维护流句柄。
+      - path: src-tauri/src/windows.rs
+        note: 为每次 invoke 建立窗口隔离的 IPC Channel。
+  - group: 宿主快照与槽位
+    attention: must-read
+    why: FIFO 组装、能力门禁和 guard 白名单是插件可用的最小宿主面。
+    files:
+      - path: src/host/llm-stream.ts
+        note: 定义 chunk 词表、FIFO 队列和只读 ChatStreamHandle.snapshot。
+      - path: src/host/llm.ts
+        note: 按模型能力门禁 tools、vision 与 audio，返回 UNSUPPORTED_CONTENT。
+      - path: src/host/slots.ts
+        note: 定义 slot 注册 API，新增 sidebar.right。
+      - path: src/loader/guard.ts
+        note: 只把收窄后的 llm 服务暴露给外置插件。
+  - group: chat UI 与附件
+    attention: must-read
+    why: 流式渲染、停止重试和多模态输入是用户直接触发的边界。
+    files:
+      - path: src/plugins/app-chat/index.ts
+        note: 注册右栏 chat，管理模型选择、发送、停止和重试。
+      - path: src/plugins/app-chat/render.ts
+        note: rAF 渲染正文与 reasoning。
+      - path: src/plugins/app-chat/attachments.ts
+        note: 处理粘贴和拖入的 image/audio 三源契约。
+  - group: 测试
+    attention: skim
+    why: 流、槽位、守卫和 UI 行为由测试钉住。
+    files:
+      - path: tests/host-llm-stream.test.ts
+        note: chunk 组装、快照与中止。
+      - path: tests/app-chat.test.ts
+        note: chat 交互与多模态输入。
+      - path: tests/guard.test.ts
+        note: 外置插件服务收窄。
+      - path: tests/host-workspace-slots.test.ts
+        note: 槽位与活动文件上下文。
+  - group: 文档与机械伴生
+    attention: skim
+    why: 插件契约和生成区随宿主面更新。
+    files:
+      - path: docs/plugins/contract.md
+        note: 登记外置插件可见的 chat 与 workspace 缝。
+      - path: docs/architecture.md
+        note: 记录流式推理分层。
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: docs/architecture.i18n.yaml
+        note: 双语配对记录。
+reviewGuide:
+  order:
+    - src-tauri/src/llm_stream.rs
+    - src/host/llm-stream.ts
+    - src/host/llm.ts
+    - src/host/slots.ts
+    - src/plugins/app-chat/index.ts
+    - tests/host-llm-stream.test.ts
+  risks:
+    - 每 invoke 的 IPC Channel 必须绑定同一窗口和句柄；迟到 chunk 或 send 失败需要关闭流，不能串到其他窗口。
+    - 只有带 finish_reason 的完整回答可进入历史；错误或停止产生的半截正文留在界面，不能污染下一轮上下文。
+    - 外置插件只能消费收窄后的 llm 与 workspace 面；扩大白名单会破坏 `src/plugins/` 不触达 Tauri 的分层纪律。
+  acceptance:
+    - item: 外置插件经宿主服务推理、渲染 chat 并读取上下文，不触达 @tauri-apps/*
+      evidence: tests/guard.test.ts 与 pnpm verify:layering
+    - item: 流式回答、停止、失败重试与能力错误可见
+      evidence: tests/app-chat.test.ts 与 tests/host-llm-stream.test.ts
+    - item: 粘贴或拖入 image/audio 组成多模态请求，路径与 inline 边界明确
+      evidence: tests/app-chat.test.ts
+    - item: verify:layering、verify:env-independence、verify:dep-audit 绿
+      evidence: 本仓门禁套件
+verification:
+  - pnpm test（vitest）
+  - cargo test
+  - pnpm verify:layering
+  - pnpm verify:env-independence
+  - pnpm verify:dep-audit
+  - pnpm verify:flow
+  - pnpm verify:commands
+  - pnpm lint:docs
 touches:
   - feature:plugin-load
   - feature:plugin-manage
   - feature:agent-chat
   - feature:attachments
   - file:src-tauri/src/llm_stream.rs
+  - file:src-tauri/src/llm.rs
+  - file:src-tauri/src/windows.rs
   - file:src/host/llm-stream.ts
+  - file:src/host/llm.ts
+  - file:src/host/slots.ts

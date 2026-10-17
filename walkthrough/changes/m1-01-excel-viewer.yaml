@@ -1,15 +1,100 @@
 kind: change
 issue: m1-01-excel-viewer
 title: #41 excel 查看器
-functional: |
+scale:
+  files: 58
+  additions: 3832
+  deletions: 67
+feature: |
   用户可以在文件树点开 `.xlsx`，按工作表切换阅读；表格支持虚拟滚动、常用字体、填充、边框、对齐、数字/日期格式、合并单元格、列宽和空表提示。不支持的 csv、老式 `.xls`、`.xlsm` 保留在树中并给出明确反馈。
+userFlow:
+  - 在文件树点击 `.xlsx` 文件，主区出现表格视图并显示首个工作表。
+  - 点击顶部工作表标签切换 sheet。
+  - 上下滚动大表，只渲染可视行窗口，样式与合并单元格保持。
+  - 点击 `.csv` 或老式 `.xls`，主区显示不支持预览的提示。
 architectural: |
   xlsx 语义归前端：ExcelJS workbook 是唯一读写模型；Rust 只负责字节读写、路径授权和原子落盘。表格能力独立为第七个宿主服务 `ctx.excel`，人与后续 AI 能力共用同一读写契约。
-code: |
-  - `src/host/excel.ts` 封装解析、序列化、稳定错误文案和声明维度单元格上限。
-  - `src/host/files.ts` 提供二进制读写桥，Rust 侧经 raw IPC 处理 UTF-8 路径 header 与原子写。
-  - `src/plugins/doc-excel/model.ts` 把 worksheet 投影成样式、合并和虚拟滚动模型。
-  - `src/plugins/doc-excel/index.ts` 渲染多 sheet 视图，并把加载、错误与不支持格式状态接回壳层。
+codeMap:
+  - group: 表格服务与模型
+    attention: must-read
+    why: 读写契约、渲染模型与 Rust 字节边界是本期全部新语义。
+    files:
+      - path: src/host/excel.ts
+        note: 封装解析、序列化、稳定错误文案和声明维度单元格上限。
+      - path: src/host/files.ts
+        note: 二进制读写桥，raw IPC 承载字节与 UTF-8 路径 header。
+      - path: src/plugins/doc-excel/model.ts
+        note: 把 worksheet 投影成样式、合并和虚拟滚动模型。
+      - path: src/plugins/doc-excel/index.ts
+        note: 渲染多 sheet 视图，加载、错误与不支持格式状态接回壳层。
+      - path: src-tauri/src/lib.rs
+        note: raw IPC 命令与扩展名分派，EXCEL_EXTS 只含 xlsx。
+  - group: 接入面
+    attention: skim
+    why: 文件树、壳层与类型声明的挂接改动。
+    files:
+      - path: src/loader/table.ts
+        note: 模块表登记 doc-excel 插件。
+      - path: src/plugins/view-filetree/index.ts
+        note: 文件树识别 excel 类型。
+      - path: src/plugins/app-shell/index.ts
+        note: 不支持格式的反馈落壳层主区。
+      - path: src/types.ts
+        note: FileNode.kind 增加 excel。
+      - path: src/bootstrap.ts
+        note: excel 宿主服务装配。
+  - group: 依赖与门禁
+    attention: skim
+    why: exceljs 进依赖白名单，环境无关性由门禁兜底。
+    files:
+      - path: package.json
+        note: exceljs 进 dependencies，构建期打包。
+      - path: scripts/dep-allowlist.json
+        note: 依赖白名单登记。
+      - path: scripts/verify-dep-audit.mjs
+        note: 白名单 diff 与 node: 扫描门禁。
+  - group: 测试
+    attention: skim
+    why: 模型、服务与视图行为由 vitest 钉住。
+    files:
+      - path: tests/excel-service.test.ts
+        note: 宿主服务解析与错误文案。
+      - path: tests/doc-excel-model.test.ts
+        note: 渲染模型投影。
+      - path: tests/doc-excel.test.ts
+        note: 多 sheet 视图与状态。
+  - group: 机械伴生
+    attention: skip
+    why: null
+    files:
+      - path: pnpm-lock.yaml
+        note: 锁文件。
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: docs/architecture.i18n.yaml
+        note: 配对记录，代表全部 i18n 伴生文件。
+reviewGuide:
+  order:
+    - src/host/excel.ts
+    - src/plugins/doc-excel/model.ts
+    - src/plugins/doc-excel/index.ts
+    - src/host/files.ts
+    - src-tauri/src/lib.rs
+  risks:
+    - 大 workbook 全量驻留前端内存，单元格上限只保护渲染与模型驻留，不覆盖解析内存峰值。
+    - ExcelJS 增大 bundle 体积，构建期打包由环境无关门禁兜底。
+  acceptance:
+    - item: 打开 .xlsx 可逐 sheet 阅读且内容完整
+      evidence: tests/doc-excel.test.ts 与 tests/doc-excel-model.test.ts
+    - item: pnpm verify:env-independence 与 pnpm verify:dep-audit 绿
+      evidence: scripts/verify-dep-audit.mjs 与 scripts/dep-allowlist.json 登记
+verification:
+  - pnpm test（vitest）
+  - cargo test
+  - pnpm verify:env-independence
+  - pnpm verify:dep-audit
+  - pnpm verify:layering
+  - pnpm verify:docs
 touches:
   - feature:excel-view
   - feature:file-tree
