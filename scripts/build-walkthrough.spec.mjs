@@ -512,13 +512,15 @@ touches: []
     expect(review).toContain("export const changed = 2;");
     expect(review).toContain("这是本次修改的那行。");
     expect(review).toContain("attention-must-read");
+    // 目录行聚合 attention 计数徽章（颜色与文件徽章一致）
+    expect(review).toContain('attention-badge attention-must-read">1 must-read</span>');
     // 分组图例在路径树上方：组名、attention 与 why 保留，但不作为文件容器。
     expect(review.indexOf('<div class="tree-legend">')).toBeGreaterThan(-1);
     expect(review.indexOf("核心变更")).toBeLessThan(review.indexOf('<section class="review-tree"'));
 
     // 树目录默认展开；每个文件 details 默认收起。
     expect(review).toContain('<section class="review-tree">');
-    expect(review).toContain('<details class="review-dir" open><summary>src/ (2)</summary>');
+    expect(review).toContain('<details class="review-dir" open><summary>src/ (2)');
     expect(review).toContain('<details class="review-dir review-unclassified" open><summary>未归类 (2)</summary>');
     expect(review).toMatch(/<details class="review-file attention-must-read"><summary>/);
     expect(review).toMatch(/<details class="review-file attention-skim"><summary>/);

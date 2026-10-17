@@ -828,13 +828,31 @@ function renderReviewFile(path, metadata, site, root) {
   return `<details class="review-file${attentionClass}"><summary><span class="file-head">${href}<span class="file-chips"><span class="status-chip">${escapeHtml(status)}</span><span class="stat-chip">${escapeHtml(stats)}</span>${attention}</span></span>${reviewFileSummaryLines(metadata)}</summary><div class="review-file-body">${body}</div></details>`;
 }
 
-/** 渲染默认展开的目录 details 与其下文件；目录 summary 只显示路径与文件数。 */
+/** 渲染默认展开的目录 details 与其下文件；目录 summary 显示路径、文件数与 attention 计数徽章。 */
 function renderReviewDirTree(node, metadata, site, root) {
   const count = (current) => current.files.filter((file) => metadata.get(file).file).length +
     [...current.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+  const attentionCounts = (current) => {
+    const totals = new Map();
+    const add = (attention) => totals.set(attention, (totals.get(attention) ?? 0) + 1);
+    for (const file of current.files) {
+      if (metadata.get(file).file) add(metadata.get(file).group.attention);
+    }
+    for (const child of current.dirs.values()) {
+      for (const [attention, value] of attentionCounts(child)) totals.set(attention, (totals.get(attention) ?? 0) + value);
+    }
+    return totals;
+  };
+  const attentionChips = (current) => {
+    const counts = attentionCounts(current);
+    return ["must-read", "skim", "skip"]
+      .filter((attention) => (counts.get(attention) ?? 0) > 0)
+      .map((attention) => `<span class="attention-badge attention-${attention}">${counts.get(attention)} ${attention}</span>`)
+      .join("");
+  };
   const render = (current) => {
     const dirs = [...current.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) =>
-      `<details class="review-dir" open><summary>${escapeHtml(name)}/ (${count(child)})</summary>${render(child)}</details>`).join("");
+      `<details class="review-dir" open><summary>${escapeHtml(name)}/ (${count(child)})${attentionChips(child)}</summary>${render(child)}</details>`).join("");
     const files = current.files
       .filter((file) => metadata.get(file).file)
       .sort()
