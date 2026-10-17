@@ -9,6 +9,25 @@ feature: |
   维护者和检视者从任一功能、源文件或变更页都能进入同一套中文讲解：13 个用户可见功能有行为与跨文件步骤，65 个登记源文件有职责与逐段注解，10 个流程 issue 有三层变更叙事；回填验收后不再需要 bootstrap 降级提示。scale 是估算值（files 100、+32600/−15），合入前按最终 diff 校准。
 userFlow:
   - 无用户面变化（开发流程）
+design: |
+  ### 问题与约束
+
+  AI 产出代码的速度远超维护者读码与检视速度；检视需要在"不默认信任生成代码"的前提下快速建立变更认知。硬约束：全离线、零运行时依赖、下限可机械看护、讲解质量归人扫读。
+
+  ### 候选方案
+
+  - 全自动 AI Wiki（DeepWiki 式）：官方文档自证漏目录漏组件，讲解不可信且无人工确认状态
+  - SaaS 评审工具（Swimm/CodeRabbit 式）：私有格式 + 在线依赖，违反离线硬约束；只借鉴其门禁与分诊语义
+  - IDE 内 tour（CodeTour 式）：锚点机制优秀但绑定 IDE，无站点聚合与归档
+  - 本仓方案：YAML 源入库 + 内容快照锚点 + 门禁 + 多页静态站
+
+  ### 选型与理由
+
+  YAML 源入库：可 diff、可门禁、可版本化；内容快照只用于定位，页面展示构建期从真实源码拉取的当前代码——代码展示层不可能陈旧；锚点按整行 trim 归一化，容忍块标量剥缩进。
+
+  ### 关键权衡与边界
+
+  牺牲了 before 视图（真 diff 页合入后转为归档）与在线协作；讲解质量无法机械保证——由生成 skill 纪律与维护者扫读兜底，讲错的内容靠人工覆写 YAML 修正。
 architectural: |
   回填把 walkthrough 从机制骨架推进到可强制保鲜的五层内容：文件页与 code-map 一一对应，功能页与登记处一一对应，变更页与 active flow issue 一一对应；源码锚点、summary 逐字一致、行覆盖率和 touches 覆盖都由共享库机械校验。
 codeMap:
@@ -45,6 +64,19 @@ codeMap:
       - path: scripts/build-walkthrough.mjs
         note: 回填后继续执行构建即校验。
         changes:
+          - snippet: |
+              const codeSection = `<section id="code-changes"><h2>代码变更（路径树）</h2>${renderReviewLegend(groups)}${renderReviewFileTree(diff.files, groups, byPath, site, root, restHtml)}</section>`;
+            note: |
+              代码变更区加 code-changes 锚点支持深链直达。
+          - snippet: |
+              <div class="summary-line"><span class="summary-label">文件主要实现：</span><span class="summary-text">${escapeHtml(metadata.entry.note)}</span></div>
+              <div class="summary-line"><span class="summary-label">当前PR修改点：</span><span class="summary-text">${escapeHtml(changeSummary)}</span></div>
+            note: |
+              文件行双行摘要改「文件主要实现 / 当前PR修改点」固定前缀，收起态可见。
+          - snippet: |
+              const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
+            note: |
+              可选 design 字段（方案设计说明）渲染为独立章节；未写则不渲染——schema 可选语义，内容质量由生成 skill 约束。
           - snippet: |
               /**
                * 构建 walkthrough 多页静态站。
@@ -766,6 +798,18 @@ codeMap:
         note: 覆盖率与对账门禁的自测试更新。
       - path: plans/2026-10-15-walkthrough-backfill.md
         note: 回填实施计划执行蓝本。
+  - group: 变更页生成 skill
+    attention: skim
+    why: 叙事质量生成规范固化为 skill，供后续 PR 复用。
+    files:
+      - path: .agents/skills/walkthrough-change-metadata-gen/SKILL.md
+        note: 生成纪律入口：硬性工作流、质量红线、自检与分册路由。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/narrative-guide.md
+        note: 四层叙事写作规范与通俗性标准。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/diagram-guide.md
+        note: SVG 图示类型选择、制作标准与引用规则。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/code-map-guide.md
+        note: attention 分诊、逐段注解与覆盖率口径。
 reviewGuide:
   order:
     - walkthrough/manifest.json
