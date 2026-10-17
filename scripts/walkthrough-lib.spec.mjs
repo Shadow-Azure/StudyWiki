@@ -8,10 +8,13 @@ import {
   checkAnchors,
   checkChanges,
   checkDiff,
+  checkDiffScale,
   checkFilePages,
   checkFeatures,
   checkLineCoverage,
   locateSnippet,
+  MECHANICAL_PATTERNS,
+  parseNumstat,
   parseSite,
   validateSchema,
 } from "./walkthrough-lib.mjs";
@@ -101,9 +104,30 @@ function validChange() {
     kind: "change",
     issue: "demo-change",
     title: "Demo change",
-    functional: "功能行为变化。\n",
+    scale: { files: 2, additions: 15, deletions: 8 },
+    feature: "功能行为变化。\n",
+    userFlow: ["打开演示页面", "确认演示行为"],
     architectural: "无。\n",
-    code: "新增常量。\n",
+    codeMap: [
+      {
+        group: "实现",
+        attention: "must-read",
+        why: "核心变化",
+        files: [{ path: "src/demo.ts", note: "新增常量" }],
+      },
+      {
+        group: "机械",
+        attention: "skip",
+        why: null,
+        files: [{ path: "pnpm-lock.yaml", note: "锁文件" }],
+      },
+    ],
+    reviewGuide: {
+      order: ["先读变更地图"],
+      risks: ["风险一"],
+      acceptance: [{ item: "演示可用", evidence: "pnpm exec vitest 通过" }],
+    },
+    verification: ["pnpm exec vitest run scripts/walkthrough-lib.spec.mjs"],
     touches: ["file:src/demo.ts", "file:src-tauri/src/main.rs", "feature:demo"],
   };
 }
@@ -220,12 +244,40 @@ function writeChange(root) {
     `kind: change
 issue: demo-change
 title: Demo change
-functional: |
+scale:
+  files: 2
+  additions: 15
+  deletions: 8
+feature: |
   功能行为变化。
+userFlow:
+  - 打开演示页面
+  - 确认演示行为
 architectural: |
   无。
-code: |
-  新增常量。
+codeMap:
+  - group: 实现
+    attention: must-read
+    why: 核心变化
+    files:
+      - path: src/demo.ts
+        note: 新增常量
+  - group: 机械
+    attention: skip
+    why: null
+    files:
+      - path: pnpm-lock.yaml
+        note: 锁文件
+reviewGuide:
+  order:
+    - 先读变更地图
+  risks:
+    - 风险一
+  acceptance:
+    - item: 演示可用
+      evidence: pnpm exec vitest 通过
+verification:
+  - pnpm exec vitest run scripts/walkthrough-lib.spec.mjs
 touches: [file:src/demo.ts, file:src-tauri/src/main.rs, feature:demo]
 `,
   );
@@ -361,6 +413,201 @@ describe("walkthrough-lib", () => {
     expect(errors).toContain(
       "walkthrough/overview.yaml sections[0]: generated 仅 architecture 支持",
     );
+  });
+
+  it("change 页封闭 schema：旧 functional/code 字段红，新必填字段缺失红", () => {
+    const site = emptySite();
+    site.changes.set("demo-change", validChange());
+    expect(validateSchema(site)).toEqual([]);
+
+    const legacy = emptySite();
+    legacy.changes.set("demo-change", {
+      kind: "change",
+      issue: "demo-change",
+      title: "Demo change",
+      functional: "功能行为变化。\n",
+      architectural: "无。\n",
+      code: "新增常量。\n",
+      touches: ["file:src/demo.ts"],
+    });
+    const errors = validateSchema(legacy);
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: 未知键 functional",
+    );
+    expect(errors).toContain("walkthrough/changes/demo-change.yaml: 未知键 code");
+    expect(errors).toContain("walkthrough/changes/demo-change.yaml: scale 必须是 map");
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: feature 必须是非空字符串",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: userFlow 必须是非空字符串数组",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: codeMap 必须是非空数组",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: reviewGuide 必须是 map",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: verification 必须是非空字符串数组",
+    );
+  });
+
+  it("change 页校验 scale 形状：键封闭且三项都是非负整数", () => {
+    const site = emptySite();
+    site.changes.set("demo-change", {
+      ...validChange(),
+      scale: { files: -1, additions: "15", extra: 1 },
+    });
+    const errors = validateSchema(site);
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml scale: 未知键 extra",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml scale: files 必须是非负整数",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml scale: additions 必须是非负整数",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml scale: deletions 必须是非负整数",
+    );
+
+    const badUserFlow = emptySite();
+    badUserFlow.changes.set("demo-change", { ...validChange(), userFlow: [] });
+    expect(validateSchema(badUserFlow)).toContain(
+      "walkthrough/changes/demo-change.yaml: userFlow 必须是非空字符串数组",
+    );
+  });
+
+  it("codeMap 校验 attention 封闭集合、why 可空与机械路径不得 must-read", () => {
+    const make = (codeMap) => {
+      const site = emptySite();
+      site.changes.set("demo-change", { ...validChange(), codeMap });
+      return validateSchema(site);
+    };
+
+    expect(
+      make([
+        {
+          group: "实现",
+          attention: "deep-dive",
+          why: "w",
+          files: [{ path: "src/a.ts", note: "n" }],
+        },
+      ]),
+    ).toContain(
+      "walkthrough/changes/demo-change.yaml codeMap[0]: attention 必须是 must-read|skim|skip 之一",
+    );
+
+    for (const mechanical of [
+      "docs/commands.md",
+      "docs/commands.en.md",
+      "src/demo.i18n.yaml",
+      "pnpm-lock.yaml",
+    ]) {
+      expect(
+        make([
+          {
+            group: "机械",
+            attention: "must-read",
+            why: "w",
+            files: [{ path: mechanical, note: "n" }],
+          },
+        ]),
+      ).toContain(
+        `walkthrough/changes/demo-change.yaml codeMap[0] files[0]: 机械变更不得标 must-read: ${mechanical}`,
+      );
+    }
+
+    // 机械路径 skim/skip 合法；why 允许 null；.github/workflows/ 不是机械路径。
+    expect(
+      make([
+        {
+          group: "机械",
+          attention: "skim",
+          why: null,
+          files: [{ path: "docs/commands.md", note: "n" }],
+        },
+        {
+          group: "流水线",
+          attention: "must-read",
+          why: "w",
+          files: [{ path: ".github/workflows/ci.yml", note: "n" }],
+        },
+      ]),
+    ).toEqual([]);
+
+    // why 必填但可空；files 项键封闭。
+    const missingWhy = make([
+      { group: "g", attention: "skim", files: [{ path: "src/a.ts", note: "n" }] },
+    ]);
+    expect(missingWhy).toContain(
+      "walkthrough/changes/demo-change.yaml codeMap[0]: why 必须是字符串或 null",
+    );
+    const badFile = make([
+      {
+        group: "g",
+        attention: "skim",
+        why: "w",
+        files: [{ path: "src/a.ts", note: "n", extra: 1 }],
+      },
+    ]);
+    expect(badFile).toContain(
+      "walkthrough/changes/demo-change.yaml codeMap[0] files[0]: 未知键 extra",
+    );
+  });
+
+  it("reviewGuide 校验 order/risks/acceptance 形状", () => {
+    const make = (reviewGuide) => {
+      const site = emptySite();
+      site.changes.set("demo-change", { ...validChange(), reviewGuide });
+      return validateSchema(site);
+    };
+
+    expect(make("x")).toContain(
+      "walkthrough/changes/demo-change.yaml: reviewGuide 必须是 map",
+    );
+    const errors = make({ order: [], risks: "x", acceptance: [{}] });
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml reviewGuide: order 必须是非空字符串数组",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml reviewGuide: risks 必须是字符串数组",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml reviewGuide acceptance[0]: item 必须是非空字符串",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml reviewGuide acceptance[0]: evidence 必须是非空字符串",
+    );
+    // risks 允许空数组（无登记风险）。
+    expect(make({ order: ["先读 feature"], risks: [], acceptance: [{ item: "i", evidence: "e" }] })).toEqual([]);
+  });
+
+  it("MECHANICAL_PATTERNS 归类机械路径且不把 workflows 当机械", () => {
+    const hits = (file) => MECHANICAL_PATTERNS.some((pattern) => pattern.test(file));
+    expect(hits("docs/commands.md")).toBe(true);
+    expect(hits("docs/commands.en.md")).toBe(true);
+    expect(hits("docs/commands.i18n.yaml")).toBe(true);
+    expect(hits("src/demo.i18n.yaml")).toBe(true);
+    expect(hits("pnpm-lock.yaml")).toBe(true);
+    expect(hits(".github/workflows/ci.yml")).toBe(false);
+    expect(hits("src/demo.ts")).toBe(false);
+  });
+
+  it("parseNumstat 解析行数、二进制行与改名路径", () => {
+    expect(
+      parseNumstat(
+        "10\t3\tsrc/a.ts\n-\t-\tassets/b.bin\n2\t1\tsrc/{old => new}/c.ts\n1\t1\told.rs => new.rs\n",
+      ),
+    ).toEqual([
+      { additions: 10, deletions: 3, path: "src/a.ts" },
+      { additions: 0, deletions: 0, path: "assets/b.bin" },
+      { additions: 2, deletions: 1, path: "src/new/c.ts" },
+      { additions: 1, deletions: 1, path: "new.rs" },
+    ]);
+    expect(() => parseNumstat("not numstat")).toThrowError(/numstat/);
   });
 
   it("locateSnippet 归一化行尾空白，多处匹配计 count", () => {
@@ -574,5 +821,71 @@ describe("walkthrough-lib", () => {
       "改码但缺少文件页: src/demo.ts",
       "changes touches 缺少 file 引用: src/demo.ts",
     ]);
+  });
+
+  it("checkDiffScale：scale 与 numstat 对账，files 恰好相等、行数 ±10% 容差", () => {
+    const site = emptySite();
+    site.changes.set("demo-change", validChange());
+    const diff = ["src/demo.ts", "walkthrough/changes/demo-change.yaml"];
+    const numstat = [
+      { additions: 10, deletions: 3, path: "src/demo.ts" },
+      { additions: 5, deletions: 5, path: "walkthrough/changes/demo-change.yaml" },
+    ];
+    // 精确命中。
+    expect(checkDiffScale(diff, site, numstat)).toEqual([]);
+    // 容差边界：±10% 含端点（15 的 10% 为 1.5，16 在容差内；8 精确命中）。
+    site.changes.set("demo-change", {
+      ...validChange(),
+      scale: { files: 2, additions: 16, deletions: 8 },
+    });
+    expect(checkDiffScale(diff, site, numstat)).toEqual([]);
+    // files 必须恰好相等。
+    site.changes.set("demo-change", {
+      ...validChange(),
+      scale: { files: 3, additions: 15, deletions: 8 },
+    });
+    expect(checkDiffScale(diff, site, numstat)).toEqual([
+      "walkthrough/changes/demo-change.yaml: scale.files=3 与实际 diff 文件数 2 不一致（须恰好相等）",
+    ]);
+    // additions 超出容差。
+    site.changes.set("demo-change", {
+      ...validChange(),
+      scale: { files: 2, additions: 20, deletions: 8 },
+    });
+    expect(checkDiffScale(diff, site, numstat)).toEqual([
+      "walkthrough/changes/demo-change.yaml: scale.additions=20 超出实际 15 的 ±10% 容差",
+    ]);
+    // deletions 超出容差。
+    site.changes.set("demo-change", {
+      ...validChange(),
+      scale: { files: 2, additions: 15, deletions: 2 },
+    });
+    expect(checkDiffScale(diff, site, numstat)).toEqual([
+      "walkthrough/changes/demo-change.yaml: scale.deletions=2 超出实际 8 的 ±10% 容差",
+    ]);
+  });
+
+  it("checkDiffScale：codeMap 覆盖全部语义路径，机械与 walkthrough 路径豁免", () => {
+    const site = emptySite();
+    site.changes.set("demo-change", validChange());
+    const diff = [
+      "src/demo.ts",
+      "src/other.ts",
+      "pnpm-lock.yaml",
+      "docs/commands.md",
+      "walkthrough/files/src/demo.ts.yaml",
+      "walkthrough/changes/demo-change.yaml",
+    ];
+    // numstat 缺省时仍执行覆盖对账；机械路径与 walkthrough/ 自身不强制覆盖。
+    expect(checkDiffScale(diff, site, undefined)).toEqual([
+      "变更页 codeMap 未覆盖语义路径: src/other.ts",
+    ]);
+    // change 页不在 diff 中时不触发任何对账。
+    expect(checkDiffScale(["src/demo.ts"], site, [])).toEqual([]);
+    // 坏 numstat 形状 fail-loud。
+    expect(checkDiffScale(diff, site, "x")).toEqual(["numstat 必须是数组"]);
+    expect(
+      checkDiffScale(diff, site, [{ additions: 1, deletions: 1 }]),
+    ).toEqual(["numstat 每项必须是 {additions, deletions, path}"]);
   });
 });

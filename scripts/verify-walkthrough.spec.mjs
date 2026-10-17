@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import verifyWalkthrough, { collectWalkthrough, readDiffFiles } from "./verify-walkthrough.mjs";
+import verifyWalkthrough, { collectWalkthrough, readDiffFiles, readNumstat } from "./verify-walkthrough.mjs";
 
 const dirs = [];
 
@@ -325,5 +325,90 @@ segments: []
 
     expect(calls).toEqual([["git", ["diff", "--name-only", "origin/main...HEAD"]]]);
     expect(output).toEqual(["src/demo.ts", "walkthrough/files/src/demo.ts.yaml"]);
+  });
+
+  it("readNumstat 使用注入的 git 命令并解析 numstat 行", () => {
+    const calls = [];
+    const rows = readNumstat("origin/main", (...command) => {
+      calls.push(command);
+      return "10\t3\tsrc/demo.ts\n-\t-\tassets/logo.png\n";
+    });
+
+    expect(calls).toEqual([["git", ["diff", "--numstat", "origin/main...HEAD"]]]);
+    expect(rows).toEqual([
+      { additions: 10, deletions: 3, path: "src/demo.ts" },
+      { additions: 0, deletions: 0, path: "assets/logo.png" },
+    ]);
+  });
+
+  it("--diff 档对本次修改的变更页做 scale 与 codeMap 对账（mock numstat）", async () => {
+    const root = tempRoot("verify-walkthrough-scale-");
+    writeSite(root, { bootstrap: false, fullCoverage: true });
+    write(root, "walkthrough/changes/demo.yaml", `kind: change
+issue: demo
+title: Demo change
+scale:
+  files: 4
+  additions: 30
+  deletions: 3
+feature: |
+  功能变化。
+userFlow:
+  - 打开演示
+architectural: |
+  无。
+codeMap:
+  - group: 实现
+    attention: must-read
+    why: 核心
+    files:
+      - path: src/demo.ts
+        note: 改动点
+reviewGuide:
+  order:
+    - 先读变更地图
+  risks: []
+  acceptance:
+    - item: 验收
+      evidence: 证据
+verification:
+  - pnpm exec vitest
+touches: [file:src/demo.ts]
+`);
+    const diffFiles = [
+      "src/demo.ts",
+      "walkthrough/files/src/demo.ts.yaml",
+      "walkthrough/changes/demo.yaml",
+      "pnpm-lock.yaml",
+    ];
+    const numstat = [
+      { additions: 10, deletions: 3, path: "src/demo.ts" },
+      { additions: 2, deletions: 0, path: "walkthrough/files/src/demo.ts.yaml" },
+      { additions: 18, deletions: 0, path: "walkthrough/changes/demo.yaml" },
+      { additions: 0, deletions: 0, path: "pnpm-lock.yaml" },
+    ];
+
+    const ok = await collectWalkthrough({ root, diffFiles, numstat });
+    expect(ok.errors).toEqual([]);
+
+    // files 数必须恰好相等：漏掉 pnpm-lock.yaml 行即红。
+    const fewer = await collectWalkthrough({ root, diffFiles, numstat: numstat.slice(0, 3) });
+    expect(fewer.errors).toEqual([
+      "walkthrough/changes/demo.yaml: scale.files=4 与实际 diff 文件数 3 不一致（须恰好相等）",
+    ]);
+
+    // codeMap 漏覆盖语义路径即红。
+    const wider = await collectWalkthrough({
+      root,
+      diffFiles: [...diffFiles, "src/other.ts"],
+      numstat: [...numstat, { additions: 1, deletions: 1, path: "src/other.ts" }],
+    });
+    expect(wider.errors).toEqual([
+      "改码但缺少文件页: src/other.ts",
+      "changes touches 缺少 file 引用: src/other.ts",
+      "walkthrough/changes/demo.yaml: scale.files=4 与实际 diff 文件数 5 不一致（须恰好相等）",
+      "walkthrough/changes/demo.yaml: scale.deletions=3 超出实际 4 的 ±10% 容差",
+      "变更页 codeMap 未覆盖语义路径: src/other.ts",
+    ]);
   });
 });

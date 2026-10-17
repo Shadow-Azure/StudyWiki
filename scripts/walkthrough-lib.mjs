@@ -31,13 +31,39 @@ const CHANGE_KEYS = new Set([
   "kind",
   "issue",
   "title",
-  "functional",
+  "scale",
+  "feature",
+  "userFlow",
   "architectural",
-  "code",
+  "codeMap",
+  "reviewGuide",
+  "verification",
   "touches",
 ]);
+const SCALE_KEYS = new Set(["files", "additions", "deletions"]);
+const CODE_MAP_GROUP_KEYS = new Set(["group", "attention", "why", "files"]);
+const CODE_MAP_FILE_KEYS = new Set(["path", "note"]);
+const REVIEW_GUIDE_KEYS = new Set(["order", "risks", "acceptance"]);
+const ACCEPTANCE_KEYS = new Set(["item", "evidence"]);
+const CHANGE_ATTENTIONS = new Set(["must-read", "skim", "skip"]);
+/**
+ * 机械变更路径归类规则：命中任一规则的路径由机器生成/维护，不承载语义讲解。
+ * 用途有二：codeMap 组里机械路径不得标 must-read；--diff 对账时机械路径
+ * 不被 codeMap.files 覆盖也合法。`.github/workflows/` 刻意不在其中——
+ * 流水线变更需要人读。
+ */
+export const MECHANICAL_PATTERNS = [
+  /\.i18n\.yaml$/u,
+  /^docs\/commands\./u,
+  /(^|\/)pnpm-lock\.yaml$/u,
+];
 const ACTIVE_ISSUE_STATUSES = new Set(["in-progress", "done"]);
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** 判断仓库相对路径是否命中机械归类规则。 */
+export function isMechanicalPath(file) {
+  return typeof file === "string" && MECHANICAL_PATTERNS.some((pattern) => pattern.test(file));
+}
 
 /** 判断值是否是可校验的普通对象（不含数组与 null）。 */
 function isObject(value) {
@@ -220,6 +246,107 @@ function validateStep(step, label, index, errors) {
   requireString(step.ref.snippet, "ref.snippet", itemLabel, errors);
 }
 
+/** change 页 scale：{files, additions, deletions} 非负整数三元组。 */
+function validateScale(scale, label, errors) {
+  const scaleLabel = `${label} scale`;
+  if (!isObject(scale)) {
+    push(errors, label, "scale 必须是 map");
+    return;
+  }
+  if (!validateKeys(scale, SCALE_KEYS, scaleLabel, errors)) return;
+  for (const field of ["files", "additions", "deletions"]) {
+    const value = scale[field];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+      push(errors, scaleLabel, `${field} 必须是非负整数`);
+    }
+  }
+}
+
+/** change 页 codeMap：变更地图分组；机械路径不得标 must-read。 */
+function validateCodeMap(codeMap, label, errors) {
+  if (!Array.isArray(codeMap) || codeMap.length === 0) {
+    push(errors, label, "codeMap 必须是非空数组");
+    return;
+  }
+  codeMap.forEach((group, index) => {
+    const groupLabel = `${label} codeMap[${index}]`;
+    if (!isObject(group)) {
+      push(errors, groupLabel, "必须是 map");
+      return;
+    }
+    if (!validateKeys(group, CODE_MAP_GROUP_KEYS, groupLabel, errors)) return;
+    requireString(group.group, "group", groupLabel, errors);
+    if (!CHANGE_ATTENTIONS.has(group.attention)) {
+      push(errors, groupLabel, "attention 必须是 must-read|skim|skip 之一");
+    }
+    if (typeof group.why !== "string" && group.why !== null) {
+      push(errors, groupLabel, "why 必须是字符串或 null");
+    }
+    if (!Array.isArray(group.files) || group.files.length === 0) {
+      push(errors, groupLabel, "files 必须是非空数组");
+      return;
+    }
+    group.files.forEach((file, fileIndex) => {
+      const fileLabel = `${groupLabel} files[${fileIndex}]`;
+      if (!isObject(file)) {
+        push(errors, fileLabel, "必须是 map");
+        return;
+      }
+      if (!validateKeys(file, CODE_MAP_FILE_KEYS, fileLabel, errors)) return;
+      requireString(file.path, "path", fileLabel, errors);
+      requireString(file.note, "note", fileLabel, errors);
+      if (
+        group.attention === "must-read" &&
+        isNonEmptyString(file.path) &&
+        isMechanicalPath(file.path)
+      ) {
+        push(errors, fileLabel, `机械变更不得标 must-read: ${file.path}`);
+      }
+    });
+  });
+}
+
+/** change 页 reviewGuide：阅读顺序 + 风险点 + 验收对照。 */
+function validateReviewGuide(reviewGuide, label, errors) {
+  const guideLabel = `${label} reviewGuide`;
+  if (!isObject(reviewGuide)) {
+    push(errors, label, "reviewGuide 必须是 map");
+    return;
+  }
+  if (!validateKeys(reviewGuide, REVIEW_GUIDE_KEYS, guideLabel, errors)) return;
+  if (
+    !Array.isArray(reviewGuide.order) ||
+    reviewGuide.order.length === 0 ||
+    !reviewGuide.order.every(isNonEmptyString)
+  ) {
+    push(errors, guideLabel, "order 必须是非空字符串数组");
+  }
+  if (!isStringArray(reviewGuide.risks)) {
+    push(errors, guideLabel, "risks 必须是字符串数组");
+  }
+  if (!Array.isArray(reviewGuide.acceptance) || reviewGuide.acceptance.length === 0) {
+    push(errors, guideLabel, "acceptance 必须是非空数组");
+    return;
+  }
+  reviewGuide.acceptance.forEach((entry, index) => {
+    const entryLabel = `${guideLabel} acceptance[${index}]`;
+    if (!isObject(entry)) {
+      push(errors, entryLabel, "必须是 map");
+      return;
+    }
+    if (!validateKeys(entry, ACCEPTANCE_KEYS, entryLabel, errors)) return;
+    requireString(entry.item, "item", entryLabel, errors);
+    requireString(entry.evidence, "evidence", entryLabel, errors);
+  });
+}
+
+/** change 页的非空字符串数组字段（userFlow/verification）。 */
+function requireNonEmptyStringArray(value, field, label, errors) {
+  if (!Array.isArray(value) || value.length === 0 || !value.every(isNonEmptyString)) {
+    push(errors, label, `${field} 必须是非空字符串数组`);
+  }
+}
+
 /**
  * 校验 site 中全部页面的封闭 schema。
  * @param {object} site - parseSite 产出的站点对象。
@@ -303,9 +430,13 @@ export function validateSchema(site) {
     if (!validateKeys(change, CHANGE_KEYS, label, errors)) continue;
     requireString(change.issue, "issue", label, errors);
     requireString(change.title, "title", label, errors);
-    requireString(change.functional, "functional", label, errors);
+    validateScale(change.scale, label, errors);
+    requireString(change.feature, "feature", label, errors);
+    requireNonEmptyStringArray(change.userFlow, "userFlow", label, errors);
     requireString(change.architectural, "architectural", label, errors);
-    requireString(change.code, "code", label, errors);
+    validateCodeMap(change.codeMap, label, errors);
+    validateReviewGuide(change.reviewGuide, label, errors);
+    requireNonEmptyStringArray(change.verification, "verification", label, errors);
     if (!isNonEmptyStringArray(change.touches)) {
       push(errors, label, "touches 必须是非空字符串数组");
     }
@@ -706,6 +837,133 @@ export function checkDiff(diffFiles, site) {
   }
   for (const source of changedSources) {
     if (!touched.has(source)) errors.push(`changes touches 缺少 file 引用: ${source}`);
+  }
+  return errors;
+}
+
+/** 归一化 numstat 改名路径（`a/{b => c}/d` 与 `b => c` 两种形态取新路径）。 */
+function normalizeNumstatPath(value) {
+  return normalizePath(value)
+    .replace(/\{[^{}]* => ([^{}]*)\}/u, "$1")
+    .replace(/^.* => /u, "");
+}
+
+/**
+ * 解析 `git diff --numstat` 输出为 {additions, deletions, path} 数组；
+ * 二进制行的 `-` 计 0。坏行 fail-loud 抛错（CLI 契约边界）。
+ * @param {string} text - numstat 原始输出。
+ * @returns {Array<{additions:number, deletions:number, path:string}>} 行数组。
+ */
+export function parseNumstat(text) {
+  if (typeof text !== "string") throw new Error("numstat 输出必须是字符串");
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      const match = /^(\d+|-)\t(\d+|-)\t(.+)$/u.exec(line);
+      if (!match) throw new Error(`numstat 行格式非法: ${line}`);
+      return {
+        additions: match[1] === "-" ? 0 : Number.parseInt(match[1], 10),
+        deletions: match[2] === "-" ? 0 : Number.parseInt(match[2], 10),
+        path: normalizeNumstatPath(match[3]),
+      };
+    });
+}
+
+/**
+ * --diff 档变更页对账：凡本 PR 新增/修改的 changes 页（diff 中出现
+ * walkthrough/changes/<slug>.yaml），其 scale 与 numstat 实际值对账——
+ * files 必须恰好相等，additions/deletions 允许 ±10% 容差（相对实际值，
+ * 端点含内）；其 codeMap.files 必须覆盖 diff 中全部语义路径。机械路径
+ * （MECHANICAL_PATTERNS）与 walkthrough/ 站点源自身豁免覆盖义务。
+ * @param {string[]} diffFiles - `git diff --name-only base...HEAD` 的注入结果。
+ * @param {object} site - 站点索引。
+ * @param {Array<{additions:number, deletions:number, path:string}>} [numstat]
+ *   `git diff --numstat` 解析结果；缺省时跳过 scale 对账、只做覆盖对账。
+ * @returns {string[]} 错误列表。
+ */
+export function checkDiffScale(diffFiles, site, numstat) {
+  const errors = [];
+  if (!Array.isArray(diffFiles)) return ["diffFiles 必须是字符串数组"];
+  if (diffFiles.some((item) => typeof item !== "string")) {
+    return ["diffFiles 每项必须是字符串"];
+  }
+  if (numstat !== undefined) {
+    if (!Array.isArray(numstat)) return ["numstat 必须是数组"];
+    if (
+      numstat.some(
+        (row) =>
+          !isObject(row) ||
+          typeof row.additions !== "number" ||
+          typeof row.deletions !== "number" ||
+          typeof row.path !== "string",
+      )
+    ) {
+      return ["numstat 每项必须是 {additions, deletions, path}"];
+    }
+  }
+  const diff = diffFiles.map(normalizePath);
+  const changedSlugs = [
+    ...new Set(
+      diff
+        .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+        .filter(Boolean),
+    ),
+  ].sort();
+  if (changedSlugs.length === 0) return errors;
+
+  if (numstat !== undefined) {
+    const totals = { additions: 0, deletions: 0 };
+    for (const row of numstat) {
+      totals.additions += row.additions;
+      totals.deletions += row.deletions;
+    }
+    for (const slug of changedSlugs) {
+      const page = site.changes.get(slug);
+      // schema 规则已负责形状；这里只对形状合法的 scale 做对账。
+      if (!isObject(page) || !isObject(page.scale)) continue;
+      const label = pagePath("change", slug);
+      const declared = page.scale;
+      if (typeof declared.files === "number" && declared.files !== numstat.length) {
+        push(
+          errors,
+          label,
+          `scale.files=${declared.files} 与实际 diff 文件数 ${numstat.length} 不一致（须恰好相等）`,
+        );
+      }
+      for (const [field, actual] of [
+        ["additions", totals.additions],
+        ["deletions", totals.deletions],
+      ]) {
+        const value = declared[field];
+        if (typeof value !== "number") continue;
+        if (Math.abs(value - actual) > actual * 0.1) {
+          push(errors, label, `scale.${field}=${value} 超出实际 ${actual} 的 ±10% 容差`);
+        }
+      }
+    }
+  }
+
+  const covered = new Set();
+  for (const slug of changedSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (isObject(file) && isNonEmptyString(file.path)) {
+          covered.add(normalizePath(file.path));
+        }
+      }
+    }
+  }
+  const semantic = [
+    ...new Set(
+      diff.filter((file) => !file.startsWith("walkthrough/") && !isMechanicalPath(file)),
+    ),
+  ].sort();
+  for (const file of semantic) {
+    if (!covered.has(file)) errors.push(`变更页 codeMap 未覆盖语义路径: ${file}`);
   }
   return errors;
 }

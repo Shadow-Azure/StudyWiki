@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { checkAnchors, checkChanges, checkDiff, checkFilePages, checkFeatures, checkLineCoverage, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+import { checkAnchors, checkChanges, checkDiff, checkDiffScale, checkFilePages, checkFeatures, checkLineCoverage, parseNumstat, parseSite, validateSchema } from "./walkthrough-lib.mjs";
 import { loadFlowTree } from "./flow-lib.mjs";
 
 /** 判断 JSON 允许的扁平 map 根形状（非 null object 且非 Array）。 */
@@ -40,8 +40,9 @@ function appendDegraded(errors, warnings, bootstrap, ruleErrors) {
 
 /**
  * 执行 walkthrough 门禁并保留 bootstrap 警告，供 CLI 与测试观测。
- * @param {{root?: string, diffFiles?: string[], issues?: Array<{slug:string,status:string}>}} options
- *   root 默认 process.cwd；diffFiles 注入时执行规则 8/9；issues 注入用于纯装配测试。
+ * @param {{root?: string, diffFiles?: string[], numstat?: Array<{additions:number, deletions:number, path:string}>, issues?: Array<{slug:string,status:string}>}} options
+ *   root 默认 process.cwd；diffFiles 注入时执行规则 8/9/10；numstat 注入时规则 10
+ *   额外对账变更页 scale；issues 注入用于纯装配测试。
  * @returns {Promise<{ok:boolean, errors:string[], warnings:string[]}>} 门禁结果。
  */
 export async function collectWalkthrough(options = {}) {
@@ -68,7 +69,10 @@ export async function collectWalkthrough(options = {}) {
   errors.push(...checkFeatures(site));
   appendDegraded(errors, warnings, bootstrap, checkChanges(site, issues));
   appendDegraded(errors, warnings, bootstrap, checkLineCoverage(root, site));
-  if (options.diffFiles !== undefined) errors.push(...checkDiff(options.diffFiles, site));
+  if (options.diffFiles !== undefined) {
+    errors.push(...checkDiff(options.diffFiles, site));
+    errors.push(...checkDiffScale(options.diffFiles, site, options.numstat));
+  }
 
   return { ok: errors.length === 0, errors, warnings };
 }
@@ -92,6 +96,11 @@ export function readDiffFiles(base, exec = execFileSync) {
     .filter(Boolean);
 }
 
+/** 执行 `git diff --numstat base...HEAD` 并解析为行数组；exec 参数仅供测试注入。 */
+export function readNumstat(base, exec = execFileSync) {
+  return parseNumstat(exec("git", ["diff", "--numstat", base + "...HEAD"]).toString());
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   let diffIndex = -1;
@@ -105,6 +114,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(2);
   }
   let diffFiles;
+  let numstat;
   if (diffIndex >= 0) {
     const base = args[diffIndex + 1];
     if (!base) {
@@ -113,6 +123,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     try {
       diffFiles = readDiffFiles(base);
+      numstat = readNumstat(base);
     } catch (error) {
       console.error(`verify-walkthrough: 无法读取 git diff ${base}...HEAD`);
       console.error(error instanceof Error ? error.message : String(error));
@@ -120,7 +131,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
   }
 
-  const result = await collectWalkthrough({ diffFiles });
+  const result = await collectWalkthrough({ diffFiles, numstat });
   for (const warning of result.warnings) console.log(warning);
   if (!result.ok) {
     console.error(`verify-walkthrough: FAIL\n  ${result.errors.join("\n  ")}`);

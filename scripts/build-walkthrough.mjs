@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Walkthrough 静态站生成器：装载并校验站点 YAML，构建期定位真实源码锚点，
-// 产零外链、零脚本的多页 HTML。架构组成树直接按 code-map manifest 渲染两列
+// 产零外部资源、（除变更史搜索框外）零脚本的多页 HTML；变更页头部的 Issue
+// 链接是唯一的出站锚点（链向 flow issue 登记的 github.url，仅导航不加载资源）。
+// 架构组成树直接按 code-map manifest 渲染两列
 // 文本树（目录顺序复用 gen-code-map 的 SCAN_ROOTS，不在构建器里重复扫描/推导依赖）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -9,6 +11,7 @@ import { posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import MarkdownIt from "markdown-it";
 import { checkAnchors, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+import { parseFlowDocument } from "./flow-lib.mjs";
 import { SCAN_ROOTS } from "./gen-code-map.mjs";
 
 const markdown = new MarkdownIt({ html: false, linkify: false });
@@ -190,6 +193,8 @@ function renderPage({ title, current, site, breadcrumb, content }) {
   --line:#e6e6ec; --line-strong:#d7d7e0;
   --text:#1a1b1f; --muted:#676975; --faint:#9b9da8;
   --accent:#5454d4; --accent-soft:color-mix(in srgb,var(--accent) 9%,transparent);
+  --add:#1a7f37; --del:#cf222e; --risk:#b45309;
+  --risk-soft:color-mix(in srgb,var(--risk) 9%,transparent);
   --code-bg:#f8f8fa; --shadow:0 1px 2px rgba(18,18,28,.04),0 10px 28px -14px rgba(18,18,28,.14);
 }
 @media (prefers-color-scheme: dark) { :root {
@@ -197,6 +202,8 @@ function renderPage({ title, current, site, breadcrumb, content }) {
   --line:#282932; --line-strong:#393a45;
   --text:#e9e9ee; --muted:#a0a1ad; --faint:#6f707c;
   --accent:#9a9af5; --accent-soft:color-mix(in srgb,var(--accent) 13%,transparent);
+  --add:#56d364; --del:#ff7b72; --risk:#e3a55b;
+  --risk-soft:color-mix(in srgb,var(--risk) 13%,transparent);
   --code-bg:#15161a; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.5);
 } }
 * { box-sizing:border-box }
@@ -271,6 +278,47 @@ aside.note p { margin:8px 0 }
 .touch-list a,.touch-list code { display:inline-flex; align-items:center; padding:3px 11px; border:1px solid var(--line-strong); border-radius:999px; font-size:12.5px; background:var(--surface); color:var(--text); text-decoration:none }
 .touch-list a:hover { border-color:var(--accent); color:var(--accent) }
 .backlinks { margin:14px 0 }
+
+/* 变更页：头部徽章、变更地图、检视指引 */
+.change-head { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:-8px 0 4px }
+.issue-link { font-size:13px; font-weight:600; color:var(--muted); text-decoration:none }
+a.issue-link:hover { color:var(--accent) }
+.scale-chips { display:flex; flex-wrap:wrap; gap:8px }
+.chip { display:inline-flex; align-items:center; padding:2px 11px; border:1px solid var(--line-strong); border-radius:999px; background:var(--accent-soft); font-size:12.5px; font-weight:600 }
+.chip.add { color:var(--add); background:color-mix(in srgb,var(--add) 10%,transparent); border-color:color-mix(in srgb,var(--add) 35%,transparent) }
+.chip.del { color:var(--del); background:color-mix(in srgb,var(--del) 8%,transparent); border-color:color-mix(in srgb,var(--del) 32%,transparent) }
+.badge { display:inline-flex; align-items:center; padding:1px 9px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.08em; white-space:nowrap }
+.badge-must-read { color:var(--accent); background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent) }
+.badge-skim,.badge-skip { color:var(--muted); background:var(--panel); border:1px solid var(--line-strong) }
+.map-group { margin:16px 0; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden }
+.map-group .group-head,.map-group > summary { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:11px 16px; background:var(--panel); border-bottom:1px solid var(--line) }
+.map-group .group-head h3 { margin:0; font-size:14.5px }
+.map-group > summary { cursor:pointer; list-style:none; font-weight:650; font-size:14px }
+.map-group > summary::-webkit-details-marker { display:none }
+.map-group > summary::before { content:"▸"; color:var(--faint); font-size:11px }
+.map-group[open] > summary::before { content:"▾" }
+details.map-group:not([open]) > summary { border-bottom:0 }
+details.map-group.skim > summary { opacity:.72 }
+details.map-group.skip > summary { opacity:.55 }
+.map-group .group-why { padding:10px 16px 0; font-size:13px; color:var(--muted) }
+.map-files { width:100%; border-collapse:collapse; font-size:13px }
+.map-files td { padding:7px 16px; border-top:1px solid var(--line); vertical-align:top }
+.map-files tr:first-child td { border-top:0 }
+.map-files td.map-path { width:46%; font-family:ui-monospace,SFMono-Regular,monospace; font-size:12.5px; overflow-wrap:anywhere }
+.map-files td.map-note { color:var(--muted) }
+.map-files td.map-note p { margin:0 }
+ol.user-flow { padding-left:22px }
+ol.user-flow li { margin:5px 0 }
+.risk-list { display:grid; gap:8px; padding:0; list-style:none }
+.risk-list li { margin:0; padding:8px 13px; border-left:3px solid var(--risk); border-radius:8px; background:var(--risk-soft); font-size:13.5px }
+.risk-list li p { margin:0 }
+.acceptance { width:100%; border-collapse:collapse; font-size:13.5px; border:1px solid var(--line); background:var(--surface) }
+.acceptance th,.acceptance td { padding:8px 14px; border-top:1px solid var(--line); text-align:left; vertical-align:top }
+.acceptance thead th { border-top:0; background:var(--panel); font-size:12.5px; color:var(--muted) }
+.acceptance td p { margin:0 }
+.verify-list { padding:0; list-style:none }
+.verify-list li { margin:5px 0; padding-left:24px; position:relative; font-size:13.5px }
+.verify-list li::before { content:"✓"; position:absolute; left:2px; color:var(--add); font-weight:700 }
 
 .search { width:100%; margin:0 0 12px; padding:8px 12px; border:1px solid var(--line-strong); border-radius:10px; background:var(--surface); color:var(--text); font:inherit; font-size:13.5px } .search::placeholder { color:var(--faint) } .search:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft) } @media (max-width:860px) {
   body { grid-template-columns:1fr }
@@ -407,9 +455,76 @@ function renderTouches(touches, current, site) {
   }).join("")}</ul>`;
 }
 
-/** 渲染变更史页。 */
+/** 读取 flow issue 登记的 github.url；缺失或损坏时软降级为 null（纯文本展示）。 */
+function resolveIssueUrl(root, issue) {
+  try {
+    const file = path.join(root, ".agents/flow/issues", `${issue}.md`);
+    if (!existsSync(file)) return null;
+    const { data } = parseFlowDocument(readFileSync(file, "utf8"), file);
+    const url = data?.github?.url;
+    return typeof url === "string" && url !== "" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+const ATTENTION_BADGES = { "must-read": "必读", skim: "可扫读", skip: "可跳过" };
+
+/** attention 徽章；未知值已先被 schema 拦截，这里只做兜底转义。 */
+function attentionBadge(attention) {
+  return `<span class="badge badge-${escapeHtml(attention)}">${ATTENTION_BADGES[attention] ?? escapeHtml(attention)}</span>`;
+}
+
+/** 渲染变更地图：must-read 组展开置顶，skim/skip 组默认 <details> 折叠。 */
+function renderCodeMapGroups(codeMap, current, site) {
+  const order = { "must-read": 0, skim: 1, skip: 2 };
+  const groups = codeMap
+    .map((group, index) => ({ group, index }))
+    .sort(
+      (a, b) =>
+        (order[a.group.attention] ?? 3) - (order[b.group.attention] ?? 3) ||
+        a.index - b.index,
+    );
+  return groups
+    .map(({ group }) => {
+      const why =
+        typeof group.why === "string" && group.why !== ""
+          ? `<div class="group-why">${markdown.renderInline(group.why)}</div>`
+          : "";
+      const rows = group.files
+        .map((file) => {
+          const target = site.filePages.has(file.path) ? `files/${file.path}.html` : null;
+          const cell = target
+            ? `<a href="${relativeHref(current, target)}">${escapeHtml(file.path)}</a>`
+            : `<code>${escapeHtml(file.path)}</code>`;
+          return `<tr><td class="map-path">${cell}</td><td class="map-note">${markdown.renderInline(file.note)}</td></tr>`;
+        })
+        .join("");
+      const table = `<table class="map-files"><tbody>${rows}</tbody></table>`;
+      if (group.attention === "must-read") {
+        return `<section class="map-group must-read"><div class="group-head"><h3>${escapeHtml(group.group)}</h3>${attentionBadge(group.attention)}</div>${why}${table}</section>`;
+      }
+      return `<details class="map-group ${escapeHtml(group.attention)}"><summary>${escapeHtml(group.group)}${attentionBadge(group.attention)}</summary>${why}${table}</details>`;
+    })
+    .join("");
+}
+
+/** 渲染变更史页（v2 schema：scale 徽章 + feature/userFlow/codeMap/reviewGuide/verification）。 */
 function renderChangePage(issue, page, current, site) {
-  const content = `<h1>${escapeHtml(page.title)}</h1><p class="meta">Issue ${escapeHtml(issue)}</p>${renderTouches(page.touches, current, site)}<section><h2>功能层</h2>${renderMarkdown(page.functional)}</section><section><h2>架构层</h2>${renderMarkdown(page.architectural)}</section><section><h2>代码细节层</h2>${renderMarkdown(page.code)}</section>`;
+  const issueUrl = resolveIssueUrl(site.root, issue);
+  const issuePart = issueUrl
+    ? `<a class="issue-link" href="${escapeHtml(issueUrl)}">Issue ${escapeHtml(issue)}</a>`
+    : `<span class="issue-link">Issue ${escapeHtml(issue)}</span>`;
+  const chips = `<div class="scale-chips"><span class="chip">${page.scale.files} 个文件</span><span class="chip add">+${page.scale.additions}</span><span class="chip del">−${page.scale.deletions}</span></div>`;
+  const userFlow = `<ol class="user-flow">${page.userFlow.map((step) => `<li>${markdown.renderInline(step)}</li>`).join("")}</ol>`;
+  const guide = page.reviewGuide;
+  const reviewOrder = `<ol class="review-order">${guide.order.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ol>`;
+  const risks = guide.risks.length
+    ? `<ul class="risk-list">${guide.risks.map((risk) => `<li>${markdown.renderInline(risk)}</li>`).join("")}</ul>`
+    : '<p class="meta">无登记风险。</p>';
+  const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
+  const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
+  const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section><section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
   return renderPage({
     title: page.title,
     current,

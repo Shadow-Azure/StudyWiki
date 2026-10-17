@@ -25,6 +25,49 @@ function write(root, relativePath, text) {
   writeFileSync(file, text);
 }
 
+/** 生成新 schema 的 change 页 YAML 文本。 */
+function changeYaml(issue, title, sourcePath) {
+  return `kind: change
+issue: ${issue}
+title: ${title}
+scale:
+  files: 2
+  additions: 30
+  deletions: 4
+feature: |
+  功能行为变化。
+userFlow:
+  - 打开演示页面
+  - 确认演示行为
+architectural: |
+  架构不变。
+codeMap:
+  - group: 实现
+    attention: must-read
+    why: 核心变化
+    files:
+      - path: ${sourcePath}
+        note: 新增常量
+  - group: 附带
+    attention: skim
+    why: null
+    files:
+      - path: pnpm-lock.yaml
+        note: 锁文件
+reviewGuide:
+  order:
+    - 先读变更地图
+  risks:
+    - 风险一
+  acceptance:
+    - item: 演示可用
+      evidence: pnpm exec vitest 通过
+verification:
+  - pnpm exec vitest run scripts/build-walkthrough.spec.mjs
+touches: [file:${sourcePath}, feature:demo]
+`;
+}
+
 function writeValidSite(root, sourcePath = "src/demo.ts") {
   write(
     root,
@@ -100,17 +143,7 @@ segments:
   write(
     root,
     "walkthrough/changes/demo-change.yaml",
-    `kind: change
-issue: demo-change
-title: Demo change
-functional: |
-  功能行为变化。
-architectural: |
-  架构不变。
-code: |
-  新增常量。
-touches: [file:${sourcePath}, feature:demo]
-`,
+    changeYaml("demo-change", "Demo change", sourcePath),
   );
   write(
     root,
@@ -164,7 +197,7 @@ describe("build-walkthrough", () => {
       write(
         root,
         `walkthrough/changes/${slug}.yaml`,
-        `kind: change\nissue: ${slug}\ntitle: ${title}\nfunctional: |\n  f\narchitectural: |\n  a\ncode: |\n  c\ntouches: []\n`,
+        changeYaml(slug, title, "src/demo.ts"),
       );
     }
     buildSite(root, outDir);
@@ -173,7 +206,40 @@ describe("build-walkthrough", () => {
     expect(homeSorted.indexOf("#52 Alpha")).toBeLessThan(homeSorted.indexOf("#7 Beta"));
     expect(homeSorted.indexOf("#7 Beta")).toBeLessThan(homeSorted.indexOf(">Demo change<"));
     expect(homeSorted).toContain('type="search"');
-    expect(readFileSync(path.join(outDir, "changes/demo-change.html"), "utf8")).toContain("功能行为变化");
+    const changePage = readFileSync(path.join(outDir, "changes/demo-change.html"), "utf8");
+    expect(changePage).toContain("功能行为变化");
+
+    // 变更页 v2 头部：Issue 标识 + 规模统计徽章
+    expect(changePage).toContain("Issue demo-change");
+    expect(changePage).toContain(">2 个文件</span>");
+    expect(changePage).toContain(">+30</span>");
+    expect(changePage).toContain(">−4</span>");
+
+    // 用户操作路径为有序列表
+    expect(changePage).toMatch(/<ol class="user-flow">[\s\S]*?打开演示页面[\s\S]*?确认演示行为[\s\S]*?<\/ol>/u);
+
+    // 变更地图：must-read 组展开置顶，skim 组默认折叠并灰显"可扫读"
+    expect(changePage).toContain('<section class="map-group must-read">');
+    expect(changePage).toContain('<details class="map-group skim">');
+    expect(changePage).toContain("核心变化");
+    expect(changePage).toContain(">必读</span>");
+    expect(changePage).toContain(">可扫读</span>");
+    expect(changePage.indexOf('<section class="map-group must-read">'))
+      .toBeLessThan(changePage.indexOf('<details class="map-group skim">'));
+    // 组内文件表：存在文件页则链入，机械路径退化为 code；不列行数
+    expect(changePage).toMatch(/<table class="map-files">[\s\S]*?href="\.\.\/files\/src\/demo\.ts\.html"[\s\S]*?新增常量[\s\S]*?<\/table>/u);
+    expect(changePage).toContain("<code>pnpm-lock.yaml</code>");
+
+    // 检视指引：阅读顺序、风险点、验收对照表
+    expect(changePage).toContain("建议阅读顺序");
+    expect(changePage).toContain("风险一");
+    expect(changePage).toMatch(/<table class="acceptance">[\s\S]*?演示可用[\s\S]*?pnpm exec vitest 通过[\s\S]*?<\/table>/u);
+
+    // 验证清单
+    expect(changePage).toContain("pnpm exec vitest run scripts/build-walkthrough.spec.mjs");
+
+    // 变更页除公共骨架外不引入脚本
+    expect(changePage).not.toMatch(/<script\b/iu);
 
     const feature = readFileSync(path.join(outDir, "features/demo.html"), "utf8");
     expect(feature).toContain("../files/src/demo.ts.html#L1");
@@ -222,6 +288,44 @@ describe("build-walkthrough", () => {
     const change = readFileSync(path.join(outDir, "changes/demo-change.html"), "utf8");
     expect(change).toContain('href="../files/src/space%20%23path.ts.html"');
     expect(change).not.toContain('href="../files/src/space #path.ts.html"');
+  });
+
+  it("变更页头部 Issue 在 flow 登记 github.url 时渲染为链接，缺失时退化为文本", () => {
+    const root = tempRoot("studywiki-build-issue-link-");
+    const outDir = path.join(root, "site-output");
+    writeValidSite(root);
+    write(
+      root,
+      ".agents/flow/issues/demo-change.md",
+      `# Demo change
+
+\`\`\`yaml flow
+kind: issue
+milestone: m2
+priority: P1
+status: in-progress
+scope: []
+adr: []
+github:
+  number: 99
+  url: https://github.com/example/studywiki/issues/99
+\`\`\`
+`,
+    );
+
+    buildSite(root, outDir);
+    const linked = readFileSync(path.join(outDir, "changes/demo-change.html"), "utf8");
+    expect(linked).toContain(
+      '<a class="issue-link" href="https://github.com/example/studywiki/issues/99">Issue demo-change</a>',
+    );
+
+    const plainRoot = tempRoot("studywiki-build-issue-plain-");
+    const plainOut = path.join(plainRoot, "site-output");
+    writeValidSite(plainRoot);
+    buildSite(plainRoot, plainOut);
+    const plain = readFileSync(path.join(plainOut, "changes/demo-change.html"), "utf8");
+    expect(plain).toContain("Issue demo-change");
+    expect(plain).not.toContain('class="issue-link" href=');
   });
 
   it("文件页同时列出 steps 与 modules 引用且不去重失败", () => {

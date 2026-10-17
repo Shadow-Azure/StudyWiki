@@ -27,7 +27,21 @@
 | `overview` / `architecture` | `kind`、`sections`（非空数组） | section 允许 `heading`、`body` 与可选非空相对路径数组 `images`；`generated` 仅 architecture 支持，且只能取 `code-map`。 |
 | `feature` | `kind`、`slug`（kebab-case 且等于文件名）、`title`、`behavior`、`modules`（非空字符串数组）、`steps`（非空数组） | step 必填 `note` 与 `ref.file`、`ref.snippet`；`related.notes` 可选为字符串数组。 |
 | `file-page` | `kind`、`source`（等于去 `.yaml` 的镜像路径）、`summary`（逐字等于 code-map 登记值）、`segments`（非空数组） | segment 必填 `snippet` 与 `note`。 |
-| `change` | `kind`、`issue`（等于 flow slug 与文件名）、`title`、`functional`、`architectural`、`code`、`touches`（当前机械校验为非空字符串数组） | 写作规范建议 `touches` 用 `file:<repo-relative-source>` 或 `feature:<slug>`；前缀封闭校验在回填计划中收紧。 |
+| `change` | `kind`、`issue`（等于 flow slug 与文件名）、`title`、`scale`、`feature`、`userFlow`、`architectural`、`codeMap`、`reviewGuide`、`verification`、`touches`（字符串数组） | 旧三段字段 `functional`/`code` 已移除，出现即红（未知键）；各字段形状见下表。写作规范建议 `touches` 用 `file:<repo-relative-source>` 或 `feature:<slug>`；前缀封闭校验在回填计划中收紧。 |
+
+`change` 页字段形状（键集合全部封闭）：
+
+| 字段 | 形状与约束 |
+| --- | --- |
+| `scale` | map，恰为 `files`/`additions`/`deletions` 三个非负整数；描述整个 PR 的实际规模，--diff 档与 `git diff --numstat` 对账。 |
+| `feature` | 正文字符串：实现了什么功能，缺了什么、现在是什么。 |
+| `userFlow` | 非空字符串数组：用户操作路径，按序渲染为有序列表。 |
+| `architectural` | 正文字符串；无架构变化时写 `无`。 |
+| `codeMap` | 非空数组的变更地图分组，见下。 |
+| `reviewGuide` | map：`order`（非空字符串数组，建议阅读顺序）、`risks`（字符串数组，可为空）、`acceptance`（非空数组，项恰为 `item` 与 `evidence` 两个非空字符串）。 |
+| `verification` | 非空字符串数组：实际跑过的门禁/测试。 |
+
+`codeMap` 每项恰为 `group`（非空字符串）、`attention`、`why`（字符串或 `null`，空理由写 `why: null`）、`files`（非空数组，项恰为 `path` 与 `note` 两个非空字符串）。`attention` 是封闭集合：`must-read`（必读者，渲染展开置顶）、`skim`（可扫读，默认折叠灰显）、`skip`（可跳过，默认折叠）。机械路径（`*.i18n.yaml`、`docs/commands.*` 生成区、`pnpm-lock.yaml`；规则的唯一 home 是 `walkthrough-lib.mjs` 导出的 `MECHANICAL_PATTERNS`，`.github/workflows/` 刻意不算机械）不得出现在 `must-read` 组，出现即红。
 
 `features.yaml` 顶层只允许 `features`；每个登记项只允许非空 `slug`、`title`、`summary`、`issue`，并与 `walkthrough/features/` 页一一对应（issue 存在性由变更对账兜底），骨架固定用 `{features: []}`。`manifest.json` 顶层只允许 `bootstrap`（boolean）与 `lineCoverage`；后者只允许 `threshold`（0 到 1）与 `exemptions`（源路径到非空理由的 map）。
 
@@ -35,9 +49,9 @@
 
 `snippet` 只是定位器：构建与校验时对源文和锚点逐行 `trimEnd` 后做大小敏感子串匹配，取首次命中，允许多个 segment 重叠。展示内容永远读取构建期目标文件的真实代码并带行号；命中失败红，多处命中取首次并可在构建日志观察，讲解文字本身靠变更门禁保鲜。
 
-## 九条门禁
+## 十条门禁
 
-`node scripts/verify-walkthrough.mjs` 执行静态 1-6，diff 模式追加 8-9，规则 7 由构建成功单独证明：
+`node scripts/verify-walkthrough.mjs` 执行静态 1-6，diff 模式追加 8-10，规则 7 由构建成功单独证明：
 
 1. schema、kind、必填字段、类型和键集合封闭校验。
 2. 全部 feature/ref 与 file segment 锚点定位。
@@ -48,6 +62,7 @@
 7. `node scripts/build-walkthrough.mjs` 成功产出 `walkthrough/dist/`。
 8. PR diff 中每个 `src/**` 或 `src-tauri/src/**` 源文件，其文件页必须在同一 diff 更新。
 9. PR diff 中全部强制源文件必须被某个变更页 `touches` 的 `file:` 引用覆盖。
+10. diff 中新增/修改的变更页：`scale.files` 必须恰好等于 `git diff --numstat` 行数，`scale.additions`/`deletions` 允许相对实际值 ±10% 容差；变更页 `codeMap.files` 必须覆盖 diff 中全部语义路径（命中 `MECHANICAL_PATTERNS` 的机械路径与 `walkthrough/` 站点源自身豁免覆盖义务）。
 
 PR 还须让 flow issue scope 包含触到的 `walkthrough/**`；正式接线后命令与 CI 路由由根 `AGENTS.md` 和 `docs/AGENTS.md` 登记。
 
