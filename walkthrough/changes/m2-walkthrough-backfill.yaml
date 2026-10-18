@@ -33,7 +33,7 @@ design: |
 
   #### 变更页机制与门禁
 
-  实现思路：所有校验收敛到单一事实源库，门禁 CLI 与渲染器都只消费它——保证"讲解页怎么被检查"与"怎么被渲染"永远一致。
+  实现思路——沿图「门禁事实源与自测试」：所有校验收敛到单一事实源库，门禁 CLI 与渲染器都只消费它——保证"讲解页怎么被检查"与"怎么被渲染"永远一致。
 
   ```text
   scripts/
@@ -45,7 +45,7 @@ design: |
 
   #### 渲染与检视模式
 
-  实现思路：渲染器只消费事实源库的数据；检视页在普通产物上叠加"本 PR 视角"——叙事区来自变更页，diff 区来自 git。
+  实现思路——沿图「普通产物叠加本 PR 视角」：渲染器只消费事实源库的数据；检视页在普通产物上叠加"本 PR 视角"——叙事区来自变更页，diff 区来自 git。
 
   ```text
   scripts/
@@ -57,7 +57,7 @@ design: |
 
   #### 内容回填
 
-  实现思路：内容即 YAML 数据，渲染器无感知；六批文件页并行生成、功能页与变更页串行补齐。
+  实现思路——沿图「六批文件页与两类聚合页」：内容即 YAML 数据，渲染器无感知；六批文件页并行生成、功能页与变更页串行补齐。
 
   ```text
   walkthrough/
@@ -71,7 +71,7 @@ design: |
 
   #### 保鲜与钩子
 
-  实现思路：保鲜检查是独立脚本（pre-push 调用），钩子安装器只做"写入 + 提示"，无法阻断的部分归 CI。
+  实现思路——沿图「pre-push 保鲜对账」：保鲜检查是独立脚本（pre-push 调用），钩子安装器只做"写入 + 提示"，无法阻断的部分归 CI。
 
   ```text
   scripts/
@@ -82,8 +82,9 @@ design: |
 
   #### 流程件
 
-  issue 三件套、Agent Note、设计与计划文档随各批次同 PR 落地；范围登记见 issue scope。
+  流程件沿图「流程三件套随批次落地」：issue 三件套、Agent Note、设计与计划文档随各批次同 PR 落地；范围登记见 issue scope。
 architectural: |
+  主链路沿流程图「五层内容到机械保鲜的闭环」自左向右读：五层 YAML 源经共享库统一校验（锚点与行覆盖），门禁与构建消费同一事实源，产出讲解静态站。
   回填把 walkthrough 从机制骨架推进到可强制保鲜的五层内容：文件页与 code-map 一一对应，功能页与登记处一一对应，变更页与 active flow issue 一一对应；源码锚点、summary 逐字一致、行覆盖率和 touches 覆盖都由共享库机械校验。
 codeMap:
   - group: 变更页全覆盖
@@ -653,6 +654,22 @@ codeMap:
               @media (max-width:860px) {
             note: |
               流程图样式全部走站点 CSS 令牌（surface/line-strong/accent-soft），明暗主题自动跟随；横向超长时 figure 滚动而不压扁图。
+          - snippet: |
+              function resolveIssueUrl(root, issue) {
+                try {
+                  const file = path.join(root, ".agents/flow/issues", `${issue}.md`);
+                  if (!existsSync(file)) return null;
+                  const { data } = parseFlowDocument(readFileSync(file, "utf8"), file);
+                  const url = data?.github?.url;
+                  return typeof url === "string" && url !== "" ? url : null;
+                } catch {
+                  return null;
+                }
+              }
+              
+              const ATTENTION_BADGES = { "must-read": "必读", skim: "可扫读", skip: "可跳过" };
+            note: |
+              变更页头部的 Issue 链接从 flow issue 登记的 github.url 解析，登记缺失降级为纯文本徽章；attention 徽章集中定义，未知值由 schema 先行拦截。
       - path: scripts/walkthrough-review.mjs
         note: PR 检视 diff 数据层：numstat + 统一 diff hunk 解析 + 注解归位。
         changes:
@@ -865,6 +882,8 @@ codeMap:
                     to: done
                     label: 是
                   - from: gate
+                    to: core
+                    label: 否，重试
             note: |
               夹具的 edges 覆盖带标签正向边与回边，marker id 唯一性依赖 idSuffix 派生。
           - snippet: |
@@ -944,6 +963,8 @@ codeMap:
         note: 回填目标与验收。
       - path: .agents/flow/issues/m2-walkthrough-site.md
         note: 骨架 issue 收尾状态。
+      - path: .agents/notes/implemented/architecture/2026-10-18-walkthrough-flowchart.md
+        note: 流程图渲染选型决策（dagre 自绘 vs mermaid）。
       - path: .agents/notes/implemented/process/2026-10-15-walkthrough-site.md
         note: 覆盖率定版与快照粒度经验。
       - path: .agents/flow/issues/m2-walkthrough-backfill.i18n.yaml
@@ -956,6 +977,8 @@ codeMap:
         note: 回填 issue 英文侧。
       - path: .agents/flow/issues/m2-walkthrough-site.en.md
         note: 骨架 issue 英文侧收尾。
+      - path: .agents/notes/implemented/architecture/2026-10-18-walkthrough-flowchart.en.md
+        note: 流程图渲染选型决策（英文侧）。
       - path: .agents/notes/implemented/process/2026-10-15-walkthrough-site.en.md
         note: 决策记录英文侧校准段。
       - path: scripts/verify-walkthrough.spec.mjs
@@ -974,6 +997,8 @@ codeMap:
         note: 生成纪律入口：硬性工作流、质量红线、自检与分册路由。
       - path: .agents/skills/walkthrough-change-metadata-gen/references/narrative-guide.md
         note: 四层叙事写作规范与通俗性标准。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/flowchart-guide.md
+        note: 流程图字段写法与图文互链规范。
       - path: .agents/skills/walkthrough-change-metadata-gen/references/diagram-guide.md
         note: SVG 图示类型选择、制作标准与引用规则。
       - path: .agents/skills/walkthrough-change-metadata-gen/references/code-map-guide.md

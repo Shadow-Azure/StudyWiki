@@ -54,6 +54,9 @@ describe("SVG 绘制", () => {
     expect(svg).toContain("处理 &lt;数据&gt; 与 &amp; 转义");
     expect(svg).not.toContain("处理 <数据>");
     expect(svg).toContain("<text");
+    // 居中锚点：文字以节点中心对称绘制，而不是从中心向右延伸。
+    expect(svg).toContain('class="fc-label" font-size="13" text-anchor="middle"');
+    expect(svg).toContain('class="fc-edge-label" font-size="11" text-anchor="middle"');
   });
 
   it("不同 idSuffix 生成不同 marker id，同页多图不冲突", () => {

@@ -150,7 +150,7 @@ function renderNodeText(box, dagreNode) {
   const tspans = box.lines
     .map((line, index) => `<tspan x="${dagreNode.x}" y="${(startY + index * LINE_HEIGHT).toFixed(1)}">${escapeText(line)}</tspan>`)
     .join("");
-  return `<text class="fc-label" font-size="${FONT_SIZE}">${tspans}</text>`;
+  return `<text class="fc-label" font-size="${FONT_SIZE}" text-anchor="middle">${tspans}</text>`;
 }
 
 /** 把 dagre 边折点转成折线路径。 */
@@ -196,7 +196,7 @@ export function renderFlowchartSvg(chart, idSuffix) {
     if (!dagreEdge?.points?.length) return;
     const label = edge.label ? String(edge.label) : "";
     const labelAttr = label
-      ? `<text class="fc-edge-label" font-size="${EDGE_LABEL_FONT}" x="${dagreEdge.x.toFixed(1)}" y="${(dagreEdge.y + EDGE_LABEL_FONT * 0.36).toFixed(1)}">${escapeText(label)}</text>`
+      ? `<text class="fc-edge-label" font-size="${EDGE_LABEL_FONT}" text-anchor="middle" x="${dagreEdge.x.toFixed(1)}" y="${(dagreEdge.y + EDGE_LABEL_FONT * 0.36).toFixed(1)}">${escapeText(label)}</text>`
       : "";
     parts.push(
       `<path class="fc-edge" d="${edgePath(dagreEdge.points)}" marker-end="url(#${markerId})"/>`,
