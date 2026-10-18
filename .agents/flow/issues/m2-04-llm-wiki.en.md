@@ -8,6 +8,10 @@ milestone: m2
 priority: P0
 status: in-progress
 scope:
+  - .agents/flow/issues/m2-04-llm-wiki.*
+  - .agents/flow/issues/m3-03-raw-index.*
+  - plans/2026-10-18-llm-wiki-*.md
+  - walkthrough/assets/m2-04-llm-wiki/**
   - src/plugins/**
   - src/host/**
   - src/loader/**
