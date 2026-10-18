@@ -477,9 +477,23 @@ describe("AgentService", () => {
     expect(calls).toEqual(["a"]);
     expect(captured.system!).toContain("# A 段");
     expect(captured.system!).toContain("# C 段");
+    expect(captured.system!.indexOf("# A 段")).toBeLessThan(captured.system!.indexOf("# C 段"));
     expect(captured.system!).not.toContain("B 段");
+
+    const offReplacement = agent.registerPromptSection("a", async () => {
+      calls.push("replacement");
+      return "# A 替换段";
+    });
     offA();
     await session.send("again");
+    expect(calls).toEqual(["a", "replacement"]);
+    expect(captured.system!).toContain("# A 替换段");
+    expect(captured.system!).not.toContain("# A 段");
+    expect(captured.system!).toContain("# C 段");
+
+    offReplacement();
+    await session.send("third");
+    expect(captured.system!).not.toContain("# A 替换段");
     expect(captured.system!).not.toContain("# A 段");
   });
 });
