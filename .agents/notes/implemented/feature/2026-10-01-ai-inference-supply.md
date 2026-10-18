@@ -15,7 +15,7 @@ Status: implemented
 | 层 | 职责 | 不做什么 |
 |---|---|---|
 | Rust（薄能力层） | settings.json 持久化与一次性迁移、HTTP egress（webview 有 CORS，前端发不了厂商 API）、0600 权限、错误归一 | 会话、路由、重试、任何 agent 逻辑 |
-| 前端宿主服务 `ctx.llm`（第七服务） | 模型路由（`chat({model})` 解析归属 endpoint）、脱敏列表、inject 白名单 | 直接持 key、直接发网络请求 |
+| 前端宿主服务 `ctx.llm`（第七服务） | 模型路由（`chat({model})` 解析归属 endpoint）、脱敏列表、guard 成员白名单 | 直接持 key、直接发网络请求 |
 | 内置 `llm-settings` 插件 | 纯 UI：厂商预设实例化、填 key、探测 | 业务逻辑 |
 
 调用形态：插件调 `ctx.llm.chat({model, messages})` → 前端路由出 `(endpointId, model)` → invoke Rust `llm_chat` → 复用既有 `ureq`（rustls）发 HTTPS → 归一错误后原路返回。`llm_chat` / `llm_probe` 为 async 命令 + `spawn_blocking`（同步命令会随 tauri-macros `body_blocking` 在主线程执行，推理最长 300s 期间全窗口冻结）。非流式一趟 IPC；流式在 m2-02 用 Tauri `ipc::Channel` 增量加入，调用形状不变。
@@ -66,7 +66,7 @@ Status: implemented
 
 ### 前端宿主服务与内置插件
 
-`src/host/llm.ts`（deps 可注入）挂 `ctx.llm`，facade：`list / upsert / remove / probe / chat`；外置插件 inject 白名单只放 `list / probe / chat`，写操作仅内置插件可用。内置 `llm-settings` 插件：顶栏入口 + 面板；厂商预设表（构建期静态模板，不锁死，经 `llm_list_presets` 提供）——智谱 GLM（`https://open.bigmodel.cn/api/paas/v4`，glm-5.3 / glm-5.3-flash）、DeepSeek（`https://api.deepseek.com/v1`，deepseek-v4-pro / deepseek-v4-flash）、Kimi（`https://api.moonshot.cn/v1`，kimi-k3）、MiniMax（`https://api.minimaxi.com/v1`，minimax-m3）、自定义 OpenAI 兼容；选预设自动带 baseUrl + 模型清单（可增删改），用户只必填 apiKey；每模型可标 `vision`；保存后可一键探测。
+`src/host/llm.ts`（deps 可注入）挂 `ctx.llm`，facade：`list / upsert / remove / probe / chat`；外置插件 guard 的 llm 成员白名单只放 `list / probe / chat`，写操作仅内置插件可用。内置 `llm-settings` 插件：顶栏入口 + 面板；厂商预设表（构建期静态模板，不锁死，经 `llm_list_presets` 提供）——智谱 GLM（`https://open.bigmodel.cn/api/paas/v4`，glm-5.3 / glm-5.3-flash）、DeepSeek（`https://api.deepseek.com/v1`，deepseek-v4-pro / deepseek-v4-flash）、Kimi（`https://api.moonshot.cn/v1`，kimi-k3）、MiniMax（`https://api.minimaxi.com/v1`，minimax-m3）、自定义 OpenAI 兼容；选预设自动带 baseUrl + 模型清单（可增删改），用户只必填 apiKey；每模型可标 `vision`；保存后可一键探测。
 
 ### 模型配置 UI 与厂商投影
 
@@ -74,7 +74,7 @@ Status: implemented
 
 ### 密钥立场
 
-settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件白名单不含写命令，也不含 `llm_reveal_key`（编辑态眼睛按需揭示明文的专用命令，仅内置插件可达）。编辑表单的掩码是只读展示态并有提示；眼睛切明文后才可编辑，切回掩码只重建展示值，不丢弃待保存修改。保存语义由显式 edited 态驱动：未动掩码 / 只揭示未改 = 保留已存 key，明文新值 / 删空 = 更新并带 dirty 标记，删空即显式清空——“没动 key 栏”与“故意清空”在 wire 上可区分。仓库不存密钥的约束不受影响（用户目录）。
+settings.json 明文直存，与 Claude Code（`~/.claude/settings.json` env 明文 token）、Codex（`~/.codex/auth.json`）、dsh（`apiKey` 字面值一等公民）同水位。加固：文件 0600；命令面只进不出（list 脱敏）；外置插件成员白名单不含写命令，也不含 `llm_reveal_key`（编辑态眼睛按需揭示明文的专用命令，仅内置插件可达）。编辑表单的掩码是只读展示态并有提示；眼睛切明文后才可编辑，切回掩码只重建展示值，不丢弃待保存修改。保存语义由显式 edited 态驱动：未动掩码 / 只揭示未改 = 保留已存 key，明文新值 / 删空 = 更新并带 dirty 标记，删空即显式清空——“没动 key 栏”与“故意清空”在 wire 上可区分。仓库不存密钥的约束不受影响（用户目录）。
 
 ### 门禁与文档
 
