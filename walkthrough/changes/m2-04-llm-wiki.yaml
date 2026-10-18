@@ -3,7 +3,7 @@ issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
   files: 72
-  additions: 7499
+  additions: 7616
   deletions: 1329
 feature: |
   这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧只在打开源时探测该源并更新它自己的 `.study-wiki/index.yaml` 行，未打开源不扫描、不探测；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
@@ -1887,4 +1887,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: c23ea53
+skill_gen_commit_id: 18a1900
