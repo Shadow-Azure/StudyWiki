@@ -51,3 +51,4 @@ llm-wiki is the compiled knowledge layer built on the agent (immutable raw + an 
 - `probe_source_file` provides authorized size/mtime/SHA-256; state classification follows same path, same content hash, then unknown, producing fresh/stale/moved/unknown.
 - Moved sources re-point the index row while building prompt context; text writes create parent directories automatically.
 - Windows/POSIX file-tree paths are normalized so the index path, sources page, and active-source state have identical semantics on all three desktop platforms.
+- Each turn handles only the active file: with no active file the service does not scan the library, and with one it probes and updates only that source's row; unopened sources keep their last record and switching files does not clear all probe samples.

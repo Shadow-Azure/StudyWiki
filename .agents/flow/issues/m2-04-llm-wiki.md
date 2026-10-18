@@ -51,3 +51,4 @@ llm-wiki 是构建在 agent 上的编译式知识层（raw 不可变 + wiki 由 
 - `probe_source_file` 提供授权内 size/mtime/SHA-256；状态判定按同路径、同内容哈希、unknown 的顺序输出 fresh/stale/moved/unknown。
 - moved 在 prompt 上下文构建时直接重指索引行；写文本文件自动创建父目录。
 - Windows/POSIX 文件树路径统一规范化，索引 path、sources page 与活动源状态在三种桌面平台语义一致。
+- 每回合只处理当前打开文件：无活动文件不扫库，有活动文件只探测并更新该源的索引行；未打开源保持上次记录，切换文件不清空全部 probe 样本。

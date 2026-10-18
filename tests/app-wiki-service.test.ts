@@ -12,11 +12,21 @@ function fakeWikiHost(opts: {
   root?: string | null;
   files?: Record<string, string>;
   activePath?: string | null;
-  probe?: (path: string) => ProbeSample | null;
+  probe?: (path: string, known?: ProbeSample) => ProbeSample | null;
   tree?: (root: string) => FileNode[];
 }) {
   const files = new Map(Object.entries(opts.files ?? {}));
-  const probeImpl = opts.probe ?? (() => ({ size: 10, mtimeMs: 1000, sha256: "aa".repeat(32) }));
+  const probeImpl = opts.probe ?? ((path: string) => {
+    if (
+      path.includes("/.study-wiki/llm-wiki/sources/") &&
+      !files.has(path)
+    ) {
+      return null;
+    }
+    return { size: 10, mtimeMs: 1000, sha256: "aa".repeat(32) };
+  });
+  const probeCalls: Array<{ path: string; known?: ProbeSample }> = [];
+  const treeCalls: string[] = [];
   const filesSvc = {
     readText: async (path: string) => {
       const value = files.get(path);
@@ -26,14 +36,18 @@ function fakeWikiHost(opts: {
     writeText: async (path: string, contents: string) => {
       files.set(path, contents);
     },
-    readTree: async (root: string) => opts.tree?.(root) ?? buildTree(root, [...files.keys()]),
-    probeSourceFile: async (path: string) => {
-      const sample = probeImpl(path);
+    readTree: async (root: string) => {
+      treeCalls.push(root);
+      return opts.tree?.(root) ?? buildTree(root, [...files.keys()]);
+    },
+    probeSourceFile: async (path: string, known?: ProbeSample) => {
+      probeCalls.push({ path, known });
+      const sample = probeImpl(path, known);
       if (sample === null) throw new Error("ENOENT");
       return sample;
     },
   } as unknown as FilesService;
-  const listeners = new Set<(file: unknown) => void>();
+  const listeners = new Map<string, Set<(file: unknown) => void>>();
   const workspace = {
     get root() {
       return opts.root ?? "/lib";
@@ -42,16 +56,19 @@ function fakeWikiHost(opts: {
       return opts.activePath ? { name: "x", path: opts.activePath, kind: "markdown" } : null;
     },
     events: {
-      on: (_channel: string, listener: (file: unknown) => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
+      on: (channel: string, listener: (file: unknown) => void) => {
+        const channelListeners = listeners.get(channel) ?? new Set();
+        channelListeners.add(listener);
+        listeners.set(channel, channelListeners);
+        return () => channelListeners.delete(listener);
       },
-      emit: (file: unknown) => [...listeners].forEach((listener) => listener(file)),
+      emit: (channel: string, file: unknown) =>
+        [...(listeners.get(channel) ?? [])].forEach((listener) => listener(file)),
     },
     openFile: async () => true,
     guardSwitch: () => () => {},
   } as unknown as WorkspaceFacade;
-  return { filesSvc, workspace, files };
+  return { filesSvc, workspace, files, probeCalls, treeCalls };
 }
 
 function buildTree(root: string, paths: string[]): FileNode[] {
@@ -132,23 +149,11 @@ describe("wiki contextSection", () => {
     const root = String.raw`C:\lib`;
     const sourcePage = String.raw`C:\lib\.study-wiki\llm-wiki\sources\notes\rust.md`;
     const activePath = String.raw`C:\lib\notes\rust.md`;
-    const treeRoots: string[] = [];
-    const { filesSvc, workspace, files } = fakeWikiHost({
+    const { filesSvc, workspace, files, probeCalls } = fakeWikiHost({
       root,
       activePath,
       files: {
         [sourcePage]: "---\ntype: source\n---\n# Rust",
-      },
-      tree: (requested) => {
-        treeRoots.push(requested);
-        return [
-          {
-            name: "notes",
-            path: String.raw`C:\lib\.study-wiki\llm-wiki\sources\notes`,
-            kind: "dir",
-            children: [{ name: "rust.md", path: sourcePage, kind: "markdown" }],
-          },
-        ];
       },
       probe: (path) => {
         const normalized = path.replaceAll("\\", "/");
@@ -172,8 +177,94 @@ describe("wiki contextSection", () => {
     );
     expect(machineIndex).toContain(`"${"aa".repeat(32)}"`);
     expect(machineIndex).toContain("size: 9");
-    expect(treeRoots).toEqual(["C:/lib/.study-wiki/llm-wiki/sources"]);
+    expect(probeCalls.map((call) => call.path)).toContain(
+      "C:/lib/.study-wiki/llm-wiki/sources/notes/rust.md",
+    );
     expect((await wiki.sourceState("notes/rust.md")).state).toBe("fresh");
+  });
+
+  it("只处理活动源：不扫描未打开源，并保留其索引行", async () => {
+    const recordA = {
+      path: "notes/a.md",
+      kind: "text" as const,
+      sha256: "aa".repeat(32),
+      size: 9,
+      analyzedAt: "1970-01-01T00:00:01.000Z",
+      artifact: null,
+    };
+    const recordB = {
+      path: "notes/b.md",
+      kind: "text" as const,
+      sha256: "bb".repeat(32),
+      size: 20,
+      analyzedAt: "1970-01-01T00:00:02.000Z",
+      artifact: null,
+    };
+    const { filesSvc, workspace, files, probeCalls, treeCalls } = fakeWikiHost({
+      activePath: "/lib/notes/a.md",
+      files: {
+        [MACHINE_INDEX]: serializeMachineIndex({ version: 1, sources: [recordA, recordB] }),
+        "/lib/.study-wiki/llm-wiki/sources/notes/a.md": "---\ntype: source\n---\n# A",
+        "/lib/.study-wiki/llm-wiki/sources/notes/b.md": "---\ntype: source\n---\n# B",
+      },
+      probe: (path) => {
+        if (path.endsWith("/sources/notes/a.md")) {
+          return { size: 4, mtimeMs: 1000, sha256: "aa".repeat(32) };
+        }
+        if (path.endsWith("/sources/notes/b.md")) {
+          return { size: 4, mtimeMs: 2000, sha256: "bb".repeat(32) };
+        }
+        if (path === "/lib/notes/a.md") {
+          return { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) };
+        }
+        if (path === "/lib/notes/b.md") {
+          return { size: 20, mtimeMs: 4000, sha256: "bb".repeat(32) };
+        }
+        return null;
+      },
+    });
+    const wiki = createWikiService({ files: filesSvc, workspace });
+
+    const section = await wiki.contextSection({
+      root: "/lib",
+      activeFilePath: "/lib/notes/a.md",
+    });
+
+    expect(section).toContain("活动文件已分析");
+    expect(treeCalls).toEqual([]);
+    expect(probeCalls.map((call) => call.path)).not.toContain("/lib/notes/b.md");
+    expect(probeCalls.map((call) => call.path)).not.toContain(
+      "/lib/.study-wiki/llm-wiki/sources/notes/b.md",
+    );
+    expect(files.get(MACHINE_INDEX)).toContain('path: "notes/b.md"');
+    expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:02.000Z");
+  });
+
+  it("无活动文件 → 不扫描、不探测、不改写已有索引", async () => {
+    const record = {
+      path: "notes/a.md",
+      kind: "text" as const,
+      sha256: "aa".repeat(32),
+      size: 9,
+      analyzedAt: "1970-01-01T00:00:01.000Z",
+      artifact: null,
+    };
+    const machineIndex = serializeMachineIndex({ version: 1, sources: [record] });
+    const { filesSvc, workspace, files, probeCalls, treeCalls } = fakeWikiHost({
+      activePath: null,
+      files: {
+        [MACHINE_INDEX]: machineIndex,
+        [WIKI_INDEX]: "# 目录\n",
+      },
+    });
+    const wiki = createWikiService({ files: filesSvc, workspace });
+
+    const section = await wiki.contextSection({ root: "/lib", activeFilePath: null });
+
+    expect(section).toContain("目录");
+    expect(probeCalls).toEqual([]);
+    expect(treeCalls).toEqual([]);
+    expect(files.get(MACHINE_INDEX)).toBe(machineIndex);
   });
 
   it("源内容变化 → stale 并提示重新 ingest", async () => {
@@ -223,7 +314,9 @@ describe("wiki contextSection", () => {
           ? null
           : path.endsWith(".study-wiki/llm-wiki/sources/old.md")
             ? { size: 4, mtimeMs: 5000, sha256: "aa".repeat(32) }
-            : { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) },
+            : path.endsWith(".study-wiki/llm-wiki/sources/notes/new.md")
+              ? null
+              : { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) },
     });
     const wiki = createWikiService({ files: filesSvc, workspace });
     const section = await wiki.contextSection({ root: "/lib", activeFilePath: "/lib/notes/new.md" });
@@ -288,6 +381,7 @@ describe("wiki contextSection", () => {
       },
       probe: (path) => {
         if (path === "/lib/notes/old.md") return null;
+        if (path.endsWith(".study-wiki/llm-wiki/sources/notes/new.md")) return null;
         if (path.endsWith(".study-wiki/llm-wiki/sources/notes/old.md")) {
           return { size: 4, mtimeMs: 5000, sha256: "aa".repeat(32) };
         }
@@ -398,6 +492,59 @@ describe("app-wiki plugin registration", () => {
     await expect(sections.get("wiki")!({ root: "/lib", activeFilePath: null })).resolves.toBeNull();
     dispose();
     expect(promptDisposed).toBe(true);
-    expect(eventDisposals).toBe(2);
+    expect(eventDisposals).toBe(1);
+  });
+
+  it("file-opened 不清空已打开源的 known 样本", async () => {
+    const { filesSvc, workspace, probeCalls } = fakeWikiHost({
+      root: "/lib",
+      activePath: "/lib/notes/a.md",
+      files: {
+        "/lib/.study-wiki/llm-wiki/sources/notes/a.md": "---\ntype: source\n---\n# A",
+      },
+      probe: (path) =>
+        path.endsWith("/sources/notes/a.md")
+          ? { size: 4, mtimeMs: 1000, sha256: "aa".repeat(32) }
+          : { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) },
+    });
+    const sections = new Map<
+      string,
+      (input: { root: string; activeFilePath: string | null }) => Promise<string | null>
+    >();
+    const context = {
+      reflect: { provide: () => {} },
+      agent: {
+        registerPromptSection: (
+          id: string,
+          provider: (input: { root: string; activeFilePath: string | null }) => Promise<string | null>,
+        ) => {
+          sections.set(id, provider);
+          return () => sections.delete(id);
+        },
+      },
+      files: filesSvc,
+      workspace,
+    } as never;
+    appWiki.apply(context);
+    const section = sections.get("wiki")!;
+
+    await section({ root: "/lib", activeFilePath: "/lib/notes/a.md" });
+    const beforeFileOpen = probeCalls.length;
+    expect(
+      probeCalls.find((call) => call.path === "/lib/notes/a.md")?.known,
+    ).toBeUndefined();
+
+    workspace.events.emit("file-opened", {
+      name: "b.md",
+      path: "/lib/notes/b.md",
+      kind: "markdown",
+    });
+    await section({ root: "/lib", activeFilePath: "/lib/notes/a.md" });
+
+    const afterFileOpen = probeCalls
+      .slice(beforeFileOpen)
+      .filter((call) => call.path === "/lib/notes/a.md");
+    expect(afterFileOpen.length).toBeGreaterThan(0);
+    expect(afterFileOpen.every((call) => call.known !== undefined)).toBe(true);
   });
 });

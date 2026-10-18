@@ -9,7 +9,6 @@ import {
   createProbeCache,
   kindFromPath,
   parseMachineIndex,
-  reconcileIndex,
   serializeMachineIndex,
   type ArtifactEvidence,
   type MachineIndex,
@@ -26,11 +25,11 @@ const TRUNCATION_SUFFIX = "…（截断）";
 
 /** wiki 知识层服务：源状态判定与 prompt 贡献段。 */
 export interface WikiService {
-  /** 某库相对路径源的分析状态（内部先物化索引再判定）。 */
+  /** 某库相对路径源的分析状态；只探测并更新该源自己的索引行。 */
   sourceState(relPath: string): Promise<SourceState>;
   /** prompt 贡献段：wiki 未初始化且无库内活动文件时返回 null。 */
   contextSection(input: PromptSectionInput): Promise<string | null>;
-  /** 失效 probe 缓存与根记忆（换库根/活动文件切换时由事件触发）。 */
+  /** 失效 probe 缓存与根记忆（换库根时由事件触发）。 */
   invalidate(): void;
 }
 
@@ -59,32 +58,24 @@ export function createWikiService(deps: {
     }
   }
 
-  async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
-    const evidence = new Map<string, ArtifactEvidence>();
-    const sourcesRoot = join(root, SOURCES_DIR);
-    let nodes;
-    try {
-      nodes = await deps.files.readTree(sourcesRoot);
-    } catch {
-      return [];
-    }
-    for (const path of markdownPaths(nodes)) {
-      const page = toRel(root, path);
-      const sourceRel = relativeTo(sourcesRoot, path);
-      if (page === null || sourceRel === null) continue;
-      const rel = sourceRel.slice(0, -".md".length);
-      const source = await resolveSourceFromPage(path, rel);
-      const sample = await probeAbs(path);
-      if (sample === null) continue;
-      const previous = evidence.get(source);
-      if (previous === undefined || sample.mtimeMs > previous.newestArtifactMtimeMs) {
-        evidence.set(source, { source, page, newestArtifactMtimeMs: sample.mtimeMs });
-      }
-    }
-    return [...evidence.values()];
+  async function pageEvidence(
+    root: string,
+    source: string,
+    page: string,
+  ): Promise<ArtifactEvidence | null> {
+    const sample = await probeAbs(join(root, page));
+    if (sample === null) return null;
+    return { source, page, newestArtifactMtimeMs: sample.mtimeMs };
   }
 
-  async function refresh(root: string): Promise<void> {
+  async function directEvidence(root: string, source: string): Promise<ArtifactEvidence | null> {
+    return pageEvidence(root, source, sourcesPagePath(source));
+  }
+
+  async function resolveSourceState(
+    root: string,
+    relPath: string,
+  ): Promise<{ state: SourceState; index: MachineIndex | null }> {
     if (lastRoot !== root) {
       cache.invalidate();
       knownSamples.clear();
@@ -92,47 +83,105 @@ export function createWikiService(deps: {
     }
     const prevText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
     const prev = prevText === null ? null : parseMachineIndex(prevText);
-    const evidence = await collectEvidence(root);
-    if (evidence.length === 0 && prevText === null) return;
-    const probed = new Map<string, ProbeSample>();
-    for (const item of evidence) {
-      const previous =
-        prev?.sources.find((record) => record.path === item.source) ??
-        prev?.sources.find((record) => record.page === item.page);
-      const linked =
-        previous !== undefined &&
-        previous.page === item.page &&
-        previous.path !== item.source;
-      const source = linked ? previous.path : item.source;
-      const sample = await probeAbs(join(root, source));
-      if (
-        sample !== null &&
-        (previous === undefined || previous.sha256 === sample.sha256)
-      ) {
-        probed.set(source, sample);
-      }
+    const sample = await probeAbs(join(root, relPath));
+    if (sample === null) return { state: { state: "unknown" }, index: prev };
+
+    const state = classifySource(prev, relPath, sample);
+    if (state.state === "stale") return { state, index: prev };
+
+    if (state.state === "moved") {
+      const evidence = await directEvidence(root, relPath);
+      const page =
+        evidence?.page ??
+        state.record.page ??
+        (await findSourcePage(root, state.record.path)) ??
+        sourcesPagePath(state.record.path);
+      const record: SourceRecord = {
+        ...state.record,
+        path: relPath,
+        size: sample.size,
+        sha256: sample.sha256,
+        page,
+      };
+      const index = upsertRecord(prev, record, state.record);
+      await writeIndex(root, prevText, index);
+      return { state: { state: "fresh", record }, index };
     }
-    const next = {
-      version: 1,
-      sources: reconcileIndex(prev, evidence, probed).sources.map((record) => {
-        const previous = prev?.sources.find((item) => item.path === record.path);
-        return previous !== undefined && !probed.has(record.path)
-          ? { ...record, analyzedAt: previous.analyzedAt }
-          : record;
-      }),
-    } satisfies MachineIndex;
-    const serialized = serializeMachineIndex(next);
-    if (serialized !== prevText) {
+
+    let evidence = await directEvidence(root, relPath);
+    if (evidence === null && state.state === "fresh" && state.record.page !== undefined) {
+      evidence = await pageEvidence(root, relPath, state.record.page);
+    }
+    if (evidence === null && state.state === "unknown") {
+      const page = await findSourcePage(root, relPath);
+      if (page !== null) evidence = await pageEvidence(root, relPath, page);
+    }
+    if (evidence === null) {
+      if (state.state === "fresh") {
+        const index = removeRecord(prev, state.record);
+        await writeIndex(root, prevText, index);
+        return { state: { state: "unknown" }, index };
+      }
+      return { state, index: prev };
+    }
+
+    if (state.state === "fresh") {
+      const record =
+        state.record.page === evidence.page
+          ? state.record
+          : { ...state.record, page: evidence.page };
+      if (record === state.record) return { state: { state: "fresh", record }, index: prev };
+      const index = upsertRecord(prev, record, state.record);
+      await writeIndex(root, prevText, index);
+      return { state: { state: "fresh", record }, index };
+    }
+
+    const record: SourceRecord = {
+      path: relPath,
+      kind: kindFromPath(relPath),
+      sha256: sample.sha256,
+      size: sample.size,
+      analyzedAt: new Date(evidence.newestArtifactMtimeMs).toISOString(),
+      artifact: null,
+      page: evidence.page,
+    };
+    const index = upsertRecord(prev, record);
+    await writeIndex(root, prevText, index);
+    return { state: { state: "fresh", record }, index };
+  }
+
+  async function writeIndex(
+    root: string,
+    previous: string | null,
+    index: MachineIndex,
+  ): Promise<void> {
+    const serialized = serializeMachineIndex(index);
+    if (serialized !== previous) {
       await deps.files.writeText(join(root, INDEX_YAML), serialized);
     }
+  }
+
+  async function findSourcePage(root: string, source: string): Promise<string | null> {
+    let nodes;
+    try {
+      nodes = await deps.files.readTree(join(root, SOURCES_DIR));
+    } catch {
+      return null;
+    }
+    for (const path of markdownPaths(nodes)) {
+      const sourceRel = relativeTo(join(root, SOURCES_DIR), path);
+      if (sourceRel === null) continue;
+      const rel = sourceRel.slice(0, -".md".length);
+      if ((await resolveSourceFromPage(path, rel)) === source) {
+        return toRel(root, path);
+      }
+    }
+    return null;
   }
 
   async function contextSection(input: PromptSectionInput): Promise<string | null> {
     const root = deps.workspace.root;
     if (root === null) return null;
-    await refresh(root);
-    const indexText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
-    const index = indexText === null ? null : parseMachineIndex(indexText);
     const initialized = await deps.files
       .readText(join(root, INDEX_MD))
       .then(() => true)
@@ -141,33 +190,8 @@ export function createWikiService(deps: {
     const rel = toRel(root, input.activeFilePath);
     const parts: string[] = [];
     if (rel !== null) {
-      const sample = await probeAbs(join(root, rel));
-      if (sample !== null) {
-        const state = classifySource(index, rel, sample);
-        if (state.state === "moved") {
-          const page =
-            state.record.page ??
-            (await findSourcePage(root, state.record.path)) ??
-            sourcesPagePath(state.record.path);
-          const record: SourceRecord = {
-            ...state.record,
-            path: rel,
-            size: state.sample.size,
-            sha256: state.sample.sha256,
-            page,
-          };
-          const rewritten: MachineIndex = {
-            version: 1,
-            sources: index!.sources.map((item) => (item === state.record ? record : item)),
-          };
-          await deps.files.writeText(join(root, INDEX_YAML), serializeMachineIndex(rewritten));
-          parts.push(stateLine({ state: "fresh", record }, rel));
-        } else {
-          parts.push(stateLine(state, rel));
-        }
-      } else {
-        parts.push(stateLine({ state: "unknown" }, rel));
-      }
+      const { state } = await resolveSourceState(root, rel);
+      parts.push(stateLine(state, rel));
     }
     if (initialized) {
       const head = await boundedHead(root);
@@ -200,35 +224,12 @@ export function createWikiService(deps: {
     return `${rel}.md`;
   }
 
-  async function findSourcePage(root: string, source: string): Promise<string | null> {
-    const sourcesRoot = join(root, SOURCES_DIR);
-    let nodes;
-    try {
-      nodes = await deps.files.readTree(sourcesRoot);
-    } catch {
-      return null;
-    }
-    for (const path of markdownPaths(nodes)) {
-      const sourceRel = relativeTo(sourcesRoot, path);
-      if (sourceRel === null) continue;
-      const rel = sourceRel.slice(0, -".md".length);
-      if ((await resolveSourceFromPage(path, rel)) === source) {
-        return toRel(root, path);
-      }
-    }
-    return null;
-  }
-
   return {
     async sourceState(relPath) {
       const root = deps.workspace.root;
       if (root === null) return { state: "unknown" };
-      await refresh(root);
-      const text = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
-      const index = text === null ? null : parseMachineIndex(text);
       const rel = normalize(relPath);
-      const sample = await probeAbs(join(root, rel));
-      return sample === null ? { state: "unknown" } : classifySource(index, rel, sample);
+      return (await resolveSourceState(root, rel)).state;
     },
     contextSection,
     invalidate() {
@@ -249,6 +250,32 @@ function relativeTo(root: string, path: string): string | null {
     return null;
   }
   return rel;
+}
+
+function upsertRecord(
+  index: MachineIndex | null,
+  record: SourceRecord,
+  previous?: SourceRecord,
+): MachineIndex {
+  const sources = index?.sources ?? [];
+  const target = previous ?? sources.find((item) => item.path === record.path);
+  if (target === undefined) {
+    return { version: 1, sources: [...sources.filter((item) => item.path !== record.path), record] };
+  }
+  const next = sources.map((item) => (item === target ? record : item));
+  return {
+    version: 1,
+    sources: next.filter((item, position) =>
+      next.findIndex((candidate) => candidate.path === item.path) === position
+    ),
+  };
+}
+
+function removeRecord(index: MachineIndex | null, record: SourceRecord): MachineIndex {
+  return {
+    version: 1,
+    sources: (index?.sources ?? []).filter((item) => item.path !== record.path),
+  };
 }
 
 function stateLine(state: SourceState, rel: string): string {

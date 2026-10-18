@@ -18,10 +18,8 @@ export function apply(ctx: Context): () => void {
     (input) => wiki.contextSection(input),
   );
   const offRoot = ctx.workspace.events.on("root-changed", () => wiki.invalidate());
-  const offFile = ctx.workspace.events.on("file-opened", () => wiki.invalidate());
   return () => {
     offRoot();
-    offFile();
     unregister();
   };
 }

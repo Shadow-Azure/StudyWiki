@@ -6,7 +6,7 @@ scale:
   additions: 7499
   deletions: 1329
 feature: |
-  这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧递归扫描 sources 页，用产物证据和 `probe_source_file` 维护 `.study-wiki/index.yaml`；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
+  这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧只在打开源时探测该源并更新它自己的 `.study-wiki/index.yaml` 行，未打开源不扫描、不探测；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
 
   ![llm-wiki 数据流](../assets/m2-04-llm-wiki/knowledge-flow.svg)
 
@@ -21,9 +21,9 @@ userFlow:
 architectural: |
   新增 `app-wiki` 内置插件发布 `ctx.wiki`，并经 `ctx.agent.registerPromptSection` 进入 system prompt；这保持了插件只经宿主服务的分层。wiki 页面由 agent 写，机器索引由服务独占写，二者通过现存产物证据关联。
 
-  链路沿图 1：活动源经 files 服务进入 Rust probe；probe 返回 size/mtime/SHA-256，app-wiki 先物化 index.yaml，再按同路径、同哈希、unknown 判定 fresh/stale/moved/unknown。状态、index 头部和 schema 组成 prompt 段，驱动下一轮 ingest/query/lint。
+  链路沿图 1：活动源经 files 服务进入 Rust probe；probe 返回 size/mtime/SHA-256，app-wiki 只更新这条活动源的索引行，再按同路径、同哈希、unknown 判定 fresh/stale/moved/unknown。状态、index 头部和 schema 组成 prompt 段，驱动下一轮 ingest/query/lint。
 
-  物化索引时，服务递归展开 sources 目录树，并把每个来源行绑定到实际 sources 页路径。源移动后，页面 frontmatter 仍可能写旧路径；绑定让下一次 refresh 直接探测索引里的新路径，保留哈希、大小与分析时间，避免回退成空记录。
+  打开源时，服务优先直取镜像约定的 sources 页，并把这条索引行绑定到实际页面路径。源移动后，页面 frontmatter 仍可能写旧路径；保存的 page 绑定让下一次打开直接探测索引里的新路径，保留哈希、大小与分析时间，避免回退成空记录。页面树只在 moved 旧页没有 page 绑定或未知源缺少约定页时作为回退。
 architecturalFlowchart:
   title: llm-wiki 数据流
   direction: LR
@@ -79,7 +79,7 @@ architecturalFlowchart:
 design: |
   约束是环境无关、无新运行时依赖、同版本行为一致，并且不能让 agent 手写派生索引。候选包括库内 schema、专用 wiki 工具、向量检索和程序性骨架初始化；最终选择插件内 schema + prompt 贡献缝 + 通用工具。代价是程序必须自己闭合证据、哈希、状态和移动语义。
 
-  未初始化库不应因 prompt 构造产生空索引：refresh 在没有产物且没有旧索引时直接返回，首次对话不会凭空创建 `.study-wiki/`。
+  未初始化库不应因 prompt 构造产生空索引：无活动文件时不扫描、不探测、不写索引；活动源没有产物时也不新增空行，首次对话不会凭空创建 `.study-wiki/`。
 
   路径在服务边界统一用 `pathe` 归一：文件树节点保留 OS 原生形状，`toRel`、sources 根相对路径和 probe 缓存键仍得到 `/` 规范的库相对路径。这样 Windows 的 `\`、macOS/Linux 的 `/` 与混合输入都走同一套相对化逻辑，索引不因平台改变含义。
 
@@ -87,7 +87,7 @@ design: |
 
   图 2 把判定序和索引物化拆开：同路径先给出 fresh/stale，内容哈希再识别 moved，最后才 unknown；索引行始终由现存产物证据驱动，损坏输入丢弃重建。这个顺序避免“移动后的同内容副本”被当成全新源。
 
-  产物页绑定补上 moved 的持久化缺口：只改索引行时，页面里的旧 source 会在下一次 refresh 把记录拉回旧路径。索引行因此保存实际页面路径，refresh 先用它找到已重指的行，再从新路径取 size 与内容哈希；只有哈希仍匹配旧记录才刷新样本，迁址后再次修改内容会保持 stale。artifact 和分析时间继续保持旧值，不触发重分析。
+  产物页绑定补上 moved 的持久化缺口：只改索引行时，页面里的旧 source 会在下一次打开把记录拉回旧路径。索引行因此保存实际页面路径，活动源解析先用它找到已重指的行，再从新路径取 size 与内容哈希；只有哈希仍匹配旧记录才刷新样本，迁址后再次修改内容会保持 stale。artifact 和分析时间继续保持旧值，不触发重分析。未打开源的旧索引行保持上次值，直到该源真正被打开。
 designFlowcharts:
   - feature: 判定与索引闭环
     title: 判定与索引闭环
@@ -161,7 +161,6 @@ codeMap:
               /** 机器索引 `.study-wiki/index.yaml` 的受限 yaml 子集解析/序列化。
                * 格式是 LF-only：解析器不归一化 CRLF，遇到 CR 按损坏输入拒绝。
                */
-
             note: |
               六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
           - snippet: |
@@ -170,7 +169,6 @@ codeMap:
               引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
           - snippet: |
               export type SourceKind = "text" | "video";
-
             note: |
               size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
           - snippet: |
@@ -197,7 +195,6 @@ codeMap:
               记录必须包含六个必填字段且不重复，可选 page；任何未知形状立即返回 null。
           - snippet: |
               }
-
             note: |
               序列化前完整校验顶层和每条源记录，坏值 fail-fast。
           - snippet: |
@@ -212,7 +209,6 @@ codeMap:
               六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
           - snippet: |
               }
-
             note: |
               引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
           - snippet: |
@@ -247,7 +243,6 @@ codeMap:
               六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
           - snippet: |
               type ParsedValue = string | number | null | typeof INVALID_VALUE;
-
             note: |
               引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
           - snippet: |
@@ -272,7 +267,6 @@ codeMap:
               size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
           - snippet: |
               }
-
             note: |
               解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
           - snippet: |
@@ -298,7 +292,6 @@ codeMap:
               序列化前完整校验顶层和每条源记录，坏值 fail-fast。
           - snippet: |
               }
-
             note: |
               输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
           - snippet: |
@@ -342,7 +335,6 @@ codeMap:
               size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
           - snippet: |
               }
-
             note: |
               解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
           - snippet: |
@@ -458,7 +450,6 @@ codeMap:
               注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
           - snippet: |
               import { createWikiService } from "./service";
-
             note: |
               注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
           - snippet: |
@@ -475,7 +466,6 @@ codeMap:
               注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
           - snippet: |
               export const inject = ["agent", "files", "workspace"];
-
             note: |
               注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
           - snippet: |
@@ -494,14 +484,12 @@ codeMap:
                   (input) => wiki.contextSection(input),
                 );
                 const offRoot = ctx.workspace.events.on("root-changed", () => wiki.invalidate());
-                const offFile = ctx.workspace.events.on("file-opened", () => wiki.invalidate());
                 return () => {
                   offRoot();
-                  offFile();
                   unregister();
                 };
             note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+              只监听换根做全量失效；打开文件由活动源解析器按需处理，不再清空所有 known 样本。teardown 先拆事件，再注销 prompt 贡献段。
           - snippet: |
               }
             note: |
@@ -513,7 +501,6 @@ codeMap:
           - snippet: |
               /** llm-wiki 维护契约（schema v1）：插件持有的行为契约，经 prompt 贡献缝注入。
                * 设计约束：改 schema 即改 LLM 行为，不改代码；≤ 6000 字符（token 预算）；库内不复制本文件。 */
-
             note: |
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
@@ -522,7 +509,6 @@ codeMap:
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
               export const WIKI_SCHEMA_VERSION = 1;
-
             note: |
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
@@ -531,12 +517,10 @@ codeMap:
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
               export const WIKI_SCHEMA = `# llm-wiki 维护契约（schema v1）
-
             note: |
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
               你是本学习库的 llm-wiki 维护者：你读 wiki，也写 wiki；用户只读（除非明确要求参与）。
-
             note: |
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
@@ -566,7 +550,6 @@ codeMap:
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
               - 页间交叉引用用 [[wikilink]]；sources 页路径按 \`<源相对路径去扩展名>.md\` 嵌套镜像（如 \`sources/courses/rust/ownership.md\`）。
-
             note: |
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
@@ -579,7 +562,6 @@ codeMap:
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
               2. \`## 主题对照\`：主题 ↔ 位置对照表。文本源用章节/行号区间；视频源（m3 起）用时间戳区间，数据来自 \`.study-wiki/raw/<源>/topics.md\`（存在时）。格式 \`| 主题 | 位置 |\`，位置如 \`L12-L48\` 或 \`00:03:20-00:07:45\`。
-
             note: |
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
@@ -612,7 +594,6 @@ codeMap:
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
               7. 汇报：改了哪些页、新增哪些概念、有哪些矛盾存疑。
-
             note: |
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
@@ -633,7 +614,6 @@ codeMap:
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
               4. 有价值的结论主动提议归档为新页/更新旧页，经用户确认再写。
-
             note: |
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
@@ -662,7 +642,6 @@ codeMap:
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
               6. 输出问题清单 + 建议修复顺序；只修用户点头的项。
-
             note: |
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
@@ -671,7 +650,6 @@ codeMap:
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
           - snippet: |
               视频源暂无转录能力：只报告状态，不伪造内容；可建议用户先记笔记或等待转录里程碑。
-
             note: |
               写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
           - snippet: |
@@ -696,101 +674,53 @@ codeMap:
               结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
       - path: src/plugins/app-wiki/service.ts
         note: |
-          wiki 服务把源状态、产物证据和 prompt 上下文收在一个闭环里。
+          活动源惰性索引服务：只探测打开文件、更新它自己的索引行，其他行原样保留；无活动文件不扫库。
         changes:
           - snippet: |
+              import { isAbsolute, join, normalize, relative } from "pathe";
               import type { FilesService, ProbeSample } from "../../host/files";
-            note: |
-              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
-          - snippet: |
               import type { WorkspaceFacade } from "../../host/workspace";
-            note: |
-              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
-          - snippet: |
+              import type { FileNode } from "../../types";
               import type { PromptSectionInput } from "../agent-core/service";
-            note: |
-              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
-          - snippet: |
               import { WIKI_SCHEMA } from "./schema";
-            note: |
-              对缺 probe 的证据保留旧分析时间，索引文本变化时才写盘。
-          - snippet: |
               import {
                 classifySource,
                 createProbeCache,
                 kindFromPath,
                 parseMachineIndex,
-                reconcileIndex,
                 serializeMachineIndex,
                 type ArtifactEvidence,
                 type MachineIndex,
                 type SourceRecord,
                 type SourceState,
-            note: |
-              contextSection 无根时返回 null；有活动文件时先刷新索引并判定状态。
-          - snippet: |
               } from "./state";
-
             note: |
-              moved 分支重写索引 path，但向 prompt 报告为已分析，避免无谓重跑。
+              服务只依赖 pathe、宿主服务、prompt 输入与会话状态机；不再导入全库 reconcile，索引维护围绕单源解析路径展开。
           - snippet: |
               const SOURCES_DIR = ".study-wiki/llm-wiki/sources";
-            note: |
-              index.md 头部按行数和字符双预算截断，防止上下文无限膨胀。
-          - snippet: |
               const INDEX_MD = ".study-wiki/llm-wiki/index.md";
-            note: |
-              sourceState 和 invalidate 是程序消费者的窄出口。
-          - snippet: |
               const INDEX_YAML = ".study-wiki/index.yaml";
-            note: |
-              路径、状态句、sources 页路径和 frontmatter 解析保持库相对路径稳定。
-          - snippet: |
               const HEAD_LINE_BUDGET = 80;
-            note: |
-              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
-          - snippet: |
               const HEAD_CHAR_BUDGET = 4096;
-            note: |
-              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
-          - snippet: |
               const TRUNCATION_SUFFIX = "…（截断）";
-
             note: |
-              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
+              sources 目录、wiki 目录与索引路径常量仍是唯一布局来源；预算常量只控制 prompt 中 index 头部大小。
           - snippet: |
               /** wiki 知识层服务：源状态判定与 prompt 贡献段。 */
-            note: |
-              对缺 probe 的证据保留旧分析时间，索引文本变化时才写盘。
-          - snippet: |
               export interface WikiService {
-                /** 某库相对路径源的分析状态（内部先物化索引再判定）。 */
+                /** 某库相对路径源的分析状态；只探测并更新该源自己的索引行。 */
                 sourceState(relPath: string): Promise<SourceState>;
                 /** prompt 贡献段：wiki 未初始化且无库内活动文件时返回 null。 */
                 contextSection(input: PromptSectionInput): Promise<string | null>;
-                /** 失效 probe 缓存与根记忆（换库根/活动文件切换时由事件触发）。 */
+                /** 失效 probe 缓存与根记忆（换库根时由事件触发）。 */
                 invalidate(): void;
-            note: |
-              contextSection 无根时返回 null；有活动文件时先刷新索引并判定状态。
-          - snippet: |
               }
-
             note: |
-              moved 分支重写索引 path，但向 prompt 报告为已分析，避免无谓重跑。
-          - snippet: |
-              /** 组装 wiki 服务。
-               * @param deps 文件通道与窗口工作区投影。
-               * @returns 可注入 cordis 的 wiki 服务实例。
-               */
-            note: |
-              index.md 头部按行数和字符双预算截断，防止上下文无限膨胀。
+              公共契约明确惰性边界：sourceState 只处理请求源，contextSection 只处理活动文件，invalidate 只在换根等整库边界失效。
           - snippet: |
               export function createWikiService(deps: {
                 files: FilesService;
                 workspace: WorkspaceFacade;
-            note: |
-              sourceState 和 invalidate 是程序消费者的窄出口。
-          - snippet: |
               }): WikiService {
                 const cache = createProbeCache();
                 const knownSamples = new Map<string, ProbeSample>();
@@ -809,33 +739,212 @@ codeMap:
                   }
                 }
             note: |
-              probeAbs 先把 Windows 与 POSIX 路径归一成 `/`，再查 known 样本并探测；缓存键与 IPC 参数使用同一规范形状，避免同一文件因分隔符不同重复哈希。
+              组装服务时维护 knownSamples；probeAbs 先把 Windows/POSIX 路径归一成 `/`，命中已知 size+mtime 时复用 SHA-256，否则由 Rust 流式读取内容。
           - snippet: |
-              return {
-                async sourceState(relPath) {
-                  const root = deps.workspace.root;
-                  if (root === null) return { state: "unknown" };
-                  await refresh(root);
-                  const text = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
-                  const index = text === null ? null : parseMachineIndex(text);
-                  const rel = normalize(relPath);
-                  const sample = await probeAbs(join(root, rel));
-                  return sample === null ? { state: "unknown" } : classifySource(index, rel, sample);
-                },
-                contextSection,
-                invalidate() {
-                  cache.invalidate();
-                  knownSamples.clear();
-                  lastRoot = null;
-                },
-              };
-            note: |
-              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
-          - snippet: |
-              }
+                async function pageEvidence(
+                  root: string,
+                  source: string,
+                  page: string,
+                ): Promise<ArtifactEvidence | null> {
+                  const sample = await probeAbs(join(root, page));
+                  if (sample === null) return null;
+                  return { source, page, newestArtifactMtimeMs: sample.mtimeMs };
+                }
 
+                async function directEvidence(root: string, source: string): Promise<ArtifactEvidence | null> {
+                  return pageEvidence(root, source, sourcesPagePath(source));
+                }
             note: |
-              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
+              活动源先按 schema 的镜像约定直取 sources/<源相对路径>.md，只 probe 这一页；不再递归扫描整棵 sources 树作为每回合主路径。
+          - snippet: |
+                async function resolveSourceState(
+                  root: string,
+                  relPath: string,
+                ): Promise<{ state: SourceState; index: MachineIndex | null }> {
+                  if (lastRoot !== root) {
+                    cache.invalidate();
+                    knownSamples.clear();
+                    lastRoot = root;
+                  }
+                  const prevText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
+                  const prev = prevText === null ? null : parseMachineIndex(prevText);
+                  const sample = await probeAbs(join(root, relPath));
+                  if (sample === null) return { state: { state: "unknown" }, index: prev };
+
+                  const state = classifySource(prev, relPath, sample);
+                  if (state.state === "stale") return { state, index: prev };
+            note: |
+              resolveSourceState 只探测当前 rel；换根时才清 known 样本。stale 直接返回旧索引行，不刷新哈希或大小，避免把已变更内容伪装成已分析。
+          - snippet: |
+                  if (state.state === "moved") {
+                    const evidence = await directEvidence(root, relPath);
+                    const page =
+                      evidence?.page ??
+                      state.record.page ??
+                      (await findSourcePage(root, state.record.path)) ??
+                      sourcesPagePath(state.record.path);
+                    const record: SourceRecord = {
+                      ...state.record,
+                      path: relPath,
+                      size: sample.size,
+                      sha256: sample.sha256,
+                      page,
+                    };
+                    const index = upsertRecord(prev, record, state.record);
+                    await writeIndex(root, prevText, index);
+                    return { state: { state: "fresh", record }, index };
+                  }
+            note: |
+              moved 只改命中的那一行：优先直取新路径页面，其次沿用 page 绑定，最后才扫描页面树找旧 frontmatter；artifact 与 analyzedAt 原样保留。
+          - snippet: |
+                  let evidence = await directEvidence(root, relPath);
+                  if (evidence === null && state.state === "fresh" && state.record.page !== undefined) {
+                    evidence = await pageEvidence(root, relPath, state.record.page);
+                  }
+                  if (evidence === null && state.state === "unknown") {
+                    const page = await findSourcePage(root, relPath);
+                    if (page !== null) evidence = await pageEvidence(root, relPath, page);
+                  }
+                  if (evidence === null) {
+                    if (state.state === "fresh") {
+                      const index = removeRecord(prev, state.record);
+                      await writeIndex(root, prevText, index);
+                      return { state: { state: "unknown" }, index };
+                    }
+                    return { state, index: prev };
+                  }
+            note: |
+              已知行优先直取约定页，再试已保存 page；只有未知源且约定页缺失时才回退扫描页面树。活动源产物消失时只删它自己的行，其他记录不受影响。
+          - snippet: |
+                  if (state.state === "fresh") {
+                    const record =
+                      state.record.page === evidence.page
+                        ? state.record
+                        : { ...state.record, page: evidence.page };
+                    if (record === state.record) return { state: { state: "fresh", record }, index: prev };
+                    const index = upsertRecord(prev, record, state.record);
+                    await writeIndex(root, prevText, index);
+                    return { state: { state: "fresh", record }, index };
+            note: |
+              fresh 行只在 page 绑定需要补充时改一行；若已有 page 与 evidence 一致，不写索引，也不触碰其他源。
+          - snippet: |
+                  const record: SourceRecord = {
+                    path: relPath,
+                    kind: kindFromPath(relPath),
+                    sha256: sample.sha256,
+                    size: sample.size,
+                    analyzedAt: new Date(evidence.newestArtifactMtimeMs).toISOString(),
+                    artifact: null,
+                    page: evidence.page,
+                  };
+                  const index = upsertRecord(prev, record);
+                  await writeIndex(root, prevText, index);
+                  return { state: { state: "fresh", record }, index };
+            note: |
+              unknown 源有活动页时新增它自己的一行，hash/size 取当前 probe，analyzedAt 取 sources 页 mtime；其他索引行既不被扫描也不被重写。
+          - snippet: |
+                async function writeIndex(
+                  root: string,
+                  previous: string | null,
+                  index: MachineIndex,
+                ): Promise<void> {
+                  const serialized = serializeMachineIndex(index);
+                  if (serialized !== previous) {
+                    await deps.files.writeText(join(root, INDEX_YAML), serialized);
+                  }
+                }
+            note: |
+              索引只在单行内容真正变化时写盘；无变更回合不产生写入抖动。
+          - snippet: |
+                async function findSourcePage(root: string, source: string): Promise<string | null> {
+                  let nodes;
+                  try {
+                    nodes = await deps.files.readTree(join(root, SOURCES_DIR));
+                  } catch {
+                    return null;
+                  }
+                  for (const path of markdownPaths(nodes)) {
+                    const sourceRel = relativeTo(join(root, SOURCES_DIR), path);
+                    if (sourceRel === null) continue;
+                    const rel = sourceRel.slice(0, -".md".length);
+                    if ((await resolveSourceFromPage(path, rel)) === source) {
+                      return toRel(root, path);
+                    }
+                  }
+                  return null;
+                }
+            note: |
+              findSourcePage 是 moved/未知源的兼容回退：递归展开真实 FileNode.children，按 frontmatter source 找实际页面；正常活动源不进入这里。
+          - snippet: |
+                async function contextSection(input: PromptSectionInput): Promise<string | null> {
+                  const root = deps.workspace.root;
+                  if (root === null) return null;
+                  const initialized = await deps.files
+                    .readText(join(root, INDEX_MD))
+                    .then(() => true)
+                    .catch(() => false);
+
+                  const rel = toRel(root, input.activeFilePath);
+                  const parts: string[] = [];
+                  if (rel !== null) {
+                    const { state } = await resolveSourceState(root, rel);
+                    parts.push(stateLine(state, rel));
+                  }
+            note: |
+              上下文入口无根返回 null，只检查 wiki 初始化状态；是否有活动文件决定是否进入单源解析，而不是先刷新全库索引。
+          - snippet: |
+                  if (initialized) {
+                    const head = await boundedHead(root);
+                    if (head !== null) parts.push(head);
+                  } else if (rel === null) {
+                    return null;
+                  }
+                  parts.push(WIKI_SCHEMA);
+                  return parts.join("\n\n");
+            note: |
+              有活动文件才注入状态行；无活动文件直接注入现有 index 头部与 schema，全程不 probe、不 readTree、不写索引。
+          - snippet: |
+                async function boundedHead(root: string): Promise<string | null> {
+                  const text = await deps.files.readText(join(root, INDEX_MD)).catch(() => null);
+                  if (text === null) return null;
+                  const lines = text.split("\n");
+                  const lineLimited = lines.slice(0, HEAD_LINE_BUDGET).join("\n");
+                  const truncatedByLines = lines.length > HEAD_LINE_BUDGET;
+                  if (lineLimited.length <= HEAD_CHAR_BUDGET) {
+                    return `# llm-wiki index 头部\n${lineLimited}${truncatedByLines ? TRUNCATION_SUFFIX : ""}`;
+                  }
+                  return `# llm-wiki index 头部\n${lineLimited.slice(0, HEAD_CHAR_BUDGET)}${TRUNCATION_SUFFIX}`;
+                }
+            note: |
+              index 头部同时受 80 行与 4 KiB 限制；任一超限都带截断标记，保证 prompt 有界。
+          - snippet: |
+                async function resolveSourceFromPage(path: string, rel: string): Promise<string> {
+                  const text = await deps.files.readText(path).catch(() => null);
+                  if (text !== null) {
+                    const source = readFrontmatterSource(text);
+                    if (source !== null) return source;
+                  }
+                  return `${rel}.md`;
+                }
+            note: |
+              sources 页优先采用 frontmatter 的 source；缺失或不可读时退回由页面相对路径推导的源路径。
+          - snippet: |
+                return {
+                  async sourceState(relPath) {
+                    const root = deps.workspace.root;
+                    if (root === null) return { state: "unknown" };
+                    const rel = normalize(relPath);
+                    return (await resolveSourceState(root, rel)).state;
+                  },
+                  contextSection,
+                  invalidate() {
+                    cache.invalidate();
+                    knownSamples.clear();
+                    lastRoot = null;
+                  },
+                };
+            note: |
+              公开的 sourceState 只把请求路径交给活动源解析器；contextSection 与 invalidate 保持窄出口，换根全清缓存。
           - snippet: |
               function toRel(root: string, path: string | null): string | null {
                 return path === null ? null : relativeTo(root, path);
@@ -847,13 +956,39 @@ codeMap:
                   return null;
                 }
                 return rel;
+              }
             note: |
               toRel 统一委托 pathe.relative，不再比较 `/` 前缀；空相对路径、盘符不一致产生的绝对结果、以及以 `..` 开头的越界结果都降级为 null。
           - snippet: |
+              function upsertRecord(
+                index: MachineIndex | null,
+                record: SourceRecord,
+                previous?: SourceRecord,
+              ): MachineIndex {
+                const sources = index?.sources ?? [];
+                const target = previous ?? sources.find((item) => item.path === record.path);
+                if (target === undefined) {
+                  return { version: 1, sources: [...sources.filter((item) => item.path !== record.path), record] };
+                }
+                const next = sources.map((item) => (item === target ? record : item));
+                return {
+                  version: 1,
+                  sources: next.filter((item, position) =>
+                    next.findIndex((candidate) => candidate.path === item.path) === position
+                  ),
+                };
               }
-
             note: |
-              对缺 probe 的证据保留旧分析时间，索引文本变化时才写盘。
+              upsertRecord 只替换目标行或追加新行，其他记录保持不变；moved 替换旧 path 时顺带清掉可能重复的同 path 行。
+          - snippet: |
+              function removeRecord(index: MachineIndex | null, record: SourceRecord): MachineIndex {
+                return {
+                  version: 1,
+                  sources: (index?.sources ?? []).filter((item) => item.path !== record.path),
+                };
+              }
+            note: |
+              removeRecord 只删除活动源自己的索引行，避免单源产物消失时影响其他源的记录。
           - snippet: |
               function stateLine(state: SourceState, rel: string): string {
                 if (state.state === "fresh") {
@@ -866,248 +1001,16 @@ codeMap:
                   return `活动文件尚未分析；转录能力后续里程碑提供：${rel}`;
                 }
                 return `活动文件尚未分析：${rel}`;
-            note: |
-              fresh 状态优先引用记录里保存的 sources 页；源迁址后页面路径仍指向真实的产物页。
-          - snippet: |
               }
-
             note: |
-              moved 分支重写索引 path，但向 prompt 报告为已分析，避免无谓重跑。
+              fresh 状态优先引用记录里保存的 sources 页；stale、unknown 与视频分别给出对应动作提示。
           - snippet: |
               function sourcesPagePath(source: string): string {
                 const withoutExtension = source.replace(/\.[^./\\]+$/u, "");
                 return `${SOURCES_DIR}/${withoutExtension}.md`;
-            note: |
-              index.md 头部按行数和字符双预算截断，防止上下文无限膨胀。
-          - snippet: |
-              }
-
-            note: |
-              sourceState 和 invalidate 是程序消费者的窄出口。
-          - snippet: |
-              function readFrontmatterSource(text: string): string | null {
-                if (!text.startsWith("---\n")) return null;
-                const end = text.indexOf("\n---", 4);
-                if (end === -1) return null;
-                for (const line of text.slice(4, end).split("\n")) {
-                  const match = line.match(/^source:\s*(.*?)\s*$/u);
-                  if (match === null) continue;
-                  return unquoteFrontmatterValue(match[1]);
-                }
-                return null;
-            note: |
-              路径、状态句、sources 页路径和 frontmatter 解析保持库相对路径稳定。
-          - snippet: |
-              }
-
-            note: |
-              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
-          - snippet: |
-              function unquoteFrontmatterValue(value: string): string {
-                const quoted =
-                  value.length >= 2 &&
-                  ((value.startsWith('"') && value.endsWith('"')) ||
-                    (value.startsWith("'") && value.endsWith("'")));
-                if (quoted) {
-                  return value.slice(1, -1);
-                }
-                return value;
-            note: |
-              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
-          - snippet: |
               }
             note: |
-              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
-          - snippet: |
-              async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
-                const evidence = new Map<string, ArtifactEvidence>();
-                const sourcesRoot = join(root, SOURCES_DIR);
-                let nodes;
-                try {
-                  nodes = await deps.files.readTree(sourcesRoot);
-                } catch {
-                  return [];
-                }
-                for (const path of markdownPaths(nodes)) {
-                  const page = toRel(root, path);
-                  const sourceRel = relativeTo(sourcesRoot, path);
-                  if (page === null || sourceRel === null) continue;
-                  const rel = sourceRel.slice(0, -".md".length);
-            note: |
-              sourcesRoot 用 pathe.join 生成规范路径；page 与 source rel 都由 relative 计算，Windows 返回的 `\` 不再绕开 `/` 前缀切片。任一相对化失败都跳过该节点，防止把库外路径写进证据。
-          - snippet: |
-                  const source = await resolveSourceFromPage(path, rel);
-                  const sample = await probeAbs(path);
-                  if (sample === null) continue;
-                  const previous = evidence.get(source);
-                  if (previous === undefined || sample.mtimeMs > previous.newestArtifactMtimeMs) {
-                    evidence.set(source, { source, page, newestArtifactMtimeMs: sample.mtimeMs });
-                  }
-                  }
-                  return [...evidence.values()];
-            note: |
-              sources 页仍是唯一证据源；页面没有 frontmatter source 时，`rel` 由 sources 根的跨平台相对路径推导。证据对象只保留源、产物页和最新 mtime，reconcile 不依赖 UI 状态。
-          - snippet: |
-              async function refresh(root: string): Promise<void> {
-                if (lastRoot !== root) {
-                  cache.invalidate();
-                  knownSamples.clear();
-                  lastRoot = root;
-                }
-                const prevText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
-                const prev = prevText === null ? null : parseMachineIndex(prevText);
-                const evidence = await collectEvidence(root);
-                if (evidence.length === 0 && prevText === null) return;
-                const probed = new Map<string, ProbeSample>();
-            note: |
-              换根先清 probe 缓存；旧索引先读，refresh 才能按产物页找到已重指的行。
-          - snippet: |
-                for (const item of evidence) {
-                  const previous =
-                    prev?.sources.find((record) => record.path === item.source) ??
-                    prev?.sources.find((record) => record.page === item.page);
-                  const linked =
-                    previous !== undefined &&
-                    previous.page === item.page &&
-                    previous.path !== item.source;
-                  const source = linked ? previous.path : item.source;
-                  const sample = await probeAbs(join(root, source));
-                  if (
-                    sample !== null &&
-                    (previous === undefined || previous.sha256 === sample.sha256)
-                  ) {
-                    probed.set(source, sample);
-                  }
-                }
-            note: |
-              产物页与旧行绑定且路径已变时，refresh 改为探测新路径；但哈希仍须与旧记录一致才刷新样本，迁址后再次修改内容仍判 stale。
-          - snippet: |
-                const next = {
-                  version: 1,
-                  sources: reconcileIndex(prev, evidence, probed).sources.map((record) => {
-                    const previous = prev?.sources.find((item) => item.path === record.path);
-                    return previous !== undefined && !probed.has(record.path)
-                      ? { ...record, analyzedAt: previous.analyzedAt }
-                      : record;
-                  }),
-                } satisfies MachineIndex;
-                const serialized = serializeMachineIndex(next);
-                if (serialized !== prevText) {
-                  await deps.files.writeText(join(root, INDEX_YAML), serialized);
-                }
-                }
-            note: |
-              reconcile 后，缺 probe 的旧行保留原 analyzedAt；只有序列化文本变化才写盘，避免每回合抖动。
-          - snippet: |
-              async function contextSection(input: PromptSectionInput): Promise<string | null> {
-                const root = deps.workspace.root;
-                if (root === null) return null;
-                await refresh(root);
-                const indexText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
-                const index = indexText === null ? null : parseMachineIndex(indexText);
-                const initialized = await deps.files
-                  .readText(join(root, INDEX_MD))
-                  .then(() => true)
-                  .catch(() => false);
-            note: |
-              无库根时不注入；有根先物化索引，再用 llm-wiki/index.md 是否存在判断 wiki 是否初始化。
-          - snippet: |
-                const rel = toRel(root, input.activeFilePath);
-                const parts: string[] = [];
-                if (rel !== null) {
-                  const sample = await probeAbs(join(root, rel));
-                  if (sample !== null) {
-                    const state = classifySource(index, rel, sample);
-                    if (state.state === "moved") {
-                      const page =
-                        state.record.page ??
-                        (await findSourcePage(root, state.record.path)) ??
-                        sourcesPagePath(state.record.path);
-                      const record: SourceRecord = {
-                        ...state.record,
-                        path: rel,
-                        size: state.sample.size,
-                        sha256: state.sample.sha256,
-                        page,
-                      };
-            note: |
-              活动文件在库内才判态；moved 先复制旧记录，再替换 path、size 与内容哈希，并把实际 sources 页写进 row，后续 refresh 可沿它找回新路径。
-          - snippet: |
-                      const rewritten: MachineIndex = {
-                        version: 1,
-                        sources: index!.sources.map((item) => (item === state.record ? record : item)),
-                      };
-                      await deps.files.writeText(join(root, INDEX_YAML), serializeMachineIndex(rewritten));
-                      parts.push(stateLine({ state: "fresh", record }, rel));
-            note: |
-              重写索引只替换旧记录，并把状态句按 fresh 注入，避免 agent 把移动误判为未分析。
-          - snippet: |
-                    } else {
-                      parts.push(stateLine(state, rel));
-                    }
-                    } else {
-                      parts.push(stateLine({ state: "unknown" }, rel));
-                    }
-            note: |
-              stale 走“请重新 ingest”，probe 失败或库外文件走 unknown；状态句是 agent 唯一的状态信号。
-          - snippet: |
-                if (initialized) {
-                  const head = await boundedHead(root);
-                  if (head !== null) parts.push(head);
-                } else if (rel === null) {
-                  return null;
-                }
-                parts.push(WIKI_SCHEMA);
-                return parts.join("\n\n");
-                }
-            note: |
-              状态句在前、wiki 目录头部其次、schema 最后；未初始化且无活动文件时完全不注入。
-          - snippet: |
-              async function boundedHead(root: string): Promise<string | null> {
-                const text = await deps.files.readText(join(root, INDEX_MD)).catch(() => null);
-                if (text === null) return null;
-                const lines = text.split("\n");
-                const lineLimited = lines.slice(0, HEAD_LINE_BUDGET).join("\n");
-                const truncatedByLines = lines.length > HEAD_LINE_BUDGET;
-                if (lineLimited.length <= HEAD_CHAR_BUDGET) {
-                  return `# llm-wiki index 头部\n${lineLimited}${truncatedByLines ? TRUNCATION_SUFFIX : ""}`;
-                }
-                return `# llm-wiki index 头部\n${lineLimited.slice(0, HEAD_CHAR_BUDGET)}${TRUNCATION_SUFFIX}`;
-              }
-            note: |
-              index 头部同时受 80 行与 4 KiB 限制；任一超限都带截断标记，保证 prompt 有界。
-          - snippet: |
-              async function resolveSourceFromPage(path: string, rel: string): Promise<string> {
-                const text = await deps.files.readText(path).catch(() => null);
-                if (text !== null) {
-                  const source = readFrontmatterSource(text);
-                  if (source !== null) return source;
-                }
-                return `${rel}.md`;
-              }
-            note: |
-              sources 页优先采用 frontmatter 的 source；缺失或不可读时退回由页面相对路径推导的源路径。
-          - snippet: |
-              async function findSourcePage(root: string, source: string): Promise<string | null> {
-                const sourcesRoot = join(root, SOURCES_DIR);
-                let nodes;
-                try {
-                  nodes = await deps.files.readTree(sourcesRoot);
-                } catch {
-                  return null;
-                }
-                for (const path of markdownPaths(nodes)) {
-                  const sourceRel = relativeTo(sourcesRoot, path);
-                  if (sourceRel === null) continue;
-                  const rel = sourceRel.slice(0, -".md".length);
-                  if ((await resolveSourceFromPage(path, rel)) === source) {
-                    return toRel(root, path);
-                  }
-                }
-                return null;
-              }
-            note: |
-              旧索引行可能还没有 page 字段；moved 时扫描全部 sources 页，按 frontmatter 的 source 找回实际页面。页面 rel 同样由 sources 根的跨平台相对路径计算，找不到才退回路径约定。
+              sourcesPagePath 继续把源相对路径去扩展名后映射到 wiki sources 目录；它是活动源的快速证据入口。
           - snippet: |
               function markdownPaths(nodes: FileNode[]): string[] {
                 const paths: string[] = [];
@@ -1121,7 +1024,34 @@ codeMap:
                 return paths;
               }
             note: |
-              readTree 的顶层节点可能全是目录；这里递归展开 children 并只保留 markdown，sources 页无论在几层都能成为证据。
+              markdownPaths 递归展开真实 FileNode.children，只在需要回退扫描页面树时收集 markdown 页。
+          - snippet: |
+              function readFrontmatterSource(text: string): string | null {
+                if (!text.startsWith("---\n")) return null;
+                const end = text.indexOf("\n---", 4);
+                if (end === -1) return null;
+                for (const line of text.slice(4, end).split("\n")) {
+                  const match = line.match(/^source:\s*(.*?)\s*$/u);
+                  if (match === null) continue;
+                  return unquoteFrontmatterValue(match[1]);
+                }
+                return null;
+              }
+            note: |
+              frontmatter 解析只读取 source 字段，坏输入返回 null，由调用方决定是否回退路径约定。
+          - snippet: |
+              function unquoteFrontmatterValue(value: string): string {
+                const quoted =
+                  value.length >= 2 &&
+                  ((value.startsWith('"') && value.endsWith('"')) ||
+                    (value.startsWith("'") && value.endsWith("'")));
+                if (quoted) {
+                  return value.slice(1, -1);
+                }
+                return value;
+              }
+            note: |
+              引号解码只去掉成对单双引号，不猜测更复杂的 YAML 语义。
       - path: src/plugins/app-wiki/state.ts
         note: |
           状态与 reconcile 是纯函数，便于覆盖所有状态迁移和证据边界。
@@ -1144,7 +1074,6 @@ codeMap:
               ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
           - snippet: |
               } from "./index-yaml";
-
             note: |
               reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
           - snippet: |
@@ -1153,7 +1082,6 @@ codeMap:
               kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
           - snippet: |
               export type { MachineIndex, SourceRecord };
-
             note: |
               classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
           - snippet: |
@@ -1166,7 +1094,6 @@ codeMap:
                 | { state: "fresh"; record: SourceRecord }
                 | { state: "stale"; record: SourceRecord; sample: ProbeSample }
                 | { state: "moved"; record: SourceRecord; sample: ProbeSample };
-
             note: |
               ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
           - snippet: |
@@ -1183,7 +1110,6 @@ codeMap:
               kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
           - snippet: |
               }
-
             note: |
               classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
           - snippet: |
@@ -1217,7 +1143,6 @@ codeMap:
               reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
           - snippet: |
               }
-
             note: |
               kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
           - snippet: |
@@ -1248,7 +1173,6 @@ codeMap:
               probe 缓存以 size+mtime 为键，命中直接复用哈希。
           - snippet: |
               }
-
             note: |
               ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
           - snippet: |
@@ -1267,7 +1191,6 @@ codeMap:
               证据对象携带产物页路径；frontmatter 仍写旧 source 时，reconcile 靠 page 认出这是同一产物，而不是一条新记录。
           - snippet: |
               }
-
             note: |
               classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
           - snippet: |
@@ -1330,12 +1253,10 @@ codeMap:
               reconcileIndex 以证据列表为行集合；missing probe 先保留旧哈希与大小，两者都缺失时丢弃该行而不是写空记录。moved 保留 artifact/analyzedAt，page 始终写回。
           - snippet: |
               }
-
             note: |
               kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
           - snippet: |
               const VIDEO_EXT = new Set(["mp4", "mkv", "avi", "mov", "webm"]);
-
             note: |
               classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
           - snippet: |
@@ -1365,7 +1286,6 @@ codeMap:
               ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
           - snippet: |
               //! 时跳过哈希（视频大文件每回合重哈希不可接受）。错误带稳定 code，message 仅诊断。
-
             note: |
               先拒绝父目录组件，再取 metadata 和毫秒 mtime。
           - snippet: |
@@ -1378,12 +1298,10 @@ codeMap:
               64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
           - snippet: |
               use std::path::Path;
-
             note: |
               测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
           - snippet: |
               const CHUNK: usize = 64 * 1024;
-
             note: |
               ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
           - snippet: |
@@ -1403,7 +1321,6 @@ codeMap:
               64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
           - snippet: |
               }
-
             note: |
               测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
           - snippet: |
@@ -1418,7 +1335,6 @@ codeMap:
               先拒绝父目录组件，再取 metadata 和毫秒 mtime。
           - snippet: |
               }
-
             note: |
               known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
           - snippet: |
@@ -1431,7 +1347,6 @@ codeMap:
               64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
           - snippet: |
               }
-
             note: |
               测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
           - snippet: |
@@ -1474,7 +1389,6 @@ codeMap:
               64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
           - snippet: |
               }
-
             note: |
               测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
           - snippet: |
@@ -1941,7 +1855,7 @@ reviewGuide:
     - item: 机器索引可解析/序列化且坏输入返回 null
       evidence: tests/app-wiki-index-yaml.test.ts
     - item: 源状态与产物证据 reconcile 可回归
-      evidence: tests/app-wiki-state.test.ts；tests/app-wiki-service.test.ts（含 Windows 形状路径 fake）
+      evidence: tests/app-wiki-state.test.ts；tests/app-wiki-service.test.ts（含 Windows 形状路径与活动源惰性索引 fake）
     - item: probe 快慢路径、路径拒绝和深目录写通过
       evidence: cargo test；src-tauri/src/lib.rs tests
     - item: 机械面和文档门禁全绿
@@ -1949,8 +1863,8 @@ reviewGuide:
 verification:
   - 2026-10-18：pnpm gen:commands — 通过，39 条命令。
   - 2026-10-18：pnpm gen:code-map — 通过，71 个源文件。
-  - 2026-10-18：npm_config_cache=/tmp/sw-pr62-windows-npm-cache pnpm test — 通过，87 个测试文件 / 773 个用例。
-  - 2026-10-18：pnpm exec vitest run tests/app-wiki-service.test.ts — 通过，13/13（含 Windows 形状路径的索引、page、source rel 与活动源状态）。
+  - 2026-10-18：npm_config_cache=/tmp/sw-pr62-windows-npm-cache pnpm test — 通过，87 个测试文件 / 776 个用例。
+  - 2026-10-18：pnpm exec vitest run tests/app-wiki-service.test.ts — 通过，16/16（含 Windows 形状路径与活动源惰性索引边界）。
   - 2026-10-18：pnpm build — 通过，tsc 与 Vite 生产构建完成。
   - 2026-10-18：pnpm verify:layering — 通过。
   - 2026-10-18：pnpm verify:env-independence — 通过。
