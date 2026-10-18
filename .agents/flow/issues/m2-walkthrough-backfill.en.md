@@ -33,6 +33,8 @@ scope:
   - .agents/flow/issues/m2-walkthrough-backfill.*
   - .agents/flow/issues/m2-walkthrough-site.*
   - .agents/notes/implemented/process/2026-10-15-walkthrough-site.*
+  - .agents/notes/implemented/architecture/2026-10-18-walkthrough-flowchart.*
+  - pnpm-lock.yaml
   - plans/2026-10-15-walkthrough-backfill.md
 adr: []
 github:
