@@ -85,7 +85,7 @@ design: |
 
   图 2 把判定序和索引物化拆开：同路径先给出 fresh/stale，内容哈希再识别 moved，最后才 unknown；索引行始终由现存产物证据驱动，损坏输入丢弃重建。这个顺序避免“移动后的同内容副本”被当成全新源。
 
-  产物页绑定补上 moved 的持久化缺口：只改索引行时，页面里的旧 source 会在下一次 refresh 把记录拉回旧路径。索引行因此保存实际页面路径，refresh 先用它找到已重指的行，再从新路径取 size 与内容哈希；artifact 和分析时间继续保持旧值，不触发重分析。
+  产物页绑定补上 moved 的持久化缺口：只改索引行时，页面里的旧 source 会在下一次 refresh 把记录拉回旧路径。索引行因此保存实际页面路径，refresh 先用它找到已重指的行，再从新路径取 size 与内容哈希；只有哈希仍匹配旧记录才刷新样本，迁址后再次修改内容会保持 stale。artifact 和分析时间继续保持旧值，不触发重分析。
 designFlowcharts:
   - feature: 判定与索引闭环
     title: 判定与索引闭环
@@ -967,15 +967,13 @@ codeMap:
                   const sample = await probeAbs(`${root}/${source}`);
                   if (
                     sample !== null &&
-                    (previous === undefined ||
-                      previous.sha256 === sample.sha256 ||
-                      linked)
+                    (previous === undefined || previous.sha256 === sample.sha256)
                   ) {
                     probed.set(source, sample);
                   }
                 }
             note: |
-              产物页与旧行绑定且路径已变时，refresh 探测新路径并接受新样本；未被重指的记录仍只在哈希一致时刷新，避免把 stale 误当 fresh。
+              产物页与旧行绑定且路径已变时，refresh 改为探测新路径；但哈希仍须与旧记录一致才刷新样本，迁址后再次修改内容仍判 stale。
           - snippet: |
                 const next = {
                   version: 1,

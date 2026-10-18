@@ -108,9 +108,7 @@ segments:
             const sample = await probeAbs(`${root}/${source}`);
             if (
               sample !== null &&
-              (previous === undefined ||
-                previous.sha256 === sample.sha256 ||
-                linked)
+              (previous === undefined || previous.sha256 === sample.sha256)
             ) {
               probed.set(source, sample);
             }
@@ -297,4 +295,4 @@ segments:
         return value;
       }
     note: |
-      wiki 服务把产物证据、机器索引和 probe 样本合成一个入口：递归展开 sources 树、反查源并物化 index.yaml，再判定活动文件状态；moved 时重指索引并保留产物页绑定，后续 refresh 沿绑定探测新路径，prompt 段包含状态、索引头部和 schema，并在无有效内容时返回 null。
+      wiki 服务把产物证据、机器索引和 probe 样本合成一个入口：递归展开 sources 树、反查源并物化 index.yaml，再判定活动文件状态；moved 时重指索引并保留产物页绑定，后续 refresh 沿绑定探测新路径，但只有内容哈希仍匹配旧记录才刷新样本，源在迁址后再次变化会保持 stale。prompt 段包含状态、索引头部和 schema，并在无有效内容时返回 null。

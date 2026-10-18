@@ -103,9 +103,7 @@ export function createWikiService(deps: {
       const sample = await probeAbs(`${root}/${source}`);
       if (
         sample !== null &&
-        (previous === undefined ||
-          previous.sha256 === sample.sha256 ||
-          linked)
+        (previous === undefined || previous.sha256 === sample.sha256)
       ) {
         probed.set(source, sample);
       }

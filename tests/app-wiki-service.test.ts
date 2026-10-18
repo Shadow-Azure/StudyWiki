@@ -153,7 +153,7 @@ describe("wiki contextSection", () => {
     expect((await wiki.sourceState("notes/a.md")).state).toBe("stale");
   });
 
-  it("源迁址 → 重指索引行且 artifact 与 analyzedAt 不动", async () => {
+  it("源迁址 → 跨回合与服务重启仍保持重指行、artifact 与 analyzedAt", async () => {
     const oldRecord = {
       path: "notes/old.md",
       kind: "text" as const,
@@ -166,12 +166,13 @@ describe("wiki contextSection", () => {
       activePath: "/lib/notes/new.md",
       files: {
         [MACHINE_INDEX]: serializeMachineIndex({ version: 1, sources: [oldRecord] }),
-        "/lib/.study-wiki/llm-wiki/sources/notes/old.md": "---\ntype: source\n---\n# A",
+        "/lib/.study-wiki/llm-wiki/sources/old.md":
+          "---\ntype: source\nsource: notes/old.md\n---\n# A",
       },
       probe: (path) =>
         path === "/lib/notes/old.md"
           ? null
-          : path.endsWith(".study-wiki/llm-wiki/sources/notes/old.md")
+          : path.endsWith(".study-wiki/llm-wiki/sources/old.md")
             ? { size: 4, mtimeMs: 5000, sha256: "aa".repeat(32) }
             : { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) },
     });
@@ -197,9 +198,69 @@ describe("wiki contextSection", () => {
     expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:02.000Z");
     expect(files.get(MACHINE_INDEX)).not.toContain("1970-01-01T00:00:05.000Z");
     expect(files.get(MACHINE_INDEX)).toContain(
-      'page: ".study-wiki/llm-wiki/sources/notes/old.md"',
+      'page: ".study-wiki/llm-wiki/sources/old.md"',
     );
+
+    const restarted = createWikiService({ files: filesSvc, workspace });
+    const third = await restarted.contextSection({
+      root: "/lib",
+      activeFilePath: "/lib/notes/new.md",
+    });
+    expect(third).toContain("已分析");
+    expect(files.get(MACHINE_INDEX)).toContain('path: "notes/new.md"');
+    expect(files.get(MACHINE_INDEX)).not.toContain('path: "notes/old.md"');
+    expect(files.get(MACHINE_INDEX)).toContain(`"${"aa".repeat(32)}"`);
+    expect(files.get(MACHINE_INDEX)).toContain("size: 9");
+    expect(files.get(MACHINE_INDEX)).toContain('".study-wiki/raw/old"');
+    expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:02.000Z");
+    expect(files.get(MACHINE_INDEX)).not.toContain("1970-01-01T00:00:05.000Z");
+    expect(files.get(MACHINE_INDEX)).toContain(
+      'page: ".study-wiki/llm-wiki/sources/old.md"',
+    );
+    expect((await restarted.sourceState("notes/new.md")).state).toBe("fresh");
+  });
+
+  it("迁址后源内容变化 → stale，不把新哈希刷成已分析", async () => {
+    const oldRecord = {
+      path: "notes/old.md",
+      kind: "text" as const,
+      sha256: "aa".repeat(32),
+      size: 9,
+      analyzedAt: "1970-01-01T00:00:02.000Z",
+      artifact: ".study-wiki/raw/old",
+    };
+    const source = { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) };
+    const { filesSvc, workspace, files } = fakeWikiHost({
+      activePath: "/lib/notes/new.md",
+      files: {
+        [MACHINE_INDEX]: serializeMachineIndex({ version: 1, sources: [oldRecord] }),
+        "/lib/.study-wiki/llm-wiki/sources/notes/old.md":
+          "---\ntype: source\nsource: notes/old.md\n---\n# A",
+      },
+      probe: (path) => {
+        if (path === "/lib/notes/old.md") return null;
+        if (path.endsWith(".study-wiki/llm-wiki/sources/notes/old.md")) {
+          return { size: 4, mtimeMs: 5000, sha256: "aa".repeat(32) };
+        }
+        return source;
+      },
+    });
+    const wiki = createWikiService({ files: filesSvc, workspace });
+    await wiki.contextSection({ root: "/lib", activeFilePath: "/lib/notes/new.md" });
     expect((await wiki.sourceState("notes/new.md")).state).toBe("fresh");
+
+    source.size = 10;
+    source.mtimeMs = 4000;
+    source.sha256 = "bb".repeat(32);
+    const changed = await wiki.contextSection({
+      root: "/lib",
+      activeFilePath: "/lib/notes/new.md",
+    });
+    expect(changed).toContain("重新 ingest");
+    expect(files.get(MACHINE_INDEX)).toContain('path: "notes/new.md"');
+    expect(files.get(MACHINE_INDEX)).toContain(`"${"aa".repeat(32)}"`);
+    expect(files.get(MACHINE_INDEX)).not.toContain(`"${"bb".repeat(32)}"`);
+    expect((await wiki.sourceState("notes/new.md")).state).toBe("stale");
   });
 
   it("索引损坏 → 从证据重建，fresh 不丢", async () => {
