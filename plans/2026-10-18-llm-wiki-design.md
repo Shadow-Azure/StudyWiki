@@ -68,13 +68,18 @@ sources:
 
 ## 源状态机与探测命令
 
-状态：`unknown`（索引无记录或 raw 无产物）→ `fresh` → 源变更（md5 不一致）→ `stale`；路径消失且 md5 在别路径命中 → `moved`。
+状态判定序（对 `probe_source_file` 结果，惰性探测——只探活动文件，不扫全库）：
+
+1. 按 path 查索引：命中且 md5 一致 → `fresh`；
+2. 命中但 md5 不一致 → `stale`（源内容已变）；
+3. 未命中 → **按 md5 反查索引**：命中（他路径有同 hash 记录）→ `moved`；
+4. 均未命中 → `unknown`。
 
 - **Rust 新命令 `probe_source_file(path)`**（m2-04 落地）：流式计算 md5，返回 `{ size, mtimeMs, md5 }`；库外路径拒绝（错误词表沿用授权语义）。新增 pinned `md5` crate（构建期打包、零运行时下载，登记 dep-allowlist；`std::hash::DefaultHasher` 不保证跨版本稳定，不可用）。
 - **机器索引的物化规则：索引行不是人工/agent 写入的，而是 wiki 服务探测时的**派生物**——产物存在（`raw/<源>/` 有内容 ∨ `llm-wiki/sources/<源>.md` 存在）即补写或刷新该行（`analyzed_at` 取产物最新 mtime）；产物不存在即 `unknown`，索引无行。这保证 ingest 流程只维护 wiki 产物，登记永不漏配。
 
 判定逻辑在 TS**（`app-wiki` 纯函数）：解析机器索引、比对 probe 结果、给出状态与建议动作。TS 侧按 `path + mtimeMs + size` 缓存 md5，活动文件未变更时不重复哈希——视频大文件每回合重哈希不可接受。
-- **moved 处理**：重命名 raw/ 产物目录 + 改写索引行，不重分析（程序行为，无审批）。
+- **moved 处理**：raw/ 产物目录随源重命名（`<旧源相对路径去扩展名>` → `<新路径去扩展名>`）+ 索引行路径改写（md5/size/mtime 取 probe 值刷新，`analyzed_at` 不变），不重分析。纯程序行为，无审批。
 - 状态经 wiki 段注入：activeFile 为 `unknown/stale` 时 agent 明确提示「需要先分析」（文本源可直接发起 ingest；视频源说明转录能力后续里程碑提供）；`fresh` 时注入 wiki 侧摘要指针（llm-wiki/index.md 头部有界截断——前 80 行或 4 KiB 取小——+ sources 页路径）。
 
 ## app-wiki 插件模块
