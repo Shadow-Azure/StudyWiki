@@ -2,9 +2,9 @@ kind: change
 issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
-  files: 84
-  additions: 7683
-  deletions: 1362
+  files: 90
+  additions: 7756
+  deletions: 1380
 feature: |
   这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧只在打开源时探测该源并更新它自己的 `.study-wiki/index.yaml` 行，未打开源不扫描、不探测；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
 
@@ -1812,6 +1812,18 @@ codeMap:
       - path: .agents/notes/implemented/architecture/2026-10-18-llm-wiki.md
         note: |
           落地决策与替代方案。
+      - path: .agents/notes/implemented/architecture/2026-09-16-phase4-dynamic-plugins.md
+        note: |
+          外置插件 guard 的 owning Note：同步 inject 依赖声明与 guard 服务面/成员白名单的口径。
+      - path: .agents/notes/implemented/architecture/2026-09-16-phase4-dynamic-plugins.en.md
+        note: |
+          Phase 4 guard 决策的英文镜像，与中文侧同步。
+      - path: .agents/notes/implemented/feature/2026-10-01-ai-inference-supply.md
+        note: |
+          LLM 成员白名单的 owning Note：把旧“inject 白名单”改为 guard 成员白名单。
+      - path: .agents/notes/implemented/feature/2026-10-01-ai-inference-supply.en.md
+        note: |
+          LLM 供应决策的英文镜像，与中文侧同步。
       - path: docs/architecture.en.md
         note: |
           架构页英文镜像，组成树与数据流地图与中文侧同步。
