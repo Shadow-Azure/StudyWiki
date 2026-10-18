@@ -369,6 +369,65 @@ codeMap:
               }
             note: |
               数据类型固定六字段，值必须能安全落在受限 YAML 子集内。
+          - snippet: |
+                for (const line of rest.slice(1)) {
+                  let match: RegExpMatchArray | null;
+                  const item = line.match(ITEM_RE);
+                  if (item) {
+                    if (!flush()) return null;
+                    current = {};
+                    seen.clear();
+                    match = item;
+                  } else {
+                    match = line.match(CONT_RE);
+                    if (match === null || current === null) return null;
+                  }
+            note: |
+              遇到新条目先结算上一条；续行必须已有当前条目，否则按损坏输入拒绝。
+          - snippet: |
+                const key = match[1] as Field;
+                  if (!(FIELDS as readonly string[]).includes(key) || seen.has(key)) {
+                    return null;
+                  }
+                  const value = parseValue(key, match[2]);
+                  if (value === INVALID_VALUE) return null;
+                  seen.add(key);
+                  current[key] = value;
+                }
+                if (!flush()) return null;
+                return { version: 1, sources };
+            note: |
+              键必须属于固定字段集且不得重复；任一值解析失败立即返回 null，不保留半条记录。
+          - snippet: |
+                for (const value of [
+                  source.path,
+                  source.sha256,
+                  source.analyzedAt,
+                  source.artifact,
+                ]) {
+                  if (value !== null && /[\n\r\u2028\u2029]/u.test(value)) {
+                    throw new Error("machine index strings must not contain line breaks");
+                  }
+                }
+                }
+                const quote = (value: string) =>
+                  `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+            note: |
+              序列化前拒绝任何行分隔符；quote 只转义反斜杠和双引号，保持受限子集可逆。
+          - snippet: |
+                const lines = [`version: ${index.version}`, "sources:"];
+                for (const source of index.sources) {
+                  lines.push(`  - path: ${quote(source.path)}`);
+                  lines.push(`    kind: ${source.kind}`);
+                  lines.push(`    sha256: ${quote(source.sha256)}`);
+                  lines.push(`    size: ${source.size}`);
+                  lines.push(`    analyzedAt: ${quote(source.analyzedAt)}`);
+                  lines.push(
+                    `    artifact: ${source.artifact === null ? "null" : quote(source.artifact)}`,
+                  );
+                }
+            note: |
+              输出固定字段序与固定缩进，末尾换行由调用方拼接，保证解析器可恒等还原。
       - path: src/plugins/app-wiki/index.ts
         note: |
           插件装配把服务、prompt 贡献段和缓存失效事件接成生命周期。
@@ -835,6 +894,154 @@ codeMap:
               }
             note: |
               refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
+          - snippet: |
+              async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
+                const evidence = new Map<string, number>();
+                let nodes;
+                try {
+                  nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
+                } catch {
+                  return [];
+                }
+                for (const node of nodes) {
+                  if (!node.path.endsWith(".md")) continue;
+                  const rel = node.path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+                  const source = await resolveSourceFromPage(node.path, rel);
+                  const sample = await probeAbs(node.path);
+                  if (sample === null) continue;
+                  evidence.set(source, Math.max(evidence.get(source) ?? 0, sample.mtimeMs));
+                }
+            note: |
+              sources 页是唯一证据源：没有 sources 页的源不会凭空出现在索引里；多个产物取最新 mtime。
+          - snippet: |
+                return [...evidence.entries()].map(([source, mtimeMs]) => ({
+                  source,
+                  newestArtifactMtimeMs: mtimeMs,
+                }));
+                }
+            note: |
+              证据对象只保留源路径和最新产物时间，reconcile 不依赖 UI 或会话状态。
+          - snippet: |
+              async function refresh(root: string): Promise<void> {
+                if (lastRoot !== root) {
+                  cache.invalidate();
+                  knownSamples.clear();
+                  lastRoot = root;
+                }
+                const evidence = await collectEvidence(root);
+                const prevText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
+                const prev = prevText === null ? null : parseMachineIndex(prevText);
+                const probed = new Map<string, ProbeSample>();
+                for (const item of evidence) {
+                  const sample = await probeAbs(`${root}/${item.source}`);
+                  const previous = prev?.sources.find((record) => record.path === item.source);
+                  if (sample !== null && (previous === undefined || previous.sha256 === sample.sha256)) {
+                    probed.set(item.source, sample);
+                  }
+                }
+            note: |
+              换根先清 probe 缓存；只为现存证据探测源，索引缺少的源不会被刷新逻辑补出来。
+          - snippet: |
+                const next = {
+                  version: 1,
+                  sources: reconcileIndex(prev, evidence, probed).sources.map((record) => {
+                    const previous = prev?.sources.find((item) => item.path === record.path);
+                    return previous !== undefined && !probed.has(record.path)
+                      ? { ...record, analyzedAt: previous.analyzedAt }
+                      : record;
+                  }),
+                } satisfies MachineIndex;
+                const serialized = serializeMachineIndex(next);
+                if (serialized !== prevText) {
+                  await deps.files.writeText(`${root}/${INDEX_YAML}`, serialized);
+                }
+                }
+            note: |
+              reconcile 后，缺 probe 的旧行保留原 analyzedAt；只有序列化文本变化才写盘，避免每回合抖动。
+          - snippet: |
+              async function contextSection(input: PromptSectionInput): Promise<string | null> {
+                const root = deps.workspace.root;
+                if (root === null) return null;
+                await refresh(root);
+                const indexText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
+                const index = indexText === null ? null : parseMachineIndex(indexText);
+                const initialized = await deps.files
+                  .readText(`${root}/${INDEX_MD}`)
+                  .then(() => true)
+                  .catch(() => false);
+            note: |
+              无库根时不注入；有根先物化索引，再用 llm-wiki/index.md 是否存在判断 wiki 是否初始化。
+          - snippet: |
+                const rel = toRel(root, input.activeFilePath);
+                const parts: string[] = [];
+                if (rel !== null) {
+                  const sample = await probeAbs(`${root}/${rel}`);
+                  if (sample !== null) {
+                    const state = classifySource(index, rel, sample);
+                    if (state.state === "moved") {
+                      const record: SourceRecord = {
+                        ...state.record,
+                        path: rel,
+                        size: state.sample.size,
+                        sha256: state.sample.sha256,
+                      };
+            note: |
+              活动文件在库内才判态；moved 先复制旧记录，再替换 path、size 与内容哈希。
+          - snippet: |
+                      const rewritten: MachineIndex = {
+                        version: 1,
+                        sources: index!.sources.map((item) => (item === state.record ? record : item)),
+                      };
+                      await deps.files.writeText(`${root}/${INDEX_YAML}`, serializeMachineIndex(rewritten));
+                      parts.push(stateLine({ state: "fresh", record }, rel));
+            note: |
+              重写索引只替换旧记录，并把状态句按 fresh 注入，避免 agent 把移动误判为未分析。
+          - snippet: |
+                    } else {
+                      parts.push(stateLine(state, rel));
+                    }
+                    } else {
+                      parts.push(stateLine({ state: "unknown" }, rel));
+                    }
+            note: |
+              stale 走“请重新 ingest”，probe 失败或库外文件走 unknown；状态句是 agent 唯一的状态信号。
+          - snippet: |
+                if (initialized) {
+                  const head = await boundedHead(root);
+                  if (head !== null) parts.push(head);
+                } else if (rel === null) {
+                  return null;
+                }
+                parts.push(WIKI_SCHEMA);
+                return parts.join("\n\n");
+                }
+            note: |
+              状态句在前、wiki 目录头部其次、schema 最后；未初始化且无活动文件时完全不注入。
+          - snippet: |
+              async function boundedHead(root: string): Promise<string | null> {
+                const text = await deps.files.readText(`${root}/${INDEX_MD}`).catch(() => null);
+                if (text === null) return null;
+                const lines = text.split("\n");
+                const lineLimited = lines.slice(0, HEAD_LINE_BUDGET).join("\n");
+                const truncatedByLines = lines.length > HEAD_LINE_BUDGET;
+                if (lineLimited.length <= HEAD_CHAR_BUDGET) {
+                  return `# llm-wiki index 头部\n${lineLimited}${truncatedByLines ? TRUNCATION_SUFFIX : ""}`;
+                }
+                return `# llm-wiki index 头部\n${lineLimited.slice(0, HEAD_CHAR_BUDGET)}${TRUNCATION_SUFFIX}`;
+              }
+            note: |
+              index 头部同时受 80 行与 4 KiB 限制；任一超限都带截断标记，保证 prompt 有界。
+          - snippet: |
+              async function resolveSourceFromPage(path: string, rel: string): Promise<string> {
+                const text = await deps.files.readText(path).catch(() => null);
+                if (text !== null) {
+                  const source = readFrontmatterSource(text);
+                  if (source !== null) return source;
+                }
+                return `${rel}.md`;
+              }
+            note: |
+              sources 页优先采用 frontmatter 的 source；缺失或不可读时退回由页面相对路径推导的源路径。
       - path: src/plugins/app-wiki/state.ts
         note: |
           状态与 reconcile 是纯函数，便于覆盖所有状态迁移和证据边界。
@@ -1203,6 +1410,75 @@ codeMap:
               }
             note: |
               64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+          - snippet: |
+              let mtime_ms = meta
+                  .modified()
+                  .map_err(|e| err("PROBE_STAT", format!("mtime {}: {e}", path.display())))?
+                  .duration_since(std::time::UNIX_EPOCH)
+                  .map(|d| d.as_millis() as i64)
+                  .unwrap_or(0);
+              if let Some(known) = known {
+                  if known.size == size && known.mtime_ms == mtime_ms {
+                      return Ok(ProbeSample {
+                          size,
+                          mtime_ms,
+                          sha256: known.sha256,
+                      });
+                  }
+              }
+            note: |
+              mtime 统一转 Unix 毫秒；size 与 mtime 同时命中时直接复用旧 SHA-256，不打开文件。
+          - snippet: |
+              let mut hasher = Sha256::new();
+              let mut file = std::fs::File::open(path)
+                  .map_err(|e| err("PROBE_READ", format!("open {}: {e}", path.display())))?;
+              use std::io::Read;
+              let mut buf = vec![0u8; CHUNK];
+              loop {
+                  let n = file
+                      .read(&mut buf)
+                      .map_err(|e| err("PROBE_READ", format!("read {}: {e}", path.display())))?;
+            note: |
+              快路径未命中才打开文件，按 64 KiB 缓冲读取；打开与读取失败分成两个稳定 code 路径。
+          - snippet: |
+              let n = file
+                  .read(&mut buf)
+                  .map_err(|e| err("PROBE_READ", format!("read {}: {e}", path.display())))?;
+              if n == 0 {
+                  break;
+              }
+              hasher.update(&buf[..n]);
+              }
+              Ok(ProbeSample {
+                  size,
+                  mtime_ms,
+                  sha256: format!("{:x}", hasher.finalize()),
+              })
+            note: |
+              读到 EOF 后输出小写十六进制摘要；哈希只覆盖内容，size/mtime 来自同一份 metadata。
+          - snippet: |
+              fn known_fast_path_skips_hash() {
+                  let dir = std::env::temp_dir().join(format!("sw-probe-fast-{}", std::process::id()));
+                  let _ = std::fs::remove_dir_all(&dir);
+                  std::fs::create_dir_all(&dir).unwrap();
+                  let p = dir.join("big.bin");
+                  std::fs::write(&p, vec![7u8; 200_000]).unwrap();
+                  let full = probe_file(&p, None).unwrap();
+                  let fast = probe_file(&p, Some(full.clone())).unwrap();
+                  assert_eq!(fast.sha256, full.sha256);
+                  let stale = probe_file(
+                      &p,
+                      Some(ProbeSample {
+                          size: 1,
+                          ..full.clone()
+                      }),
+                  )
+                  .unwrap();
+                  assert_eq!(stale.sha256, full.sha256);
+                  std::fs::remove_dir_all(&dir).unwrap();
+              }
+            note: |
+              20 万字节用例同时覆盖快路径命中与 size 失配后的完整重算，证明两种路径得到同一摘要。
       - path: src/plugins/agent-core/prompt.ts
         note: |
           系统提示组装新增贡献段输入并保持纯函数。
@@ -1243,7 +1519,9 @@ codeMap:
 
               /** prompt 贡献段提供者：每回合调用；返回 markdown 段，null 表示本回合不注入。 */
               export type PromptSectionProvider = (input: PromptSectionInput) => Promise<string | null>;
-
+            note: |
+              provider 输入只含库根与活动文件，wiki 服务因此不必读取会话内部状态。
+          - snippet: |
               /** Agent 会话注册表：列表/打开/删除与插件生命周期清理。 */
               export interface AgentService {
                 /** List valid session headers in the current library root. */
@@ -1256,7 +1534,7 @@ codeMap:
                 registerPromptSection(id: string, provider: PromptSectionProvider): () => void;
                 /** Abort every open session; used by the cordis plugin disposer. */
             note: |
-              对外类型声明 prompt 贡献段输入、provider 和注册/注销方法。
+              注册表新增 registerPromptSection：注册返回注销函数，id 重复时后者覆盖前者。
           - snippet: |
               export function createAgentService(deps: AgentServiceDeps): AgentService {
                 const threshold = deps.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
@@ -1342,7 +1620,6 @@ codeMap:
             note: |
               std_write 自动创建父目录；文件组件冲突仍由 create_dir_all/write 暴露。
           - snippet: |
-              /// agent wiki 源探测：读域授权校验后返回大小/mtime/SHA-256；known 命中跳过哈希。
               #[tauri::command]
               fn probe_source_file<R: tauri::Runtime>(
                   window: tauri::Window<R>,
@@ -1384,71 +1661,41 @@ codeMap:
           files facade 暴露 probe 类型安全入口。
         changes:
           - snippet: |
-              import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-              import { listen } from "@tauri-apps/api/event";
-              import { open } from "@tauri-apps/plugin-dialog";
-              import { createEmitter } from "./emitter";
-              import type { FileNode } from "../types";
-
-              /** Parameters for the agent grep tool; `path` must already be read-authorized. */
-              export interface GrepRequest {
-                pattern: string;
-                path: string;
-                glob?: string;
-                ignoreCase?: boolean;
-                literal?: boolean;
-                context?: number;
-                limit?: number;
-              }
-
-              /** One grep hit, with nearby context lines and no line-number prefixes. */
-              export interface GrepMatch {
-                path: string;
-                line: number;
-                text: string;
-                before: string[];
-                after: string[];
+              /** 源文件探测样本（`probe_source_file` 命令返回）。 */
+              export interface ProbeSample {
+                /** 文件大小（字节）。 */
+                size: number;
+                /** 修改时间（Unix 毫秒）。 */
+                mtimeMs: number;
+                /** 流式 SHA-256（小写 hex）。 */
+                sha256: string;
               }
             note: |
-              ProbeSample 与调用签名进入宿主文件服务，前端不 import Tauri 绑定。
+              ProbeSample 是 TS 侧唯一探测样本形状，字段与 Rust 返回逐项对应。
+          - snippet: |
+              /** 探测源文件的大小/mtime/SHA-256；known 命中（size+mtimeMs 一致）时跳过哈希。
+               * @param path 绝对路径；库外路径与 `..` 组件被拒绝。
+               * @param known 上次探测样本（缓存快路径）。
+               * @returns 最新探测样本。 */
+              probeSourceFile(path: string, known?: ProbeSample): Promise<ProbeSample> {
+                return this.#deps.invoke("probe_source_file", { path, known }) as Promise<ProbeSample>;
+              }
+            note: |
+              facade 只暴露 invoke 包装与文档注释；插件仍不直接 import Tauri 绑定。
       - path: src/host/context.d.ts
         note: |
           Context 编译期出口新增 wiki 服务。
         changes:
           - snippet: |
-              import type { Context } from "cordis";
-              import type { FilesService } from "./files";
-              import type { ExcelService } from "./excel";
-              import type { WindowsService } from "./windows";
-              import type { WorkspaceFacade } from "./workspace";
-              import type { SlotsService } from "./slots";
-              import type { PluginsService } from "./plugins";
-              import type { LlmService } from "./llm";
               import type { AgentService } from "../plugins/agent-core/service";
               import type { WikiService } from "../plugins/app-wiki/service";
-
-              declare module "cordis" {
-                interface Context {
-                  /** 文件通道（读树/读写文本/选目录/媒体 URL/fs 变更流）。 */
-                  files: FilesService;
-                  /** Excel 数据模型服务（xlsx 解析/序列化；人与 AI 共用读写面）。 */
-                  excel: ExcelService;
-                  /** 窗口身份/创建/原生确认框/关窗守卫。 */
-                  windows: WindowsService;
-                  /** 窗口 scope 工作区插件面（读/事件/守卫打开；换根仅经 windows 单路）。 */
-                  workspace: WorkspaceFacade;
-                  /** 类型化 UI 槽位注册表。 */
-                  slots: SlotsService;
-                  /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */
-                  plugins: PluginsService;
-                  /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
-                  llm: LlmService;
+            note: |
+              Context 编译期出口新增 WikiService 类型来源。
+          - snippet: |
                   /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
                   agent: AgentService;
                   /** wiki 知识层服务（内置插件 app-wiki 提供；外置插件 guard 白名单不含）。 */
                   wiki: WikiService;
-                }
-              }
             note: |
               app-wiki 提供的 WikiService 挂入 Context；外置插件运行时仍受 guard 白名单限制。
       - path: src/loader/table.ts
@@ -1456,33 +1703,16 @@ codeMap:
           静态内置插件表注册 app-wiki。
         changes:
           - snippet: |
-              import type { PluginModule } from "./types";
-              import * as appShell from "../plugins/app-shell";
-              import * as viewFiletree from "../plugins/view-filetree";
-              import * as docMarkdown from "../plugins/doc-markdown";
-              import * as docVideo from "../plugins/doc-video";
-              import * as docExcel from "../plugins/doc-excel";
-              import * as appAgent from "../plugins/app-agent";
-              import * as appWindows from "../plugins/app-windows";
-              import * as pluginManager from "../plugins/plugin-manager";
-              import * as llmSettings from "../plugins/llm-settings";
               import * as agentCore from "../plugins/agent-core";
               import * as appWiki from "../plugins/app-wiki";
-
-              /** One static module table row. */
-              export interface TableEntry {
-                plugin: PluginModule;
-                defaults: Record<string, unknown>;
-              }
-
-              /** Static module table: every built-in plugin keyed by id. Rows land with
-               * their plugin tasks; Phase 2 adds external modules as another source. */
-              export type ModuleTable = Record<string, TableEntry>;
-
-              /** The build-time module table (single home). */
-              export const MODULE_TABLE: ModuleTable = {};
             note: |
-              装载表新增 app-wiki 行，随构建期模块打包而不是运行时下载。
+              app-wiki 与内置插件一样在构建期静态 import，不引入运行时发现。
+          - snippet: |
+              "agent-core": { plugin: agentCore as PluginModule, defaults: {} },
+              "app-wiki": { plugin: appWiki as PluginModule, defaults: {} },
+              });
+            note: |
+              装载表新增 app-wiki 行；默认配置为空，随构建期模块打包而不是运行时下载。
   - group: 测试与验证
     attention: skim
     why: |
@@ -1526,6 +1756,66 @@ codeMap:
       - path: .agents/notes/implemented/architecture/2026-10-18-llm-wiki.md
         note: |
           落地决策与替代方案。
+      - path: docs/architecture.en.md
+        note: |
+          架构页英文镜像，组成树与数据流地图与中文侧同步。
+      - path: .agents/flow/issues/m2-04-llm-wiki.en.md
+        note: |
+          issue #31 英文镜像，状态、scope 与验收与中文侧同步。
+      - path: .agents/flow/issues/m3-03-raw-index.md
+        note: |
+          #34 索引口径同步为 index.yaml 与内容哈希，raw 产物留给后续里程碑。
+      - path: .agents/flow/issues/m3-03-raw-index.en.md
+        note: |
+          #34 英文镜像，与中文侧同步。
+      - path: .agents/flow/issues/m2-agent-ui-v2.md
+        note: |
+          同分支并行的 agent UI issue 更新，不属于 #31 语义；列此仅用于 diff 覆盖对账。
+      - path: .agents/flow/issues/m2-agent-ui-v2.en.md
+        note: |
+          同分支并行的 agent UI issue 英文镜像，不属于 #31 语义。
+      - path: .agents/notes/implemented/architecture/2026-10-18-llm-wiki.en.md
+        note: |
+          llm-wiki 决策记录的英文镜像。
+      - path: .agents/notes/implemented/feature/2026-10-18-source-probe.md
+        note: |
+          probe 命令的决策记录，说明流式哈希与快路径的取舍。
+      - path: .agents/notes/implemented/feature/2026-10-18-source-probe.en.md
+        note: |
+          probe 决策记录的英文镜像。
+      - path: plans/2026-10-18-llm-wiki-design.md
+        note: |
+          llm-wiki 设计 spec，记录场景、存储契约与替代方案。
+      - path: plans/2026-10-18-llm-wiki-impl.md
+        note: |
+          llm-wiki 实施计划，按任务拆分测试与门禁。
+      - path: .agents/notes/implemented/process/2026-10-13-computer-use-smoke-reporting.md
+        note: |
+          同分支并发提交 #52 的电脑操作冒烟报告技能记录，不属于 #31 语义。
+      - path: .agents/notes/implemented/process/2026-10-13-computer-use-smoke-reporting.en.md
+        note: |
+          #52 技能记录的英文镜像，不属于 #31 语义。
+      - path: .agents/skills/computer-use-smoke-reporting/SKILL.md
+        note: |
+          同分支并发提交 #52 的技能说明，不属于 #31 语义。
+      - path: .agents/skills/computer-use-smoke-reporting/example.html
+        note: |
+          #52 冒烟报告示例产物，不属于 #31 语义。
+      - path: .agents/skills/computer-use-smoke-reporting/examples/smoke-report-data.json
+        note: |
+          #52 冒烟报告示例数据，不属于 #31 语义。
+      - path: .agents/skills/computer-use-smoke-reporting/reference/data-schema.md
+        note: |
+          #52 冒烟报告数据 schema，不属于 #31 语义。
+      - path: .agents/skills/computer-use-smoke-reporting/scripts/render-smoke-report.mjs
+        note: |
+          #52 冒烟报告渲染脚本，不属于 #31 语义。
+      - path: .agents/skills/computer-use-smoke-reporting/template/report.template.html
+        note: |
+          #52 冒烟报告模板，不属于 #31 语义。
+      - path: plans/review/2026-10-12-pr51-smoke-review.md
+        note: |
+          同分支历史评审材料，不属于 #31 语义。
 reviewGuide:
   order:
     - 先读 src/plugins/app-wiki/state.ts：确认 fresh/stale/moved/unknown 判定序和 reconcile 保留字段。
@@ -1557,6 +1847,7 @@ verification:
   - 2026-10-18：pnpm verify:dep-audit — 通过。
   - 2026-10-18：pnpm verify:flow、pnpm verify:commands — 通过。
   - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm lint:docs — 通过，14 叶全绿。
+  - 2026-10-18：node scripts/verify-walkthrough.mjs --diff e36f7bf — 通过（codeMap 覆盖、逐段 ≤20 行、注解覆盖率 ≥90%）。
   - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm verify:docs — 17/18 叶通过；gate-self-tests 的 install-git-hooks commit-msg 用例在并行满载时 5 秒超时，单跑 6/6 通过，与本分支改动无关。
 touches:
   - file:src-tauri/src/lib.rs
