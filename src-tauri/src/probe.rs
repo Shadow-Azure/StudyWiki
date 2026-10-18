@@ -87,6 +87,10 @@ pub fn probe_file(path: &Path, known: Option<ProbeSample>) -> Result<ProbeSample
 mod tests {
     use super::*;
 
+    const HELLO_SHA256: &str = "37703d6093ebf38016cecd7339ebc9ce08493ec0a26d7a32c13f9f3fda8c2b35";
+    const SEVEN_FILL_SHA256: &str =
+        "8cfcba83dcfc81a193bb4e52fd3161efb513906f52cbbe2328fac5f1a79c2b6e";
+
     #[test]
     fn hashes_known_content() {
         let dir = std::env::temp_dir().join(format!("sw-probe-{}", std::process::id()));
@@ -96,7 +100,7 @@ mod tests {
         std::fs::write(&p, b"hello study-wiki").unwrap();
         let r = probe_file(&p, None).unwrap();
         assert_eq!(r.size, 16);
-        assert_eq!(r.sha256.len(), 64);
+        assert_eq!(r.sha256, HELLO_SHA256);
         assert!(r.mtime_ms > 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -109,13 +113,20 @@ mod tests {
         let p = dir.join("big.bin");
         std::fs::write(&p, vec![7u8; 200_000]).unwrap();
         let full = probe_file(&p, None).unwrap();
-        let fast = probe_file(&p, Some(full.clone())).unwrap();
-        assert_eq!(fast.sha256, full.sha256);
+        assert_eq!(full.sha256, SEVEN_FILL_SHA256);
+        let poisoned = ProbeSample {
+            sha256: "0".repeat(64),
+            ..full.clone()
+        };
+        let fast = probe_file(&p, Some(poisoned.clone())).unwrap();
+        assert_eq!(fast.sha256, poisoned.sha256);
+        assert_eq!(fast.size, full.size);
+        assert_eq!(fast.mtime_ms, full.mtime_ms);
         let stale = probe_file(
             &p,
             Some(ProbeSample {
                 size: 1,
-                ..full.clone()
+                ..poisoned
             }),
         )
         .unwrap();

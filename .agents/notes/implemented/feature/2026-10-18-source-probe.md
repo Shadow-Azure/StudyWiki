@@ -18,4 +18,4 @@ llm-wiki 后续 ingest 需要判断源文件是否变化。视频和大文件不
 
 ## Consequences
 
-后续 llm-wiki 任务可以把 `ProbeSample` 作为源变更判断基础；mtime 粒度受文件系统限制，known 失配时必须重算。配置根不可取得时探测以 `PROBE_UNAUTHORIZED` 拒绝，避免引入另一个越权入口。
+后续 llm-wiki 任务可以把 `ProbeSample` 作为源变更判断基础；mtime 粒度受文件系统限制，known 失配时必须重算。回归测试用独立 SHA-256 向量核对内容哈希，并以与磁盘 size/mtime 相同但摘要被替换的 known 样本验证快路径确实复用样本；若实现退化为重哈希会失败。配置根不可取得时探测以 `PROBE_UNAUTHORIZED` 拒绝，避免引入另一个越权入口。

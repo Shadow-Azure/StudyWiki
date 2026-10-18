@@ -18,4 +18,4 @@ Rehashing in full every turn is simplest, but its cost is unacceptable for large
 
 ## Consequences
 
-Later llm-wiki tasks can use `ProbeSample` as the source-change foundation. Mtime granularity is filesystem-dependent, and any known mismatch forces recomputation. If the configuration root cannot be resolved, probing is rejected with `PROBE_UNAUTHORIZED` rather than introducing another path past authorization.
+Later llm-wiki tasks can use `ProbeSample` as the source-change foundation. Mtime granularity is filesystem-dependent, and any known mismatch forces recomputation. Regression tests check content hashes against independent SHA-256 vectors and use a known sample with on-disk size/mtime but a replaced digest to prove the fast path reuses it; a regression that rehashes would fail. If the configuration root cannot be resolved, probing is rejected with `PROBE_UNAUTHORIZED` rather than introducing another path past authorization.
