@@ -109,8 +109,7 @@ fn walk_dir(root: &Path) -> Result<Vec<FileNode>, String> {
 fn std_write(path: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
     }
     fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
