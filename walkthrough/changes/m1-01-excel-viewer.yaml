@@ -911,6 +911,7 @@ touches:
   - file:src/plugins/doc-excel/index.ts
 architecturalFlowchart:
   title: xlsx 从字节到查看器渲染
+  explanation: 表达 xlsx 的单向供给链：Rust 只负责授权读字节，ExcelJS 解析后进入 ctx.excel 唯一读写模型，查看器不直接持有文件字节；这样渲染侧可复用同一状态并保持系统边界。
   nodes:
     - id: open
       label: 用户打开 xlsx

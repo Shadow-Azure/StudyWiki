@@ -15,6 +15,8 @@ Status: implemented
 - `architecturalFlowchart`：`architectural` 有实质内容（`无`/`无。` 占位除外）时必填，渲染在架构章节末尾。
 - `designFlowcharts`：`design` 非空时必填，落地映射每个 `#### ` 功能点小节一条，`feature` 与小节名双向对账（缺/多都红）。
 
+每张图还必须有 `explanation`：先说图表达什么机制或链路，再说为什么用这条主链、分叉或回边来表达。它是图下方的读图入口，与相邻叙事互补，缺失时 schema 直接红。
+
 图本体是封闭 schema 的 nodes/edges（shape 限 rect/rounded/stadium/diamond，direction 限 LR/TB，边端点必须闭合）。渲染器 home 是 `scripts/walkthrough-flowchart.mjs`：**dagre 只做纯图布局，矩形/菱形/箭头/标签全部手写 SVG**；文字宽度用逐字符模型估算（CJK 1em、拉丁 0.55em），超长标签按 token 折行；样式走站点 CSS 令牌，明暗主题自动跟随。
 
 ## Alternatives considered

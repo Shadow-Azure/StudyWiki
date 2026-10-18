@@ -501,6 +501,24 @@ describe("walkthrough-lib", () => {
       "walkthrough/changes/demo-change.yaml: architecturalFlowchart 必填（architectural 非空时）",
     );
 
+    // explanation 缺失红：说明是图的必填交付面。
+    const noExplanation = emptySite();
+    noExplanation.changes.set("demo-change", {
+      ...validChange(),
+      architectural: "真实架构变化。\n",
+      architecturalFlowchart: {
+        title: "图",
+        nodes: [
+          { id: "a", label: "甲" },
+          { id: "b", label: "乙" },
+        ],
+        edges: [{ from: "a", to: "b" }],
+      },
+    });
+    expect(validateSchema(noExplanation)).toContain(
+      "walkthrough/changes/demo-change.yaml: architecturalFlowchart.explanation 必填（非空字符串：图表达什么、为什么这么画）",
+    );
+
     // "无/无。"占位视为无实质内容，不需要流程图。
     for (const placeholder of ["无", "无。", " 无。\n"]) {
       const site = emptySite();
@@ -517,6 +535,7 @@ describe("walkthrough-lib", () => {
       architectural: "真实架构变化。\n",
       architecturalFlowchart: {
         title: "数据流",
+        explanation: "表达从起点到终点的推进链路，终点用 stadium 强调交付边界。",
         nodes: [
           { id: "a", label: "起点", shape: "stadium" },
           { id: "b", label: "终点" },
@@ -534,6 +553,7 @@ describe("walkthrough-lib", () => {
       architectural: "真实架构变化。\n",
       architecturalFlowchart: {
         title: "图",
+        explanation: "表达甲到乙的流转。",
         direction: "XX",
         nodes: [
           { id: "a", label: "甲", shape: "circle" },
@@ -559,6 +579,7 @@ describe("walkthrough-lib", () => {
       ...validChange(),
       architectural: "真实架构变化。\n",
       architecturalFlowchart: {
+        explanation: "表达甲到乙的流转。",
         nodes: [
           { id: "a", label: "甲" },
           { id: "b", label: "乙" },
@@ -621,6 +642,7 @@ describe("walkthrough-lib", () => {
     const ok = emptySite();
     const chart = (feature) => ({
       feature,
+      explanation: "表达该功能点的实现链路。",
       nodes: [
         { id: "a", label: "甲" },
         { id: "b", label: "乙" },
@@ -657,6 +679,7 @@ describe("walkthrough-lib", () => {
   文件树。
 designFlowcharts:
   - feature: 唯一功能点
+    explanation: 表达该功能点从输入到落地的实现链路。
     nodes:
       - id: a
         label: 甲

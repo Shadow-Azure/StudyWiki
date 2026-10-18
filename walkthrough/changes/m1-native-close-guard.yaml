@@ -461,6 +461,7 @@ touches:
   - file:src/bootstrap.ts
 architecturalFlowchart:
   title: 原生关窗守卫链路
+  explanation: 表达关窗的两层协作：Rust 同步暴露“守卫已武装”事实，前端聚合守卫判断脏文档并弹确认；只有前端显式销毁才真正关窗，这样原生生命周期不会绕过业务确认。
   nodes:
     - id: close
       label: 用户关窗

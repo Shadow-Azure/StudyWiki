@@ -1842,6 +1842,7 @@ touches:
   - file:src-tauri/src/grep.rs
 architecturalFlowchart:
   title: agent 回合状态机与审批
+  explanation: 表达 agent 回合以状态机为中心：UI 消息进入 ctx.agent，工具调用遇到敏感操作先审批；批准后回到同一回合继续，无需审批或回合完成后才持久化并快照，避免 UI 绕过状态与审批。
   nodes:
     - id: message
       label: 用户发送消息

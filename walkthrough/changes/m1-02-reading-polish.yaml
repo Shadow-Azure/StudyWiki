@@ -367,6 +367,7 @@ touches:
   - file:src/ui/viewer.ts
 architecturalFlowchart:
   title: 切换守卫上收到 WorkspaceService
+  explanation: 表达切换请求必须先经过 WorkspaceService 聚合守卫：脏文档分支先确认，干净与取消分支都收敛到明确状态；集中画这条链说明守卫不能散落在各个查看器入口。
   nodes:
     - id: request
       label: 切换或换根请求

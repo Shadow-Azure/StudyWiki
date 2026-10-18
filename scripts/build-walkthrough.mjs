@@ -341,6 +341,8 @@ table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-al
 /* ---- 流程图（dagre 布局 + 内联 SVG，见 walkthrough-flowchart.mjs） ---- */
 .flowchart-figure { margin:16px 0; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-x:auto }
 .flowchart { display:block; max-width:100%; height:auto }
+.flowchart-explanation { margin:8px 0 0; padding:6px 10px; border-left:3px solid var(--accent); border-radius:0 8px 8px 0; background:var(--accent-soft); font-size:13.2px; line-height:1.7 }
+.flowchart-explanation .fc-explain-label { display:inline-block; margin-right:8px; padding:0 7px; border:1px solid var(--line-strong); border-radius:99px; font-size:10.5px; font-weight:700; letter-spacing:.08em; color:var(--muted); vertical-align:1px }
 .flowchart text { font-family:inherit }
 .fc-node { fill:var(--surface); stroke:var(--line-strong); stroke-width:1.2 }
 .fc-shape-stadium { fill:var(--accent-soft); stroke:var(--accent) }
@@ -545,7 +547,8 @@ function renderCodeMapGroups(codeMap, current, site) {
 function renderFlowchartFigure(chart, idSuffix) {
   const svg = renderFlowchartSvg(chart, idSuffix);
   const caption = chart.title ? `图：${escapeHtml(chart.title)}` : "流程图";
-  return `<figure class="flowchart-figure">${svg}<figcaption class="meta">${caption}</figcaption></figure>`;
+  const explanation = `<p class="flowchart-explanation"><span class="fc-explain-label">说明</span>${markdown.renderInline(chart.explanation)}</p>`;
+  return `<figure class="flowchart-figure">${svg}<figcaption class="meta">${caption}</figcaption>${explanation}</figure>`;
 }
 
 /**

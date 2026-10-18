@@ -43,6 +43,8 @@ architectural: |
   架构不变。
 architecturalFlowchart:
   title: 演示流程
+  explanation: |
+    表达入口到核心处理的单主链与是否通过分支；起点/终点用 stadium/rounded 强调交付边界。
   nodes:
     - id: entry
       label: 入口
@@ -257,6 +259,9 @@ describe("build-walkthrough", () => {
     expect(changePage).toContain('id="fc-arrow-demo-change-arch"');
     expect(changePage).toContain("否，重试");
     expect(changePage).toContain("<figcaption");
+    expect(changePage).toContain('class="flowchart-explanation"');
+    expect(changePage).toContain("说明");
+    expect(changePage).toContain("是否通过分支");
     expect(changePage).toContain('<details class="map-group skim">');
     expect(changePage).toContain("核心变化");
     expect(changePage).toContain(">必读</span>");

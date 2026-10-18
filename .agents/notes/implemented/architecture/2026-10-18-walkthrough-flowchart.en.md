@@ -15,6 +15,8 @@ Change-page yaml gains two structured fields, rendered to inline SVG at build ti
 - `architecturalFlowchart`: required whenever `architectural` has substantive content (placeholders like `无`/`无。` exempt), rendered at the end of the architecture section.
 - `designFlowcharts`: required whenever `design` is non-empty — one entry per `#### ` feature subsection of the landing mapping, with two-way reconciliation between `feature` and the subsection title (missing or extra entries both fail).
 
+Every chart also requires `explanation`: state what mechanism or chain the chart expresses, then why that main path, branch, or back edge is the right representation. It is the reader's entry point below the chart, complements adjacent prose, and fails schema when missing.
+
 The chart body is a closed-schema nodes/edges shape (shape limited to rect/rounded/stadium/diamond, direction to LR/TB, edge endpoints must resolve). The renderer lives in `scripts/walkthrough-flowchart.mjs`: **dagre only computes pure graph layout; rectangles, diamonds, arrows, and labels are hand-drawn SVG**. Text width uses a per-character model (CJK 1em, Latin 0.55em) with token-aware wrapping for long labels; styling follows site CSS tokens so light/dark themes follow automatically.
 
 ## Alternatives considered

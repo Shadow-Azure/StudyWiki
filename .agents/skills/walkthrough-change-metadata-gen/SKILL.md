@@ -23,7 +23,7 @@ description: 生成或更新 walkthrough/changes/*.yaml 变更页元数据（功
    - 相关的文件页（`walkthrough/files/**`）与功能页（`walkthrough/features/**`）：既有讲解与锚定片段
    - 用户面的真实操作路径：从入口到可见结果，包含错误/边界路径
 2. **写叙事层**：按 `references/narrative-guide.md` 写 feature / userFlow / architectural / design 四层。
-3. **配流程图**：`architectural` 有实质内容时必填 `architecturalFlowchart`；`design` 非空时按落地映射功能点逐条填 `designFlowcharts`（每个 `#### ` 小节一条，feature 名与小节名双向对账）。写法见 `references/flowchart-guide.md`。叙事必须与图互锁：正文沿图讲链路并引用图题，节点术语与正文一字不差。
+3. **配流程图**：`architectural` 有实质内容时必填 `architecturalFlowchart`；`design` 非空时按落地映射功能点逐条填 `designFlowcharts`（每个 `#### ` 小节一条，feature 名与小节名双向对账）。每张图的 `explanation` 必填，回答“图表达什么、为什么这么画”。写法见 `references/flowchart-guide.md`。叙事必须与图互锁：正文沿图讲链路并引用图题，`explanation` 与相邻叙事互补，节点术语与正文一字不差。
 4. **配图**：跨模块、状态机、并发/流式、多窗口、数据流之一的，**必须**按 `references/diagram-guide.md` 制作 SVG 并正确引用。
 5. **写代码地图**：按 `references/code-map-guide.md` 分诊 attention、写分组 why、逐段注解。
 6. **补检视指引与验证**：reviewGuide（order/risks/acceptance）与 verification 如实填写，证据必须真实可跑。
@@ -49,7 +49,7 @@ yaml 已存在时（字段 `skill_gen_commit_id` 记录上次对齐的最新 com
 ## 分册路由
 
 - 写四层叙事前，读 `references/narrative-guide.md`（功能/操作路径/架构/方案设计的模板与通俗性标准）。
-- 写流程图字段前，读 `references/flowchart-guide.md`（结构化流程图写法、每功能点一条的配平规则、门禁语义）。
+- 写流程图字段前，读 `references/flowchart-guide.md`（结构化流程图写法、explanation、每功能点一条的配平规则、门禁语义）。
 - 需要配图时，读 `references/diagram-guide.md`（SVG 类型选择、制作标准、存放与相对引用规则）。
 - 写代码地图与逐段注解前，读 `references/code-map-guide.md`（attention 分诊、≤20 行/段、覆盖率口径）。
 
@@ -60,6 +60,7 @@ yaml 已存在时（字段 `skill_gen_commit_id` 记录上次对齐的最新 com
 - [ ] 架构变化区分了"结构变化"与"语义变化"；没有变化就写"无"并说明原因
 - [ ] 方案设计包含：约束 → 候选 → 选型理由 → 关键权衡 → 边界
 - [ ] architectural 有实质内容时 architecturalFlowchart 非空且形状合法；design 非空时 designFlowcharts 每个落地映射功能点一条且 feature 名与小节名一一对应
+- [ ] 每张流程图都有 explanation，读者不读相邻正文也能知道图要表达什么、为什么这样画；说明与正文/代码地图互补，不复述图节点清单
 - [ ] 正文引用了每张流程图的图题并沿图讲链路；图中节点名与正文术语一致，分支边在正文有交代
 - [ ] 该配图的场景配了图，图能在浏览器里打开且中文可读
 - [ ] must-read 组源码文件逐段注解齐全，每段 ≤20 行，讲"这段在做什么/为什么"

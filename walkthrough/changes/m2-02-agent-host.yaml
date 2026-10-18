@@ -675,6 +675,7 @@ touches:
   - file:src/host/slots.ts
 architecturalFlowchart:
   title: 流式推理的宿主缝
+  explanation: 表达流式推理的宿主缝：插件只能进入收窄服务面，联网与流事件由 Rust 出口承接；每次 invoke 独立 Channel，最终组装成消息快照回传，图上逐段隔离说明流不能直接穿透到插件。
   nodes:
     - id: invoke
       label: 插件发起 chatStream

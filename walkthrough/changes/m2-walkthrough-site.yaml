@@ -636,6 +636,7 @@ touches:
   - file:walkthrough/README.md
 architecturalFlowchart:
   title: YAML 源到静态站的机制骨架
+  explanation: 表达讲解站的机制骨架：YAML 五层源先经零依赖解析器进入共享校验库，九条门禁与静态构建器消费同一事实源；门禁到构建的边强调“构建即校验”，产物不可能绕过门禁单独成立。
   nodes:
     - id: yaml-src
       label: 封闭 schema 的 YAML 五层源

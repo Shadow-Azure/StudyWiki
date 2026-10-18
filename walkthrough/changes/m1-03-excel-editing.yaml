@@ -808,6 +808,7 @@ touches:
   - file:src-tauri/src/lib.rs
 architecturalFlowchart:
   title: 编辑从 workbook 到原子落盘
+  explanation: 表达编辑保存的闭环：UI 只改变 workbook，ctx.excel 统一提交，Rust 原子写后广播变更，所有视图再刷新；广播回边说明文件事实源落盘后才向多方扩散。
   nodes:
     - id: edit
       label: 用户在 UI 变换 workbook

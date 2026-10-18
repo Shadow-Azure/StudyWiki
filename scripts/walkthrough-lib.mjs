@@ -50,7 +50,7 @@ const CODE_MAP_FILE_KEYS = new Set(["path", "note", "changes"]);
 const CODE_MAP_CHANGE_KEYS = new Set(["snippet", "note"]);
 const REVIEW_GUIDE_KEYS = new Set(["order", "risks", "acceptance"]);
 const ACCEPTANCE_KEYS = new Set(["item", "evidence"]);
-const FLOWCHART_KEYS = new Set(["title", "direction", "nodes", "edges"]);
+const FLOWCHART_KEYS = new Set(["title", "direction", "nodes", "edges", "explanation"]);
 const FLOWCHART_NODE_KEYS = new Set(["id", "label", "shape"]);
 const FLOWCHART_EDGE_KEYS = new Set(["from", "to", "label"]);
 const FLOWCHART_NODE_SHAPES = new Set(["rect", "rounded", "stadium", "diamond"]);
@@ -411,6 +411,9 @@ function validateFlowchart(chart, field, label, errors, extraKeys = []) {
   if (!validateKeys(chart, new Set([...FLOWCHART_KEYS, ...extraKeys]), label, errors)) return false;
   if (chart.title !== undefined && typeof chart.title !== "string") {
     push(errors, label, `${field}.title 必须是字符串`);
+  }
+  if (!isNonEmptyString(chart.explanation)) {
+    push(errors, label, `${field}.explanation 必填（非空字符串：图表达什么、为什么这么画）`);
   }
   if (chart.direction !== undefined && !FLOWCHART_DIRECTIONS.has(chart.direction)) {
     push(errors, label, `${field}.direction 必须是 LR|TB 之一`);

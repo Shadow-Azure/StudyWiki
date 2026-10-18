@@ -276,6 +276,7 @@ touches:
   - file:scripts/install-git-hooks.mjs
 architecturalFlowchart:
   title: 流程事实源到组合门禁
+  explanation: 表达流程元数据先固化、再由可组合门禁分别裁决的架构：三层事实源只进一次，状态机、双侧一致性与改动面校验互不吞并，最终汇成唯一拦截/放行结论。
   nodes:
     - id: flow-src
       label: .agents/flow/ 三层事实源

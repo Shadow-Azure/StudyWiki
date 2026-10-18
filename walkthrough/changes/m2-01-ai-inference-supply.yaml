@@ -864,6 +864,7 @@ touches:
   - file:src/plugins/llm-settings/index.ts
 architecturalFlowchart:
   title: 模型供给的权限边界
+  explanation: 表达模型能力的权限与联网闭环：显式配置先由 Rust 登记，前端只能经 ctx.llm 消费；推理请求收敛到唯一出口并回到 Rust 审计，画环是为了强调边界不是一次性入口。
   nodes:
     - id: config
       label: 用户显式配置 OpenAI 兼容 endpoint

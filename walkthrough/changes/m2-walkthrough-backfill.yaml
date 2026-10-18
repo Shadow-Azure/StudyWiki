@@ -589,9 +589,10 @@ codeMap:
               function renderFlowchartFigure(chart, idSuffix) {
                 const svg = renderFlowchartSvg(chart, idSuffix);
                 const caption = chart.title ? `图：${escapeHtml(chart.title)}` : "流程图";
-                return `<figure class="flowchart-figure">${svg}<figcaption class="meta">${caption}</figcaption></figure>`;
+                const explanation = `<p class="flowchart-explanation"><span class="fc-explain-label">说明</span>${markdown.renderInline(chart.explanation)}</p>`;
+                return `<figure class="flowchart-figure">${svg}<figcaption class="meta">${caption}</figcaption>${explanation}</figure>`;
             note: |
-              流程图统一包成 figure + 题注；idSuffix 用 issue slug 派生，保证同页多张图的 arrow marker id 唯一。
+              流程图统一包成 figure + 题注；explanation 渲染为图下说明行，回答图想表达什么、为什么这么画。idSuffix 用 issue slug 派生，保证同页多张图的 arrow marker id 唯一。
           - snippet: |
               /**
                * 渲染 design 正文并按"落地映射"小节插入对应方案流程图：
@@ -643,6 +644,8 @@ codeMap:
               /* ---- 流程图（dagre 布局 + 内联 SVG，见 walkthrough-flowchart.mjs） ---- */
               .flowchart-figure { margin:16px 0; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-x:auto }
               .flowchart { display:block; max-width:100%; height:auto }
+              .flowchart-explanation { margin:8px 0 0; padding:6px 10px; border-left:3px solid var(--accent); border-radius:0 8px 8px 0; background:var(--accent-soft); font-size:13.2px; line-height:1.7 }
+              .flowchart-explanation .fc-explain-label { display:inline-block; margin-right:8px; padding:0 7px; border:1px solid var(--line-strong); border-radius:99px; font-size:10.5px; font-weight:700; letter-spacing:.08em; color:var(--muted); vertical-align:1px }
               .flowchart text { font-family:inherit }
               .fc-node { fill:var(--surface); stroke:var(--line-strong); stroke-width:1.2 }
               .fc-shape-stadium { fill:var(--accent-soft); stroke:var(--accent) }
@@ -651,9 +654,8 @@ codeMap:
               .fc-edge { fill:none; stroke:var(--muted); stroke-width:1.3 }
               .fc-arrow { fill:var(--muted) }
               .fc-edge-label { fill:var(--muted) }
-              @media (max-width:860px) {
             note: |
-              流程图样式全部走站点 CSS 令牌（surface/line-strong/accent-soft），明暗主题自动跟随；横向超长时 figure 滚动而不压扁图。
+              流程图样式全部走站点 CSS 令牌（surface/line-strong/accent-soft），明暗主题自动跟随；说明行用 accent 左线与软底区分正文，横向超长时 figure 滚动而不压扁图。
           - snippet: |
               function resolveIssueUrl(root, issue) {
                 try {
@@ -738,6 +740,10 @@ codeMap:
               }
             note: |
                 nextNew/nextOld 在 hunk 内推进 after/before 行号；hunkForRange 只把注解挂到 after 内容行与区间相交的 hunk。
+  - group: 渲染与检视自测
+    attention: skim
+    why: 自测试锁住渲染和 review 产物语义，具体夹具可在需要时下钻。
+    files:
       - path: scripts/walkthrough-review.spec.mjs
         note: 数据层自测试（真实 git 夹具）。
         changes:
@@ -858,6 +864,8 @@ codeMap:
           - snippet: |
               architecturalFlowchart:
                 title: 演示流程
+                explanation: |
+                  表达入口到核心处理的单主链与是否通过分支；起点/终点用 stadium/rounded 强调交付边界。
                 nodes:
                   - id: entry
                     label: 入口
@@ -869,9 +877,8 @@ codeMap:
                     shape: diamond
                   - id: done
                     label: 完成
-                    shape: rounded
             note: |
-              夹具为变更页配 architecturalFlowchart：stadium/rect/diamond/rounded 四种 shape 与多节点结构，渲染断言的输入面。
+              夹具为变更页配 architecturalFlowchart：stadium/rect/diamond/rounded 四种 shape、explanation 说明与多节点结构，渲染断言的输入面。
           - snippet: |
                 edges:
                   - from: entry
@@ -894,17 +901,74 @@ codeMap:
                   expect(changePage).toContain('id="fc-arrow-demo-change-arch"');
                   expect(changePage).toContain("否，重试");
                   expect(changePage).toContain("<figcaption");
+                  expect(changePage).toContain('class="flowchart-explanation"');
+                  expect(changePage).toContain("说明");
+                  expect(changePage).toContain("是否通过分支");
             note: |
-              产物断言锁死流程图交付面：figure 包裹、内联 svg、aria-label、页内唯一 marker id 与题注齐全。
-
-  - group: 流程图渲染器
-    attention: skim
-    why: dagre 自绘 SVG 渲染器与自测试；绘制语义由 walkthrough-flowchart.spec.mjs 逐条锁定，检视扫读即可。
+              产物断言锁死流程图交付面：figure 包裹、内联 svg、aria-label、页内唯一 marker id、题注与 explanation 说明行齐全。
+  - group: 流程图渲染核心
+    attention: must-read
+    why: 节点描述必须由真实文字量尺决定尺寸并保留在形状内部。
     files:
       - path: scripts/walkthrough-flowchart.mjs
         note: 量尺/折行/dagre 布局/手写 SVG。
+        changes:
+          - snippet: |
+                const lines = [];
+                  let current = "";
+                  let width = 0;
+                  const pushLine = () => {
+                    lines.push(current.trimEnd());
+                    current = "";
+                    width = 0;
+                  };
+                  for (const token of tokens) {
+                    if (token === "\n") {
+                      pushLine();
+                      continue;
+                    }
+                    if (token === " ") {
+                      if (current && width + charWidth(" ") <= maxWidth) {
+                        current += " ";
+                        width += charWidth(" ");
+                      }
+                      continue;
+                    }
+            note: |
+                折行先维护当前行、实时宽度和统一换行函数；显式换行立即成行，空格只在仍能容纳时保留，保证折行不靠渲染后的猜测。
+          - snippet: |
+                function nodeBox(node) {
+                  const innerMax = MAX_NODE_WIDTH - PAD_X * 2;
+                  const lines = wrapLabel(node.label, innerMax);
+                  let textWidth = 0;
+                  for (const line of lines) textWidth = Math.max(textWidth, measureLine(line));
+                  const isDiamond = node.shape === "diamond";
+                  const slack = isDiamond ? 34 : 0;
+                  const width = Math.max(MIN_NODE_WIDTH, Math.ceil(textWidth + PAD_X * 2 + slack));
+                  const height = Math.ceil(lines.length * LINE_HEIGHT + PAD_Y * 2 + (isDiamond ? 22 : 0));
+                  return { lines, width, height };
+                }
+            note: |
+                节点尺寸直接由折行结果和每行真实量尺决定，菱形另留角部余量；这就是描述文字能留在形状内部而不是靠外移补救的根因。
+  - group: 渲染回归自测
+    attention: skim
+    why: 渲染回归夹具可按需下钻，不进入本 PR 的 must-read 覆盖率口径。
+    files:
       - path: scripts/walkthrough-flowchart.spec.mjs
         note: 渲染语义自测试。
+        changes:
+          - snippet: |
+                  it("标签做 HTML 转义，文字可选中（text 元素）", () => {
+                    const svg = renderFlowchartSvg(chart, "s2");
+                    expect(svg).toContain("处理 &lt;数据&gt; 与 &amp; 转义");
+                    expect(svg).not.toContain("处理 <数据>");
+                    expect(svg).toContain("<text");
+                    // 居中锚点：文字以节点中心对称绘制，而不是从中心向右延伸。
+                    expect(svg).toContain('class="fc-label" font-size="13" text-anchor="middle"');
+                    expect(svg).toContain('class="fc-edge-label" font-size="11" text-anchor="middle"');
+                  });
+            note: |
+                回归锁住节点描述的两个关键语义：HTML 特殊字符先转义，节点与边标签都以节点中心为基准；这正是描述文字保留在形状内部的基础。
   - group: 功能页
     attention: skim
     why: 13 个用户可见功能与登记处互链。
@@ -1040,6 +1104,7 @@ touches:
   - file:walkthrough/changes/m2-walkthrough-backfill.yaml
 architecturalFlowchart:
   title: 五层内容到机械保鲜的闭环
+  explanation: 表达五层 YAML 源到静态站的保鲜闭环：共享库是唯一事实源，门禁与构建都消费它；「schema 与对账」回边强调校验是持续约束，不是构建前的一次性步骤。
   nodes:
     - id: five-layer
       label: YAML 五层内容源
@@ -1072,6 +1137,7 @@ architecturalFlowchart:
 designFlowcharts:
   - feature: 变更页机制与门禁
     title: 门禁事实源与自测试
+    explanation: 表达规则单源的设计：封闭 schema 先进 lib，门禁 CLI 与两条 spec 都是它的下游，互为回归防线；LR 主链即依赖方向。
     nodes:
       - id: schema
         label: 封闭 schema 定义
@@ -1098,6 +1164,7 @@ designFlowcharts:
         to: specs
   - feature: 渲染与检视模式
     title: 普通产物叠加本 PR 视角
+    explanation: 表达检视页不复制讲解内容：多页渲染与 diff 数据层两路输入在 --review 模式汇合，叙事仍来自变更页单一事实源。
     nodes:
       - id: site-data
         label: 事实源库数据
@@ -1123,6 +1190,7 @@ designFlowcharts:
         to: page
   - feature: 内容回填
     title: 六批文件页与两类聚合页
+    explanation: 表达回填的收口次序：文件页并行铺开，功能页与变更页串行对齐登记处，overview/architecture/manifest 最后定版；串行边强调依赖而非时间。
     nodes:
       - id: batch
         label: 六批文件页并行生成
@@ -1152,6 +1220,7 @@ designFlowcharts:
         to: manifest
   - feature: 保鲜与钩子
     title: pre-push 保鲜对账
+    explanation: 表达推送时的分支语义：id 落后且中间有非 changes 提交才拦截，「仅元数据对账」放行是容错出口；菱形两条出边一一对应该规则的两个出口。
     nodes:
       - id: commit
         label: 提交后 skill 对齐 commit id
@@ -1183,6 +1252,7 @@ designFlowcharts:
         label: 仅元数据对账
   - feature: 流程件
     title: 流程三件套随批次落地
+    explanation: 表达流程件是批次的伴生交付而非独立任务：issue 先行、Note 记决策、设计文档随后，同 PR 落地。
     nodes:
       - id: issue
         label: issue 三件套
