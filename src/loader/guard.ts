@@ -4,7 +4,8 @@ import type { PluginModule } from "./types";
 const jsProtocolProperties = new Set(["then", "toJSON", "toString", "valueOf"]);
 
 /** 外置插件 guard 门面（只包外置；内置一等公民静态表直装）。
- * 白名单：inject 声明过的服务名；未声明的 JS 协议属性按缺席返回 undefined，
+ * 服务面：只按 inject 依赖声明暴露已提供的宿主服务；声明是启动依赖，不是授权。
+ * 未声明的 JS 协议属性按缺席返回 undefined，
  * 其余属性读即抛教学错误，赋值/删除/定义均抛只读错误，
  * 服务返回值里的 cordis Context 一律拒绝（防经返回值摸到别的上下文）。
  * 边界诚实化：本门面收窄的是服务面，不是语言能力——外置插件仍可触达
@@ -22,7 +23,7 @@ export function guardExternalModule(mod: PluginModule): PluginModule {
   };
 }
 
-/** 单插件门面 Proxy：按声明集合放行/教学拒绝。 */
+/** 单插件门面 Proxy：按 inject 依赖声明暴露服务；声明不等于授权。 */
 function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
   const wrapped = new Map<string, unknown>();
   return new Proxy(Object.create(null), {
@@ -32,7 +33,7 @@ function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
       if (!declared.has(prop) && jsProtocolProperties.has(prop)) return undefined;
       if (!declared.has(prop)) {
         throw new Error(
-          `外置插件 ${name} 访问了未声明的服务 "${prop}"——在模块的 inject 数组里声明 "${prop}" 后重新加载。已声明：${[...declared].join(", ") || "（无）"}`,
+          `外置插件 ${name} 读取了未声明的服务 "${prop}"——guard 门面只暴露 inject 声明过的服务；若要依赖它，请在 inject 数组里声明 "${prop}" 后重新加载。已声明：${[...declared].join(", ") || "（无）"}`,
         );
       }
       if (!wrapped.has(prop)) {

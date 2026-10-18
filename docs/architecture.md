@@ -26,7 +26,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   loader/activate.ts                外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
   loader/boot.ts                    装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ activate.ts、manifest.ts、table.ts、types.ts）
   loader/external.ts                外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
-  loader/guard.ts                   外置插件 guard 门面：inject 白名单 Proxy + 关键宿主服务成员白名单（非沙箱）（→ types.ts）
+  loader/guard.ts                   外置插件 guard 门面：按 inject 依赖声明暴露服务 + 关键宿主服务成员白名单（非沙箱）（→ types.ts）
   loader/manifest.ts                插件清单装载：缺失时从模块表生成默认并写回 + 存量迁移（表新增内置行合并落盘），损坏 fail-loud（→ table.ts）
   loader/table.ts                   静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                   内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集

@@ -1,12 +1,13 @@
 kind: file-page
 source: src/loader/guard.ts
-summary: 外置插件 guard 门面：inject 白名单 Proxy + 关键宿主服务成员白名单（非沙箱）
+summary: 外置插件 guard 门面：按 inject 依赖声明暴露服务 + 关键宿主服务成员白名单（非沙箱）
 segments:
   - snippet: |
       const jsProtocolProperties = new Set(["then", "toJSON", "toString", "valueOf"]);
 
       /** 外置插件 guard 门面（只包外置；内置一等公民静态表直装）。
-       * 白名单：inject 声明过的服务名；未声明的 JS 协议属性按缺席返回 undefined，
+       * 服务面：只按 inject 依赖声明暴露已提供的宿主服务；声明是启动依赖，不是授权。
+       * 未声明的 JS 协议属性按缺席返回 undefined，
        * 其余属性读即抛教学错误，赋值/删除/定义均抛只读错误，
        * 服务返回值里的 cordis Context 一律拒绝（防经返回值摸到别的上下文）。
        * 边界诚实化：本门面收窄的是服务面，不是语言能力——外置插件仍可触达
@@ -27,9 +28,9 @@ segments:
         };
       }
     note: |
-      guardExternalModule 读取 inject 声明生成白名单，透传 name 与 inject，只替换 apply 收到的 ctx。插件体从此面对门面而不是原始 Context。
+      guardExternalModule 读取 inject 依赖声明生成门面可见集合，透传 name 与 inject，只替换 apply 收到的 ctx。插件体从此面对门面而不是原始 Context；声明不等于授权。
   - snippet: |
-      /** 单插件门面 Proxy：按声明集合放行/教学拒绝。 */
+      /** 单插件门面 Proxy：按 inject 依赖声明暴露服务；声明不等于授权。 */
       function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
         const wrapped = new Map<string, unknown>();
         return new Proxy(Object.create(null), {
@@ -39,7 +40,7 @@ segments:
             if (!declared.has(prop) && jsProtocolProperties.has(prop)) return undefined;
             if (!declared.has(prop)) {
               throw new Error(
-                `外置插件 ${name} 访问了未声明的服务 "${prop}"——在模块的 inject 数组里声明 "${prop}" 后重新加载。已声明：${[...declared].join(", ") || "（无）"}`,
+                `外置插件 ${name} 读取了未声明的服务 "${prop}"——guard 门面只暴露 inject 声明过的服务；若要依赖它，请在 inject 数组里声明 "${prop}" 后重新加载。已声明：${[...declared].join(", ") || "（无）"}`,
               );
             }
             if (!wrapped.has(prop)) {
@@ -68,7 +69,7 @@ segments:
         });
       }
     note: |
-      facade Proxy 只放行声明过的服务；then 等 JS 协议属性在未声明时按缺席处理。未声明读会得到教人补声明的错误，赋值、删除、定义和改扩展形态都被拒绝。
+      facade Proxy 只暴露声明过的服务；then 等 JS 协议属性在未声明时按缺席处理。未声明读会得到教人补声明的错误，赋值、删除、定义和改扩展形态都被拒绝；这不构成权限边界。
   - snippet: |
       /** Service members external plugins may touch; unlisted services keep their full method surface. */
       const publicServiceMembers: Record<string, Set<string>> = {

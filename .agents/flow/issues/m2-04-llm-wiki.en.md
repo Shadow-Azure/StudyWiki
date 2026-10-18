@@ -19,6 +19,9 @@ scope:
   - tests/**
   - docs/architecture.*
   - docs/commands.*
+  - docs/README.*
+  - docs/plugins/contract.*
+  - docs/plugins/agent.*
   - package.json
   - pnpm-lock.yaml
   - scripts/code-map.manifest.json

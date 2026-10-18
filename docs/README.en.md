@@ -14,7 +14,7 @@ This repo treats documentation as an artifact on par with code: behind every "sh
 | [development.md](development.en.md) | Contributor onboarding |
 | [plugins/authoring.md](plugins/authoring.en.md) | External plugin authoring guide (closed contract / quick start / trial install / publish / trust model) |
 | [plugins/agent.md](plugins/agent.en.md) | Built-in agent (service / tools / approvals / sessions) |
-| [plugins/contract.md](plugins/contract.en.md) | External plugin contract (shape / permissions / boundaries / failures) |
+| [plugins/contract.md](plugins/contract.en.md) | External plugin contract (shape / dependencies / boundaries / failures) |
 | [plugins/dynamic.md](plugins/dynamic.en.md) | Dynamic-loading behaviour contract (live scope / reload / version store / where failures land) |
 | [commands.md](commands.en.md) | Tauri command catalog (generated region) |
 | [i18n/README.md](i18n/README.en.md) | Bilingual pairing contract |
