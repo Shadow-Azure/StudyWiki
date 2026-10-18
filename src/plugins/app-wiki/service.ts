@@ -95,7 +95,15 @@ export function createWikiService(deps: {
         probed.set(item.source, sample);
       }
     }
-    const next = reconcileIndex(prev, evidence, probed);
+    const next = {
+      version: 1,
+      sources: reconcileIndex(prev, evidence, probed).sources.map((record) => {
+        const previous = prev?.sources.find((item) => item.path === record.path);
+        return previous !== undefined && !probed.has(record.path)
+          ? { ...record, analyzedAt: previous.analyzedAt }
+          : record;
+      }),
+    } satisfies MachineIndex;
     const serialized = serializeMachineIndex(next);
     if (serialized !== prevText) {
       await deps.files.writeText(`${root}/${INDEX_YAML}`, serialized);

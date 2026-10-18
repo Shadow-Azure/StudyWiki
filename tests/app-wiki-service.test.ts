@@ -130,7 +130,7 @@ describe("wiki contextSection", () => {
       kind: "text" as const,
       sha256: "aa".repeat(32),
       size: 9,
-      analyzedAt: "1970-01-01T00:00:01.000Z",
+      analyzedAt: "1970-01-01T00:00:02.000Z",
       artifact: ".study-wiki/raw/old",
     };
     const { filesSvc, workspace, files } = fakeWikiHost({
@@ -143,7 +143,7 @@ describe("wiki contextSection", () => {
         path === "/lib/notes/old.md"
           ? null
           : path.endsWith(".study-wiki/llm-wiki/sources/notes/old.md")
-            ? { size: 4, mtimeMs: 1000, sha256: "aa".repeat(32) }
+            ? { size: 4, mtimeMs: 5000, sha256: "aa".repeat(32) }
             : { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) },
     });
     const wiki = createWikiService({ files: filesSvc, workspace });
@@ -151,7 +151,8 @@ describe("wiki contextSection", () => {
     expect(section).toContain("已分析");
     expect(files.get(MACHINE_INDEX)).toContain('"notes/new.md"');
     expect(files.get(MACHINE_INDEX)).toContain(`"${"aa".repeat(32)}"`);
-    expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:01.000Z");
+    expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:02.000Z");
+    expect(files.get(MACHINE_INDEX)).not.toContain("1970-01-01T00:00:05.000Z");
     expect(files.get(MACHINE_INDEX)).toContain('".study-wiki/raw/old"');
   });
 
