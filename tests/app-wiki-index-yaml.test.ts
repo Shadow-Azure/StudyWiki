@@ -27,6 +27,20 @@ const sample: MachineIndex = {
   ],
 };
 
+const completeRecord = (
+  overrides: { path?: string; size?: string; artifact?: string } = {},
+) =>
+  [
+    "version: 1",
+    "sources:",
+    overrides.path ?? '  - path: "a.md"',
+    "    kind: text",
+    '    sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"',
+    overrides.size ?? "    size: 0",
+    '    analyzedAt: "2026-10-18T00:00:00+08:00"',
+    overrides.artifact ?? "    artifact: null",
+  ].join("\n");
+
 describe("machine index yaml 子集", () => {
   it("serialize/parse 恒等", () => {
     expect(parseMachineIndex(serializeMachineIndex(sample))).toEqual(sample);
@@ -73,40 +87,15 @@ describe("machine index yaml 子集", () => {
     expect(parseMachineIndex(text)).toBeNull();
   });
 
-  it("完整记录中的无效字符串 → null", () => {
-    const indexText = (path: string) =>
-      [
-        "version: 1",
-        "sources:",
-        `  - path: ${path}`,
-        "    kind: text",
-        '    sha256: "ab".repeat(32)',
-        "    size: 0",
-        '    analyzedAt: "2026-10-18T00:00:00+08:00"',
-        "    artifact: null",
-      ].join("\n");
-
-    expect(parseMachineIndex(indexText("a.md"))).toBeNull();
-    expect(parseMachineIndex(indexText('"a.md'))).toBeNull();
-    expect(parseMachineIndex(indexText('"a\\\\q.md"'))).toBeNull();
-    expect(parseMachineIndex(indexText('""a.md""'))).toBeNull();
-  });
-
   it.each([
-    ["超过安全整数", `${Number.MAX_SAFE_INTEGER + 2}`],
-    ["溢出为 Infinity", "9".repeat(400)],
-  ])("完整记录的 size 溢出 → null：%s", (_name, size) => {
-    const text = [
-      "version: 1",
-      "sources:",
-      '  - path: "a.md"',
-      "    kind: text",
-      '    sha256: "ab".repeat(32)',
-      `    size: ${size}`,
-      '    analyzedAt: "2026-10-18T00:00:00+08:00"',
-      "    artifact: null",
-    ].join("\n");
-    expect(parseMachineIndex(text)).toBeNull();
+    ["unquoted path", { path: "  - path: a.md" }],
+    ["unquoted non-null artifact", { artifact: "    artifact: artifact" }],
+    ["oversized size", { size: "    size: 9007199254740993" }],
+    ["unclosed quote", { path: '  - path: "a.md' }],
+    ["unescaped quote", { path: '  - path: "a"md"' }],
+    ["invalid escape", { path: '  - path: "a\\q.md"' }],
+  ])("完整记录仅目标值损坏 → null：%s", (_name, overrides) => {
+    expect(parseMachineIndex(completeRecord(overrides))).toBeNull();
   });
 
   it("CRLF 拒收", () => {
@@ -129,6 +118,12 @@ describe("machine index yaml 子集", () => {
       ],
     };
     expect(parseMachineIndex(serializeMachineIndex(bounded))).toEqual(bounded);
+  });
+
+  it("serialized two-backslash escape is valid", () => {
+    const text = completeRecord({ path: '  - path: "a\\\\q.md"' });
+    const parsed = parseMachineIndex(text);
+    expect(parsed?.sources[0]?.path).toBe("a\\q.md");
   });
 
   it.each([
