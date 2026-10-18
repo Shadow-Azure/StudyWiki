@@ -1,6 +1,6 @@
 kind: change
 issue: m0-01-dev-flow-gates
-skill_gen_commit_id: fee848f
+skill_gen_commit_id: b6bb224
 title: #26 开发流程门禁落地
 scale:
   files: 62

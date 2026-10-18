@@ -1,6 +1,6 @@
 kind: change
 issue: m1-02-reading-polish
-skill_gen_commit_id: fee848f
+skill_gen_commit_id: b6bb224
 title: #44 阅读体验统一
 scale:
   files: 42

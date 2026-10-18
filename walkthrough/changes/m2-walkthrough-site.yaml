@@ -1,6 +1,6 @@
 kind: change
 issue: m2-walkthrough-site
-skill_gen_commit_id: fee848f
+skill_gen_commit_id: b6bb224
 title: #58 Walkthrough 工程讲解站：机制骨架
 scale:
   files: 34
