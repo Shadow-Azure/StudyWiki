@@ -15,7 +15,7 @@ llm-wiki 是构建在 agent（m2-03 已完成：cordis 双插件、四工具、�
 
 ## 目标与验收
 
-- `.study-wiki/llm-wiki/` 固定路径 + 机器索引 `.study-wiki/index.yaml`（源 → 产物映射 + md5 + 时间戳 + 状态）。
+- `.study-wiki/llm-wiki/` 固定路径 + 机器索引 `.study-wiki/index.yaml`（源 → 产物映射 + SHA-256 + 时间戳 + 状态）。
 - ingest 更新 index 与相关页并追加 log；query 先读 index；lint 查矛盾/孤儿/缺口。
 - 源状态机（未分析/已分析/过期/已移动）由宿主确定性判定，agent 据注入上下文提示用户「需要先分析」。
 - m2 范围：文本源闭环；视频全契约预留（raw/ 布局、topics.md 主题-时间戳对照、m3 填充路径明确），零返工。
@@ -26,7 +26,7 @@ llm-wiki 是构建在 agent（m2-03 已完成：cordis 双插件、四工具、�
 
 1. **schema（行为契约）归插件所有**，不在库内放 `.study-wiki/llm-wiki/AGENTS.md`。schema 以插件内常量文本存在，随应用版本发布——环境无关性硬约束要求「同版本 + 同插件集行为一致」，库内 schema 副本会漂移。库内只物化 wiki **产物**（index/log/overview/sources/concepts/entities），不复制契约。用户与 LLM 共同演进 schema 的定制通道记欠账（未来可加库级 override 合并）。
 2. **agent-core 增 prompt 贡献缝**：`AgentService` 增 `registerPromptSection(id, provider)`，provider 每回合异步返回字符串或 null；`buildSystemPrompt` 输入增 `extraSections`，loop 组装时按注册序拼接在库约定（AGENTS.md）之后。app-wiki 注册「wiki 段」。这是对 m2-03「agent 侧零改动」约定的唯一修订——动的不是工具与 loop 语义，而是 system prompt 组装点，m2-03 落地记录中「wiki index 留给 m2-04」即指此缝。
-3. **ingest/query/lint 保持对话驱动**：用户 natural language 发起，agent 用现有 read/grep/write/edit 四工具执行 wiki 维护（m2-03 通用工具面哲学不变）。wiki 插件不做新工具、不接管 loop。程序性写（骨架初始化、移动重映射）经 files 服务直接落盘，属宿主行为，不走 agent 审批。
+3. **ingest/query/lint 保持对话驱动**：用户 natural language 发起，agent 用现有 read/grep/write/edit 四工具执行 wiki 维护（m2-03 通用工具面哲学不变）。wiki 插件不做新工具、不接管 loop。程序性写（机器索引物化、移动重指）经 files 服务直接落盘，属宿主行为，不走 agent 审批。
 
 ## 存储契约
 
@@ -48,7 +48,7 @@ llm-wiki 是构建在 agent（m2-03 已完成：cordis 双插件、四工具、�
 ```
 
 - **raw/ 存在 ⇔ 源产生派生物**。文本源（md）产物即源本身，不落 raw；视频源的 transcript/topics 由 m3 填充，m2 遇到视频源时 raw/ 下无产物即「未分析」的物证。
-- **机器索引 `.study-wiki/index.yaml`**（纯数据文件，非文档；m2-04 先落最小契约，m3-03 落地记录中「映射 + md5 + 时间戳」与本契约合并，m3-03 后续聚焦 raw/ 产物填充与字段扩展）。**解析不引 yaml 依赖**：索引由本插件独占读写，采用受限子集（顶层 `version` + `sources` 列表的扁平标量字段）手写解析器；读取校验失败视为损坏，从产物重新派生重建：
+- **机器索引 `.study-wiki/index.yaml`**（纯数据文件，非文档；m2-04 先落最小契约，m3-03 落地记录中「映射 + md5 + 时间戳」与本契约合并（hash 算法取 SHA-256，#34 文案「md5」同 PR 改为「内容哈希」），m3-03 后续聚焦 raw/ 产物填充与字段扩展）。**解析不引 yaml 依赖**：索引由本插件独占读写，采用受限子集（顶层 `version` + `sources` 列表的扁平标量字段）手写解析器；读取校验失败视为损坏，从产物重新派生重建：
 
 ```yaml
 # study-wiki index
@@ -56,7 +56,7 @@ version: 1
 sources:
   - path: "courses/rust/ownership.md"   # 库相对路径
     kind: text                          # text | video | ...
-    md5: "…"
+    sha256: "…"
     size: 12345
     analyzed_at: "2026-10-18T12:00:00+08:00"
     status: fresh                       # fresh | stale
@@ -70,23 +70,23 @@ sources:
 
 状态判定序（对 `probe_source_file` 结果，惰性探测——只探活动文件，不扫全库）：
 
-1. 按 path 查索引：命中且 md5 一致 → `fresh`；
-2. 命中但 md5 不一致 → `stale`（源内容已变）；
-3. 未命中 → **按 md5 反查索引**：命中（他路径有同 hash 记录）→ `moved`；
+1. 按 path 查索引：命中且 sha256 一致 → `fresh`；
+2. 命中但 sha256 不一致 → `stale`（源内容已变）；
+3. 未命中 → **按 sha256 反查索引**：命中（他路径有同 hash 记录）→ `moved`；
 4. 均未命中 → `unknown`。
 
-- **Rust 新命令 `probe_source_file(path)`**（m2-04 落地）：流式计算 md5，返回 `{ size, mtimeMs, md5 }`；库外路径拒绝（错误词表沿用授权语义）。新增 pinned `md5` crate（构建期打包、零运行时下载，登记 dep-allowlist；`std::hash::DefaultHasher` 不保证跨版本稳定，不可用）。
+- **Rust 新命令 `probe_source_file(path)`**（m2-04 落地）：流式计算 **SHA-256**——`sha2` crate 已在依赖树（settings 原子写校验在用），零新增依赖；返回 `{ size, mtimeMs, sha256 }`；库外路径拒绝（错误词表沿用授权语义）。配套小改：`write_text_file` 的 `std_write` 自动建父目录（agent 才能往新建的 `.study-wiki/llm-wiki/...` 深路径写页）。
 - **机器索引的物化规则：索引行不是人工/agent 写入的，而是 wiki 服务探测时的**派生物**——产物存在（`raw/<源>/` 有内容 ∨ `llm-wiki/sources/<源>.md` 存在）即补写或刷新该行（`analyzed_at` 取产物最新 mtime）；产物不存在即 `unknown`，索引无行。这保证 ingest 流程只维护 wiki 产物，登记永不漏配。
 
-判定逻辑在 TS**（`app-wiki` 纯函数）：解析机器索引、比对 probe 结果、给出状态与建议动作。TS 侧按 `path + mtimeMs + size` 缓存 md5，活动文件未变更时不重复哈希——视频大文件每回合重哈希不可接受。
-- **moved 处理**：raw/ 产物目录随源重命名（`<旧源相对路径去扩展名>` → `<新路径去扩展名>`）+ 索引行路径改写（md5/size/mtime 取 probe 值刷新，`analyzed_at` 不变），不重分析。纯程序行为，无审批。
+判定逻辑在 TS**（`app-wiki` 纯函数）：解析机器索引、比对 probe 结果、给出状态与建议动作。TS 侧按 `path + mtimeMs + size` 缓存 sha256，活动文件未变更时不重复哈希——视频大文件每回合重哈希不可接受。
+- **moved 处理**：只改索引行——`path` 更新为新路径，`artifact` 保持旧产物目录**不重命名实体目录**（files 面无 rename 命令，不为整洁新增命令；目录名漂移由索引间接层吸收），sha256/size/mtime 取 probe 值刷新，`analyzed_at` 不变，不重分析。纯程序行为，无审批。
 - 状态经 wiki 段注入：activeFile 为 `unknown/stale` 时 agent 明确提示「需要先分析」（文本源可直接发起 ingest；视频源说明转录能力后续里程碑提供）；`fresh` 时注入 wiki 侧摘要指针（llm-wiki/index.md 头部有界截断——前 80 行或 4 KiB 取小——+ sources 页路径）。
 
 ## app-wiki 插件模块
 
 - `schema.ts`：schema 常量文本（见下节）+ 版本号。
 - `state.ts`：机器索引解析、probe 缓存、状态机纯函数（vitest 主战场）。
-- `service.ts`：`ctx.wiki` 服务——`sourceState(path)`、`wikiContextSection()`（prompt provider 实现：状态行 + index 头部 + schema 全文，均有界）、骨架初始化（`.study-wiki/{raw,llm-wiki/{sources,concepts,entities}}` + index/log/overview 初始页 + 机器索引建文件）。
+- `service.ts`：`ctx.wiki` 服务——`sourceState(path)`、`wikiContextSection()`（prompt provider 实现：状态行 + index 头部 + schema 全文，均有界）、机器索引物化与 moved 重指。**无程序侧骨架初始化**：wiki 层文件全部由 agent 依 schema 模板经 write 工具创建（`std_write` 自动建父目录支撑深路径）；程序侧只写 `.study-wiki/index.yaml`。
 - `index.ts`：cordis 插件入口；注册 prompt 贡献；监听 `workspace.events` 的 `file-opened`/`root-changed` 失效 probe 缓存。
 - 分层纪律：禁 `@tauri-apps/*`，只经宿主 files 服务触盘；无新 npm 依赖。
 
@@ -108,8 +108,8 @@ sources:
 
 ## 测试与门禁
 
-- vitest（假 ctx）：状态机纯函数（unknown/fresh/stale/moved 全迁移）、md5 缓存命中/失效、wikiContextSection 有界截断与状态注入句、骨架初始化幂等、prompt 贡献缝注册与拼接序。
-- cargo：`probe_source_file` 流式 md5 正确性、库外路径拒绝、大文件（> 缓存块）一致性；TS 侧钉 pinned md5 crate 版本。
+- vitest（假 ctx）：状态机纯函数（unknown/fresh/stale/moved 全迁移）、sha256 缓存命中/失效、wikiContextSection 有界截断与状态注入句、机器索引物化幂等（含损坏重建）、prompt 贡献缝注册与拼接序。
+- cargo：`probe_source_file` 流式 SHA-256 正确性（含 >64 KiB 多块一致性）、库外路径拒绝、`..` 拒绝；`std_write` 自动建父目录与文件组件冲突报错。
 - 机械面：commands.md / code-map 生成区重建；`verify:layering`、`verify:env-independence`（新 crate 登记）、`verify:dep-audit`、`verify:flow`；doc-budgets 登记新常驻文档；issue #31 三件套与 Agent Note（`proposed → implemented`）同 PR。
 
 ## Alternatives considered
@@ -119,12 +119,12 @@ sources:
 - **schema 放库内文件**（Karpathy 原版 / 上轮方案）：库副本随使用漂移，且环境无关性要求同版本行为一致；用户拍板归插件，否。
 - **专用 wiki 工具（wiki_ingest/query/lint 参数化）**：ingest 的开放性写作难参数化，推翻 m2-03 通用工具面共识；否。
 - **独立 wiki 插件 + 任务队列 + 向量索引**（nashsu 工程化路线）：过度工程，向量索引撞环境无关硬约束；否。
-- **程序性骨架初始化走 agent 审批**：初始化是宿主行为非模型决策，审批无意义且拖慢首用；否。
-- **DefaultHasher 代 md5 crate**：跨版本不稳定，破坏索引持久化；否。
+- **程序性骨架初始化**：v1 更彻底——骨架也不由程序建，wiki 文件全由 agent 依 schema 经 write 工具落盘（`std_write` 自动建父目录）；程序侧零 wiki 文件知识，契约只在 schema 一处。否。
+- **DefaultHasher / 新增 md5 crate**：前者跨版本不稳定，后者多余——`sha2` 已在依赖树，SHA-256 零新增；否。
 
 ## 影响
 
 - m2-02 落地记录「wiki index 留给 m2-04」在本 issue 闭合（prompt 贡献缝 + wikiContextSection）。
 - m3-03（raw 落盘与索引）与本契约合并：机器索引 m2-04 先落（`.study-wiki/index.md` 更名 `.study-wiki/index.yaml`，issue #34 验收文案同 PR 微调），m3-03 聚焦 raw/ 产物与字段扩展。
 - m4-01（时间戳问答）/ m4-02（chat-note 回填）消费本契约：topics.md 主题对照、sources 页 frontmatter、log.md。
-- issue #31 scope 预计扩 `src-tauri/**`（probe 命令）、`package.json`/`pnpm-lock.yaml`（md5 crate 不涉前端）、`scripts/dep-allowlist.json`、commands/code-map 生成区等，实施时更新三件套。
+- issue #31 scope 预计扩 `src-tauri/**`（probe 命令 + std_write 小改；sha2 已在内，无新增 crate 与前端依赖变动）、commands/code-map 生成区等，实施时更新三件套。
