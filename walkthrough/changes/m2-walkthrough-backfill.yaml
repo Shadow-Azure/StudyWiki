@@ -1,6 +1,6 @@
 kind: change
 issue: m2-walkthrough-backfill
-skill_gen_commit_id: ad4df96
+skill_gen_commit_id: fee848f
 title: #60 Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
 scale:
   files: 100
