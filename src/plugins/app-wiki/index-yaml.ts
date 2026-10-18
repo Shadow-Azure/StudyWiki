@@ -19,6 +19,8 @@ export interface SourceRecord {
   analyzedAt: string;
   /** 产物目录（库相对路径）；文本源为 null（产物即源本身）。 */
   artifact: string | null;
+  /** sources 页路径（库相对路径）；用于源迁址后仍把产物页与索引行绑定。 */
+  page?: string;
 }
 
 /** 机器索引顶层结构。 */
@@ -36,6 +38,8 @@ const FIELDS = [
   "artifact",
 ] as const;
 type Field = (typeof FIELDS)[number];
+const OPTIONAL_FIELDS = ["page"] as const;
+type OptionalField = (typeof OPTIONAL_FIELDS)[number];
 const ITEM_RE = /^  - ([a-zA-Z0-9]+): (.*)$/;
 const CONT_RE = /^    ([a-zA-Z0-9]+): (.*)$/;
 const INVALID_VALUE = Symbol("invalid value");
@@ -61,7 +65,7 @@ function unquote(raw: string): string | null {
 }
 
 function parseValue(
-  field: Field,
+  field: Field | OptionalField,
   raw: string,
 ): ParsedValue {
   if (field === "artifact" && raw === "null") return null;
@@ -94,11 +98,13 @@ export function parseMachineIndex(text: string): MachineIndex | null {
   if (rest[0] !== "sources:") return null;
 
   const sources: SourceRecord[] = [];
-  let current: Partial<Record<Field, string | number | null>> | null = null;
-  const seen = new Set<Field>();
+  let current: Partial<
+    Record<Field | OptionalField, string | number | null>
+  > | null = null;
+  const seen = new Set<Field | OptionalField>();
   const flush = (): boolean => {
     if (current === null) return true;
-    if (seen.size !== FIELDS.length) return false;
+    if (!FIELDS.every((field) => seen.has(field))) return false;
     sources.push(current as SourceRecord);
     return true;
   };
@@ -115,8 +121,12 @@ export function parseMachineIndex(text: string): MachineIndex | null {
       match = line.match(CONT_RE);
       if (match === null || current === null) return null;
     }
-    const key = match[1] as Field;
-    if (!(FIELDS as readonly string[]).includes(key) || seen.has(key)) {
+    const key = match[1] as Field | OptionalField;
+    if (
+      (!(FIELDS as readonly string[]).includes(key) &&
+        !(OPTIONAL_FIELDS as readonly string[]).includes(key)) ||
+      seen.has(key)
+    ) {
       return null;
     }
     const value = parseValue(key, match[2]);
@@ -145,7 +155,8 @@ export function serializeMachineIndex(index: MachineIndex): string {
       typeof source.path !== "string" ||
       typeof source.sha256 !== "string" ||
       typeof source.analyzedAt !== "string" ||
-      (source.artifact !== null && typeof source.artifact !== "string")
+      (source.artifact !== null && typeof source.artifact !== "string") ||
+      (source.page !== undefined && typeof source.page !== "string")
     ) {
       throw new Error("machine index contains an unrepresentable source");
     }
@@ -154,6 +165,7 @@ export function serializeMachineIndex(index: MachineIndex): string {
       source.sha256,
       source.analyzedAt,
       source.artifact,
+      source.page ?? null,
     ]) {
       if (value !== null && /[\n\r\u2028\u2029]/u.test(value)) {
         throw new Error("machine index strings must not contain line breaks");
@@ -172,6 +184,9 @@ export function serializeMachineIndex(index: MachineIndex): string {
     lines.push(
       `    artifact: ${source.artifact === null ? "null" : quote(source.artifact)}`,
     );
+    if (source.page !== undefined) {
+      lines.push(`    page: ${quote(source.page)}`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }

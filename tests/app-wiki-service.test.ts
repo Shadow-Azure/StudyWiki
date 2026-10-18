@@ -4,6 +4,7 @@ import * as appWiki from "../src/plugins/app-wiki";
 import { MODULE_TABLE } from "../src/loader/table";
 import type { FilesService, ProbeSample } from "../src/host/files";
 import type { WorkspaceFacade } from "../src/host/workspace";
+import type { FileNode } from "../src/types";
 import { WIKI_SCHEMA } from "../src/plugins/app-wiki/schema";
 import { serializeMachineIndex } from "../src/plugins/app-wiki/state";
 
@@ -24,10 +25,7 @@ function fakeWikiHost(opts: {
     writeText: async (path: string, contents: string) => {
       files.set(path, contents);
     },
-    readTree: async (root: string) =>
-      [...files.keys()]
-        .filter((path) => path.startsWith(root + "/"))
-        .map((path) => ({ name: path.split("/").pop()!, path, kind: "markdown" as const })),
+    readTree: async (root: string) => buildTree(root, [...files.keys()]),
     probeSourceFile: async (path: string) => {
       const sample = probeImpl(path);
       if (sample === null) throw new Error("ENOENT");
@@ -53,6 +51,33 @@ function fakeWikiHost(opts: {
     guardSwitch: () => () => {},
   } as unknown as WorkspaceFacade;
   return { filesSvc, workspace, files };
+}
+
+function buildTree(root: string, paths: string[]): FileNode[] {
+  const prefix = `${root}/`;
+  const children = paths.filter((path) => path.startsWith(prefix));
+  const nodes: FileNode[] = [];
+  for (const path of children) {
+    const rest = path.slice(prefix.length);
+    const [name, ...tail] = rest.split("/");
+    if (tail.length > 0) {
+      if (!nodes.some((node) => node.name === name)) {
+        nodes.push({
+          name,
+          path: `${root}/${name}`,
+          kind: "dir",
+          children: buildTree(`${root}/${name}`, paths),
+        });
+      }
+      continue;
+    }
+    nodes.push({
+      name,
+      path,
+      kind: name.endsWith(".md") ? "markdown" : "other",
+    });
+  }
+  return nodes;
 }
 
 const WIKI_INDEX = "/lib/.study-wiki/llm-wiki/index.md";
@@ -83,7 +108,7 @@ describe("wiki contextSection", () => {
   });
 
   it("已分析（产物页存在）→ fresh 且注入 index 头", async () => {
-    const { filesSvc, workspace } = fakeWikiHost({
+    const { filesSvc, workspace, files } = fakeWikiHost({
       activePath: "/lib/notes/a.md",
       files: {
         [WIKI_INDEX]: "# 目录\n- [[a]]\n",
@@ -95,6 +120,10 @@ describe("wiki contextSection", () => {
     const section = await wiki.contextSection({ root: "/lib", activeFilePath: "/lib/notes/a.md" });
     expect(section).toContain("已分析");
     expect(section).toContain("目录");
+    expect(files.get(MACHINE_INDEX)).toContain('"notes/a.md"');
+    expect(files.get(MACHINE_INDEX)).toContain(
+      'page: ".study-wiki/llm-wiki/sources/notes/a.md"',
+    );
     expect((await wiki.sourceState("notes/a.md")).state).toBe("fresh");
   });
 
@@ -154,6 +183,23 @@ describe("wiki contextSection", () => {
     expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:02.000Z");
     expect(files.get(MACHINE_INDEX)).not.toContain("1970-01-01T00:00:05.000Z");
     expect(files.get(MACHINE_INDEX)).toContain('".study-wiki/raw/old"');
+
+    const second = await wiki.contextSection({
+      root: "/lib",
+      activeFilePath: "/lib/notes/new.md",
+    });
+    expect(second).toContain("已分析");
+    expect(files.get(MACHINE_INDEX)).toContain('path: "notes/new.md"');
+    expect(files.get(MACHINE_INDEX)).not.toContain('path: "notes/old.md"');
+    expect(files.get(MACHINE_INDEX)).toContain(`"${"aa".repeat(32)}"`);
+    expect(files.get(MACHINE_INDEX)).toContain("size: 9");
+    expect(files.get(MACHINE_INDEX)).toContain('".study-wiki/raw/old"');
+    expect(files.get(MACHINE_INDEX)).toContain("1970-01-01T00:00:02.000Z");
+    expect(files.get(MACHINE_INDEX)).not.toContain("1970-01-01T00:00:05.000Z");
+    expect(files.get(MACHINE_INDEX)).toContain(
+      'page: ".study-wiki/llm-wiki/sources/notes/old.md"',
+    );
+    expect((await wiki.sourceState("notes/new.md")).state).toBe("fresh");
   });
 
   it("索引损坏 → 从证据重建，fresh 不丢", async () => {

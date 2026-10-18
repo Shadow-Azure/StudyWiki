@@ -46,6 +46,18 @@ describe("machine index yaml 子集", () => {
     expect(parseMachineIndex(serializeMachineIndex(sample))).toEqual(sample);
   });
 
+  it("可选 page 字段随索引往返", () => {
+    const withPage: MachineIndex = {
+      version: 1,
+      sources: [
+        { ...sample.sources[0], page: ".study-wiki/llm-wiki/sources/a.md" },
+      ],
+    };
+    const text = serializeMachineIndex(withPage);
+    expect(text).toContain('    page: ".study-wiki/llm-wiki/sources/a.md"');
+    expect(parseMachineIndex(text)).toEqual(withPage);
+  });
+
   it("字段齐全的单源最小文件", () => {
     const text = [
       "version: 1",

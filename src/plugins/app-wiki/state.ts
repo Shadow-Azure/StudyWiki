@@ -73,11 +73,14 @@ export function createProbeCache(): ProbeCache {
 export interface ArtifactEvidence {
   /** 库相对源路径。 */
   source: string;
+  /** 产物页库相对路径；源迁址后用它绑定既有索引行。 */
+  page?: string;
   /** 产物最新 mtime（Unix 毫秒），转为 analyzedAt。 */
   newestArtifactMtimeMs: number;
 }
 
-/** 物化机器索引：行存在 ⇔ 证据存在；probed 缺哈希的行保留旧值；moved 保留 artifact 只改 path。
+/** 物化机器索引：行存在 ⇔ 证据存在且有可用哈希；probed 缺哈希时保留旧值。
+ * moved 保留 artifact 与 analyzedAt，只改 path；无样本且无旧行时不写空哈希记录。
  * @param prev 旧机器索引；null 表示无旧索引。
  * @param evidence 现存产物证据列表。
  * @param probed 按证据源路径提供的探测样本。
@@ -88,21 +91,38 @@ export function reconcileIndex(
   evidence: ArtifactEvidence[],
   probed: Map<string, ProbeSample>,
 ): MachineIndex {
-  const sources: SourceRecord[] = evidence.map((event) => {
+  const sources: SourceRecord[] = evidence.flatMap((event) => {
+    const byPath = prev?.sources.find((record) => record.path === event.source);
+    const byPage =
+      event.page === undefined
+        ? undefined
+        : prev?.sources.find((record) => record.page === event.page);
     const old =
-      prev?.sources.find((record) => record.path === event.source) ??
+      byPath ??
+      byPage ??
       prev?.sources.find(
         (record) => probed.get(event.source)?.sha256 === record.sha256,
       );
-    const sample = probed.get(event.source);
-    return {
-      path: event.source,
-      kind: old?.kind ?? kindFromPath(event.source),
-      sha256: sample?.sha256 ?? old?.sha256 ?? "",
-      size: sample?.size ?? old?.size ?? 0,
-      analyzedAt: new Date(event.newestArtifactMtimeMs).toISOString(),
+    const path = byPage !== undefined && byPath === undefined ? byPage.path : event.source;
+    const sample = probed.get(path) ?? probed.get(event.source);
+    const analyzedAt =
+      byPage !== undefined && byPath === undefined && old !== undefined
+        ? old.analyzedAt
+        : new Date(event.newestArtifactMtimeMs).toISOString();
+    const sha256 = sample?.sha256 ?? old?.sha256;
+    const size = sample?.size ?? old?.size;
+    if (sha256 === undefined || sha256 === "" || size === undefined) {
+      return [];
+    }
+    return [{
+      path,
+      kind: old?.kind ?? kindFromPath(path),
+      sha256,
+      size,
+      analyzedAt,
       artifact: old?.artifact ?? null,
-    };
+      ...(event.page === undefined ? {} : { page: event.page }),
+    }];
   });
   return { version: 1, sources };
 }

@@ -67,4 +67,45 @@ describe("reconcileIndex", () => {
     expect(out.sources[0].artifact).toBe(".study-wiki/raw/old/b");
     expect(out.sources[0].sha256).toBe("bb".repeat(32));
   });
+
+  it("page 绑定：frontmatter 仍指旧路径时保留已重指行与哈希", () => {
+    const prev: MachineIndex = {
+      version: 1,
+      sources: [
+        {
+          ...rec("new/b.md", "bb".repeat(32)),
+          artifact: ".study-wiki/raw/old/b",
+          page: ".study-wiki/llm-wiki/sources/old/b.md",
+        },
+      ],
+    };
+    const out = reconcileIndex(
+      prev,
+      [
+        {
+          source: "old/b.md",
+          page: ".study-wiki/llm-wiki/sources/old/b.md",
+          newestArtifactMtimeMs: 9000,
+        },
+      ],
+      new Map([["new/b.md", sample("bb".repeat(32), 9000)]]),
+    );
+    expect(out.sources[0]).toMatchObject({
+      path: "new/b.md",
+      sha256: "bb".repeat(32),
+      size: 10,
+      analyzedAt: "2026-10-18T12:00:00+08:00",
+      artifact: ".study-wiki/raw/old/b",
+      page: ".study-wiki/llm-wiki/sources/old/b.md",
+    });
+  });
+
+  it("无样本且无旧行 → 不物化空哈希行", () => {
+    const out = reconcileIndex(
+      null,
+      [{ source: "missing.md", newestArtifactMtimeMs: 9000 }],
+      new Map(),
+    );
+    expect(out.sources).toEqual([]);
+  });
 });

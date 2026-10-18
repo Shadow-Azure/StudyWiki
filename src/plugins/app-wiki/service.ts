@@ -1,5 +1,6 @@
 import type { FilesService, ProbeSample } from "../../host/files";
 import type { WorkspaceFacade } from "../../host/workspace";
+import type { FileNode } from "../../types";
 import type { PromptSectionInput } from "../agent-core/service";
 import { WIKI_SCHEMA } from "./schema";
 import {
@@ -57,25 +58,26 @@ export function createWikiService(deps: {
   }
 
   async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
-    const evidence = new Map<string, number>();
+    const evidence = new Map<string, ArtifactEvidence>();
     let nodes;
     try {
       nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
     } catch {
       return [];
     }
-    for (const node of nodes) {
-      if (!node.path.endsWith(".md")) continue;
-      const rel = node.path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
-      const source = await resolveSourceFromPage(node.path, rel);
-      const sample = await probeAbs(node.path);
+    for (const path of markdownPaths(nodes)) {
+      const page = toRel(root, path);
+      if (page === null) continue;
+      const rel = path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+      const source = await resolveSourceFromPage(path, rel);
+      const sample = await probeAbs(path);
       if (sample === null) continue;
-      evidence.set(source, Math.max(evidence.get(source) ?? 0, sample.mtimeMs));
+      const previous = evidence.get(source);
+      if (previous === undefined || sample.mtimeMs > previous.newestArtifactMtimeMs) {
+        evidence.set(source, { source, page, newestArtifactMtimeMs: sample.mtimeMs });
+      }
     }
-    return [...evidence.entries()].map(([source, mtimeMs]) => ({
-      source,
-      newestArtifactMtimeMs: mtimeMs,
-    }));
+    return [...evidence.values()];
   }
 
   async function refresh(root: string): Promise<void> {
@@ -84,16 +86,28 @@ export function createWikiService(deps: {
       knownSamples.clear();
       lastRoot = root;
     }
-    const evidence = await collectEvidence(root);
     const prevText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
     const prev = prevText === null ? null : parseMachineIndex(prevText);
+    const evidence = await collectEvidence(root);
     if (evidence.length === 0 && prevText === null) return;
     const probed = new Map<string, ProbeSample>();
     for (const item of evidence) {
-      const sample = await probeAbs(`${root}/${item.source}`);
-      const previous = prev?.sources.find((record) => record.path === item.source);
-      if (sample !== null && (previous === undefined || previous.sha256 === sample.sha256)) {
-        probed.set(item.source, sample);
+      const previous =
+        prev?.sources.find((record) => record.path === item.source) ??
+        prev?.sources.find((record) => record.page === item.page);
+      const linked =
+        previous !== undefined &&
+        previous.page === item.page &&
+        previous.path !== item.source;
+      const source = linked ? previous.path : item.source;
+      const sample = await probeAbs(`${root}/${source}`);
+      if (
+        sample !== null &&
+        (previous === undefined ||
+          previous.sha256 === sample.sha256 ||
+          linked)
+      ) {
+        probed.set(source, sample);
       }
     }
     const next = {
@@ -129,11 +143,16 @@ export function createWikiService(deps: {
       if (sample !== null) {
         const state = classifySource(index, rel, sample);
         if (state.state === "moved") {
+          const page =
+            state.record.page ??
+            (await findSourcePage(root, state.record.path)) ??
+            sourcesPagePath(state.record.path);
           const record: SourceRecord = {
             ...state.record,
             path: rel,
             size: state.sample.size,
             sha256: state.sample.sha256,
+            page,
           };
           const rewritten: MachineIndex = {
             version: 1,
@@ -179,6 +198,22 @@ export function createWikiService(deps: {
     return `${rel}.md`;
   }
 
+  async function findSourcePage(root: string, source: string): Promise<string | null> {
+    let nodes;
+    try {
+      nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
+    } catch {
+      return null;
+    }
+    for (const path of markdownPaths(nodes)) {
+      const rel = path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+      if ((await resolveSourceFromPage(path, rel)) === source) {
+        return toRel(root, path);
+      }
+    }
+    return null;
+  }
+
   return {
     async sourceState(relPath) {
       const root = deps.workspace.root;
@@ -206,7 +241,7 @@ function toRel(root: string, path: string | null): string | null {
 
 function stateLine(state: SourceState, rel: string): string {
   if (state.state === "fresh") {
-    return `活动文件已分析：${sourcesPagePath(state.record.path)}`;
+    return `活动文件已分析：${state.record.page ?? sourcesPagePath(state.record.path)}`;
   }
   if (state.state === "stale") {
     return `活动文件已变更，请重新 ingest：${rel}`;
@@ -220,6 +255,18 @@ function stateLine(state: SourceState, rel: string): string {
 function sourcesPagePath(source: string): string {
   const withoutExtension = source.replace(/\.[^./\\]+$/u, "");
   return `${SOURCES_DIR}/${withoutExtension}.md`;
+}
+
+function markdownPaths(nodes: FileNode[]): string[] {
+  const paths: string[] = [];
+  for (const node of nodes) {
+    if (node.kind === "dir") {
+      paths.push(...markdownPaths(node.children ?? []));
+      continue;
+    }
+    if (node.path.endsWith(".md")) paths.push(node.path);
+  }
+  return paths;
 }
 
 function readFrontmatterSource(text: string): string | null {

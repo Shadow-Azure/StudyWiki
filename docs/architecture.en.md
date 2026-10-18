@@ -47,7 +47,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/app-wiki/index-yaml.ts    app-wiki 机器索引受限 yaml 子集解析/序列化：固定键集与标量形状校验，损坏输入返回 null
   plugins/app-wiki/index.ts         app-wiki cordis 插件：注入 agent/files/workspace，发布 ctx.wiki 并注册/注销 prompt 贡献段与事件失效（→ service.ts）
   plugins/app-wiki/schema.ts        app-wiki schema v1 维护契约常量：wiki 布局、frontmatter、ingest/query/lint 流程与写纪律全文
-  plugins/app-wiki/service.ts       app-wiki 服务：产物证据驱动机器索引物化、源状态判定、moved 重指与 prompt 上下文段（→ files.ts、workspace.ts、service.ts、schema.ts、state.ts）
+  plugins/app-wiki/service.ts       app-wiki 服务：递归扫描产物页、绑定页面与源路径、物化机器索引、判定源状态、重指 moved 与生成 prompt 上下文段（→ files.ts、workspace.ts、service.ts、schema.ts、state.ts、types.ts）
   plugins/app-wiki/state.ts         app-wiki 源状态机与 reconcile：fresh/stale/moved/unknown 判定、probe 元数据缓存、产物证据驱动机器索引物化（→ files.ts、index-yaml.ts）
   plugins/app-windows/index.ts      app-windows 插件：Activity Rail 新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts      doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）

@@ -1,10 +1,11 @@
 kind: file-page
 source: src/plugins/app-wiki/service.ts
-summary: app-wiki 服务：产物证据驱动机器索引物化、源状态判定、moved 重指与 prompt 上下文段
+summary: app-wiki 服务：递归扫描产物页、绑定页面与源路径、物化机器索引、判定源状态、重指 moved 与生成 prompt 上下文段
 segments:
   - snippet: |
       import type { FilesService, ProbeSample } from "../../host/files";
       import type { WorkspaceFacade } from "../../host/workspace";
+      import type { FileNode } from "../../types";
       import type { PromptSectionInput } from "../agent-core/service";
       import { WIKI_SCHEMA } from "./schema";
       import {
@@ -62,25 +63,26 @@ segments:
         }
 
         async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
-          const evidence = new Map<string, number>();
+          const evidence = new Map<string, ArtifactEvidence>();
           let nodes;
           try {
             nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
           } catch {
             return [];
           }
-          for (const node of nodes) {
-            if (!node.path.endsWith(".md")) continue;
-            const rel = node.path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
-            const source = await resolveSourceFromPage(node.path, rel);
-            const sample = await probeAbs(node.path);
+          for (const path of markdownPaths(nodes)) {
+            const page = toRel(root, path);
+            if (page === null) continue;
+            const rel = path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+            const source = await resolveSourceFromPage(path, rel);
+            const sample = await probeAbs(path);
             if (sample === null) continue;
-            evidence.set(source, Math.max(evidence.get(source) ?? 0, sample.mtimeMs));
+            const previous = evidence.get(source);
+            if (previous === undefined || sample.mtimeMs > previous.newestArtifactMtimeMs) {
+              evidence.set(source, { source, page, newestArtifactMtimeMs: sample.mtimeMs });
+            }
           }
-          return [...evidence.entries()].map(([source, mtimeMs]) => ({
-            source,
-            newestArtifactMtimeMs: mtimeMs,
-          }));
+          return [...evidence.values()];
         }
 
         async function refresh(root: string): Promise<void> {
@@ -89,16 +91,28 @@ segments:
             knownSamples.clear();
             lastRoot = root;
           }
-          const evidence = await collectEvidence(root);
           const prevText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
           const prev = prevText === null ? null : parseMachineIndex(prevText);
+          const evidence = await collectEvidence(root);
           if (evidence.length === 0 && prevText === null) return;
           const probed = new Map<string, ProbeSample>();
           for (const item of evidence) {
-            const sample = await probeAbs(`${root}/${item.source}`);
-            const previous = prev?.sources.find((record) => record.path === item.source);
-            if (sample !== null && (previous === undefined || previous.sha256 === sample.sha256)) {
-              probed.set(item.source, sample);
+            const previous =
+              prev?.sources.find((record) => record.path === item.source) ??
+              prev?.sources.find((record) => record.page === item.page);
+            const linked =
+              previous !== undefined &&
+              previous.page === item.page &&
+              previous.path !== item.source;
+            const source = linked ? previous.path : item.source;
+            const sample = await probeAbs(`${root}/${source}`);
+            if (
+              sample !== null &&
+              (previous === undefined ||
+                previous.sha256 === sample.sha256 ||
+                linked)
+            ) {
+              probed.set(source, sample);
             }
           }
           const next = {
@@ -134,11 +148,16 @@ segments:
             if (sample !== null) {
               const state = classifySource(index, rel, sample);
               if (state.state === "moved") {
+                const page =
+                  state.record.page ??
+                  (await findSourcePage(root, state.record.path)) ??
+                  sourcesPagePath(state.record.path);
                 const record: SourceRecord = {
                   ...state.record,
                   path: rel,
                   size: state.sample.size,
                   sha256: state.sample.sha256,
+                  page,
                 };
                 const rewritten: MachineIndex = {
                   version: 1,
@@ -184,6 +203,22 @@ segments:
           return `${rel}.md`;
         }
 
+        async function findSourcePage(root: string, source: string): Promise<string | null> {
+          let nodes;
+          try {
+            nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
+          } catch {
+            return null;
+          }
+          for (const path of markdownPaths(nodes)) {
+            const rel = path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+            if ((await resolveSourceFromPage(path, rel)) === source) {
+              return toRel(root, path);
+            }
+          }
+          return null;
+        }
+
         return {
           async sourceState(relPath) {
             const root = deps.workspace.root;
@@ -211,7 +246,7 @@ segments:
 
       function stateLine(state: SourceState, rel: string): string {
         if (state.state === "fresh") {
-          return `活动文件已分析：${sourcesPagePath(state.record.path)}`;
+          return `活动文件已分析：${state.record.page ?? sourcesPagePath(state.record.path)}`;
         }
         if (state.state === "stale") {
           return `活动文件已变更，请重新 ingest：${rel}`;
@@ -225,6 +260,18 @@ segments:
       function sourcesPagePath(source: string): string {
         const withoutExtension = source.replace(/\.[^./\\]+$/u, "");
         return `${SOURCES_DIR}/${withoutExtension}.md`;
+      }
+
+      function markdownPaths(nodes: FileNode[]): string[] {
+        const paths: string[] = [];
+        for (const node of nodes) {
+          if (node.kind === "dir") {
+            paths.push(...markdownPaths(node.children ?? []));
+            continue;
+          }
+          if (node.path.endsWith(".md")) paths.push(node.path);
+        }
+        return paths;
       }
 
       function readFrontmatterSource(text: string): string | null {
@@ -250,4 +297,4 @@ segments:
         return value;
       }
     note: |
-      wiki 服务把产物证据、机器索引和 probe 样本合成一个入口：先从 sources 页反查源并物化 index.yaml，再判定活动文件状态；moved 时直接重指索引，prompt 段包含状态、索引头部和 schema，并在无有效内容时返回 null。
+      wiki 服务把产物证据、机器索引和 probe 样本合成一个入口：递归展开 sources 树、反查源并物化 index.yaml，再判定活动文件状态；moved 时重指索引并保留产物页绑定，后续 refresh 沿绑定探测新路径，prompt 段包含状态、索引头部和 schema，并在无有效内容时返回 null。
