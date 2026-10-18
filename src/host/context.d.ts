@@ -7,6 +7,7 @@ import type { SlotsService } from "./slots";
 import type { PluginsService } from "./plugins";
 import type { LlmService } from "./llm";
 import type { AgentService } from "../plugins/agent-core/service";
+import type { WikiService } from "../plugins/app-wiki/service";
 
 declare module "cordis" {
   interface Context {
@@ -26,5 +27,7 @@ declare module "cordis" {
     llm: LlmService;
     /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
     agent: AgentService;
+    /** wiki 知识层服务（内置插件 app-wiki 提供；外置插件 guard 白名单不含）。 */
+    wiki: WikiService;
   }
 }
