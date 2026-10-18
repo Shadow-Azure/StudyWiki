@@ -69,5 +69,6 @@
   "src/plugins/agent-core/index.ts": "agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话",
   "src/plugins/app-agent/index.ts": "app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理",
   "src/plugins/app-shell/layout.ts": "app-shell 纯函数：栏几何 clamp、状态归一化与 localStorage 布局读写（无 DOM）",
-  "src/plugins/app-wiki/index-yaml.ts": "app-wiki 机器索引受限 yaml 子集解析/序列化：固定键集与标量形状校验，损坏输入返回 null"
+  "src/plugins/app-wiki/index-yaml.ts": "app-wiki 机器索引受限 yaml 子集解析/序列化：固定键集与标量形状校验，损坏输入返回 null",
+  "src/plugins/app-wiki/state.ts": "app-wiki 源状态机与 reconcile：fresh/stale/moved/unknown 判定、probe 元数据缓存、产物证据驱动机器索引物化"
 }

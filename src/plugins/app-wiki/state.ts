@@ -1,0 +1,119 @@
+/** 源状态机与机器索引 reconcile：纯函数，无 IO，vitest 主战场。 */
+import type { ProbeSample } from "../../host/files";
+import {
+  parseMachineIndex,
+  serializeMachineIndex,
+  type MachineIndex,
+  type SourceRecord,
+} from "./index-yaml";
+
+export { parseMachineIndex, serializeMachineIndex };
+export type { MachineIndex, SourceRecord };
+
+/** 源分析状态：unknown（无产物/无记录）、fresh、stale（源已变更）、moved（源迁址）。 */
+export type SourceState =
+  | { state: "unknown" }
+  | { state: "fresh"; record: SourceRecord }
+  | { state: "stale"; record: SourceRecord; sample: ProbeSample }
+  | { state: "moved"; record: SourceRecord; sample: ProbeSample };
+
+/** probe 缓存句柄：按路径取可信样本，并可整体失效。 */
+export interface ProbeCache {
+  /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
+  get(path: string, fresh: ProbeSample): ProbeSample;
+  /** 全量失效（换库根等场景）。 */
+  invalidate(): void;
+}
+
+/** 按判定序识别源分析状态：fresh、stale、moved 或 unknown。
+ * @param index 当前机器索引；null 表示无索引。
+ * @param relPath 库相对源路径。
+ * @param sample 当前源探测样本。
+ * @returns 源状态与判定所用的旧记录/新样本。
+ */
+export function classifySource(
+  index: MachineIndex | null,
+  relPath: string,
+  sample: ProbeSample,
+): SourceState {
+  const byPath = index?.sources.find((record) => record.path === relPath);
+  if (byPath) {
+    return byPath.sha256 === sample.sha256
+      ? { state: "fresh", record: byPath }
+      : { state: "stale", record: byPath, sample };
+  }
+  const byHash = index?.sources.find((record) => record.sha256 === sample.sha256);
+  if (byHash) return { state: "moved", record: byHash, sample };
+  return { state: "unknown" };
+}
+
+/** 创建 path → 样本缓存；get 以 size+mtimeMs 校验，命中省哈希（靠命令快路径）。
+ * @returns probe 缓存句柄。
+ */
+export function createProbeCache(): ProbeCache {
+  const map = new Map<string, ProbeSample>();
+  return {
+    /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
+    get(path: string, fresh: ProbeSample): ProbeSample {
+      const hit = map.get(path);
+      if (hit && hit.size === fresh.size && hit.mtimeMs === fresh.mtimeMs) {
+        return hit;
+      }
+      map.set(path, fresh);
+      return fresh;
+    },
+    /** 全量失效（换库根等场景）。 */
+    invalidate() {
+      map.clear();
+    },
+  };
+}
+
+/** 产物证据：某源有已分析产物；newestArtifactMtimeMs 为产物最新 mtime（Unix 毫秒）。 */
+export interface ArtifactEvidence {
+  /** 库相对源路径。 */
+  source: string;
+  /** 产物最新 mtime（Unix 毫秒），转为 analyzedAt。 */
+  newestArtifactMtimeMs: number;
+}
+
+/** 物化机器索引：行存在 ⇔ 证据存在；probed 缺哈希的行保留旧值；moved 保留 artifact 只改 path。
+ * @param prev 旧机器索引；null 表示无旧索引。
+ * @param evidence 现存产物证据列表。
+ * @param probed 按证据源路径提供的探测样本。
+ * @returns 新机器索引。
+ */
+export function reconcileIndex(
+  prev: MachineIndex | null,
+  evidence: ArtifactEvidence[],
+  probed: Map<string, ProbeSample>,
+): MachineIndex {
+  const sources: SourceRecord[] = evidence.map((event) => {
+    const old =
+      prev?.sources.find((record) => record.path === event.source) ??
+      prev?.sources.find(
+        (record) => probed.get(event.source)?.sha256 === record.sha256,
+      );
+    const sample = probed.get(event.source);
+    return {
+      path: event.source,
+      kind: old?.kind ?? kindFromPath(event.source),
+      sha256: sample?.sha256 ?? old?.sha256 ?? "",
+      size: sample?.size ?? old?.size ?? 0,
+      analyzedAt: new Date(event.newestArtifactMtimeMs).toISOString(),
+      artifact: old?.artifact ?? null,
+    };
+  });
+  return { version: 1, sources };
+}
+
+const VIDEO_EXT = new Set(["mp4", "mkv", "avi", "mov", "webm"]);
+
+/** 按扩展名推断源类型：已知视频扩展名 → video，其余按 text（m2 文本闭环）。
+ * @param relPath 库相对源路径。
+ * @returns 推断出的源类型。
+ */
+export function kindFromPath(relPath: string): SourceRecord["kind"] {
+  const ext = relPath.split(".").pop()?.toLowerCase() ?? "";
+  return VIDEO_EXT.has(ext) ? "video" : "text";
+}
