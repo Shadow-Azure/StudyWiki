@@ -1,6 +1,6 @@
 kind: change
 issue: m2-02-agent-host
-skill_gen_commit_id: 7297a86
+skill_gen_commit_id: 9e1ac35
 title: #50 agent 宿主能力
 scale:
   files: 44
