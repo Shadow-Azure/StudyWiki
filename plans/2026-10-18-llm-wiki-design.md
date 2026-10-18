@@ -15,7 +15,7 @@ llm-wiki 是构建在 agent（m2-03 已完成：cordis 双插件、四工具、�
 
 ## 目标与验收
 
-- `.study-wiki/llm-wiki/` 固定路径 + 机器索引 `.study-wiki/index.md`（源 → 产物映射 + md5 + 时间戳 + 状态）。
+- `.study-wiki/llm-wiki/` 固定路径 + 机器索引 `.study-wiki/index.yaml`（源 → 产物映射 + md5 + 时间戳 + 状态）。
 - ingest 更新 index 与相关页并追加 log；query 先读 index；lint 查矛盾/孤儿/缺口。
 - 源状态机（未分析/已分析/过期/已移动）由宿主确定性判定，agent 据注入上下文提示用户「需要先分析」。
 - m2 范围：文本源闭环；视频全契约预留（raw/ 布局、topics.md 主题-时间戳对照、m3 填充路径明确），零返工。
@@ -33,7 +33,7 @@ llm-wiki 是构建在 agent（m2-03 已完成：cordis 双插件、四工具、�
 ```
 <库根>/
 └── .study-wiki/
-    ├── index.md                 # 机器索引（yaml 围栏）：真值，确定性维护
+    ├── index.yaml               # 机器索引（纯 yaml）：真值，确定性维护，程序独占读写
     ├── raw/                     # 派生产物层（m3 起填充；m2 仅建目录）
     │   └── <源相对路径去扩展名>/
     │       ├── transcript.md        # 带时间戳转录（m3-01）
@@ -48,7 +48,7 @@ llm-wiki 是构建在 agent（m2-03 已完成：cordis 双插件、四工具、�
 ```
 
 - **raw/ 存在 ⇔ 源产生派生物**。文本源（md）产物即源本身，不落 raw；视频源的 transcript/topics 由 m3 填充，m2 遇到视频源时 raw/ 下无产物即「未分析」的物证。
-- **机器索引 `.study-wiki/index.md`**（m2-04 先落最小契约，m3-03 落地记录中「映射 + md5 + 时间戳」与本契约合并，m3-03 后续聚焦 raw/ 产物填充与字段扩展）：
+- **机器索引 `.study-wiki/index.yaml`**（纯数据文件，非文档；m2-04 先落最小契约，m3-03 落地记录中「映射 + md5 + 时间戳」与本契约合并，m3-03 后续聚焦 raw/ 产物填充与字段扩展）。**解析不引 yaml 依赖**：索引由本插件独占读写，采用受限子集（顶层 `version` + `sources` 列表的扁平标量字段）手写解析器；读取校验失败视为损坏，从产物重新派生重建：
 
 ```yaml
 # study-wiki index
@@ -109,6 +109,8 @@ sources:
 
 ## Alternatives considered
 
+- **机器索引用 markdown + yaml 围栏**（m3-03 原文）：索引是程序专属的派生缓存，文档包装无收益且易被误编辑；改纯数据文件。`index.json` 与 `index.yaml` 二选一，拍板 yaml（与 #34 原文表述距离更小、人读更友好），解析用手写受限子集 + 损坏重建，不引依赖。
+
 - **schema 放库内文件**（Karpathy 原版 / 上轮方案）：库副本随使用漂移，且环境无关性要求同版本行为一致；用户拍板归插件，否。
 - **专用 wiki 工具（wiki_ingest/query/lint 参数化）**：ingest 的开放性写作难参数化，推翻 m2-03 通用工具面共识；否。
 - **独立 wiki 插件 + 任务队列 + 向量索引**（nashsu 工程化路线）：过度工程，向量索引撞环境无关硬约束；否。
@@ -118,6 +120,6 @@ sources:
 ## 影响
 
 - m2-02 落地记录「wiki index 留给 m2-04」在本 issue 闭合（prompt 贡献缝 + wikiContextSection）。
-- m3-03（raw 落盘与索引）与本契约合并：机器索引 m2-04 先落，m3-03 聚焦 raw/ 产物与字段扩展，另 issue #34 文案微调。
+- m3-03（raw 落盘与索引）与本契约合并：机器索引 m2-04 先落（`.study-wiki/index.md` 更名 `.study-wiki/index.yaml`，issue #34 验收文案同 PR 微调），m3-03 聚焦 raw/ 产物与字段扩展。
 - m4-01（时间戳问答）/ m4-02（chat-note 回填）消费本契约：topics.md 主题对照、sources 页 frontmatter、log.md。
 - issue #31 scope 预计扩 `src-tauri/**`（probe 命令）、`package.json`/`pnpm-lock.yaml`（md5 crate 不涉前端）、`scripts/dep-allowlist.json`、commands/code-map 生成区等，实施时更新三件套。
