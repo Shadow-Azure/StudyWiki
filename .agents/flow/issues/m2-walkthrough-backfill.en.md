@@ -6,7 +6,7 @@ English | [中文](m2-walkthrough-backfill.md)
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - walkthrough/**
   - scripts/build-walkthrough.mjs
