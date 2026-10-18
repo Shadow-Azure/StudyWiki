@@ -29,6 +29,60 @@ design: |
   ### 关键权衡与边界
 
   牺牲了 before 视图（真 diff 页合入后转为归档）与在线协作；讲解质量无法机械保证——由生成 skill 纪律与维护者扫读兜底，讲错的内容靠人工覆写 YAML 修正。
+  ### 落地映射：功能点 → 变更文件
+
+  #### 变更页机制与门禁
+
+  实现思路：所有校验收敛到单一事实源库，门禁 CLI 与渲染器都只消费它——保证"讲解页怎么被检查"与"怎么被渲染"永远一致。
+
+  ```text
+  scripts/
+    ├─ walkthrough-lib.mjs        唯一事实源：封闭 schema、锚点整行 trim 定位、五类对账、行覆盖率、diff 对账
+    ├─ verify-walkthrough.mjs     九条门禁 CLI：静态七条 + PR diff 档（scale/覆盖对账）
+    ├─ walkthrough-lib.spec.mjs        上述规则的逐条自测试
+    └─ verify-walkthrough.spec.mjs     bootstrap 降级与 diff 档的端到端用例
+  ```
+
+  #### 渲染与检视模式
+
+  实现思路：渲染器只消费事实源库的数据；检视页在普通产物上叠加"本 PR 视角"——叙事区来自变更页，diff 区来自 git。
+
+  ```text
+  scripts/
+    ├─ build-walkthrough.mjs      多页渲染器 + --review 检视模式：折叠文件树、双行摘要、逐段注解、分组图例
+    ├─ build-walkthrough.spec.mjs 产物结构与构建期失败语义的自测试
+    ├─ walkthrough-review.mjs     检视 diff 数据层：numstat、统一 diff hunk 解析、注解按 after 行区间归位
+    └─ walkthrough-review.spec.mjs 真实 git 夹具（base→work 双提交）下的解析与归位用例
+  ```
+
+  #### 内容回填
+
+  实现思路：内容即 YAML 数据，渲染器无感知；六批文件页并行生成、功能页与变更页串行补齐。
+
+  ```text
+  walkthrough/
+    ├─ files/**            65 个源文件注解页（六批：启动装载/宿主服务/agent 线/阅读面/壳与 UI/Rust 侧）
+    ├─ features/*          13 个功能页（跨文件聚合讲解）
+    ├─ changes/*           10 个变更页（含本页）
+    ├─ overview.yaml       总览叙事
+    ├─ architecture.yaml   架构叙事（嵌入 code-map 树）
+    └─ manifest.json       覆盖率阈值定版 0.9 + bootstrap 标志摘除
+  ```
+
+  #### 保鲜与钩子
+
+  实现思路：保鲜检查是独立脚本（pre-push 调用），钩子安装器只做"写入 + 提示"，无法阻断的部分归 CI。
+
+  ```text
+  scripts/
+    ├─ check-review-freshness.mjs      pre-push 保鲜对账：skill_gen_commit_id 落后即拦截
+    ├─ check-review-freshness.spec.mjs 三段 git 夹具 + gh 注入的自测试
+    └─ install-git-hooks.mjs           post-commit 检视页刷新 + commit-msg 括号正则修复（行为测试）
+  ```
+
+  #### 流程件
+
+  issue 三件套、Agent Note、设计与计划文档随各批次同 PR 落地；范围登记见 issue scope。
 architectural: |
   回填把 walkthrough 从机制骨架推进到可强制保鲜的五层内容：文件页与 code-map 一一对应，功能页与登记处一一对应，变更页与 active flow issue 一一对应；源码锚点、summary 逐字一致、行覆盖率和 touches 覆盖都由共享库机械校验。
 codeMap:
