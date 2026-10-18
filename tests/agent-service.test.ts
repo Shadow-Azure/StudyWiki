@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAgentService, type AgentService, type AgentSession } from "../src/plugins/agent-core/service";
+import type { ChatInput } from "../src/host/llm";
 import type { StreamChunk } from "../src/host/llm-stream";
 import type { ApprovalRequest } from "../src/plugins/agent-core/tools";
 import { vi } from "vitest";
@@ -40,6 +41,19 @@ function scriptedChatStream(scripts: StreamChunk[][]) {
     for (const c of scripts[Math.min(i++, scripts.length - 1)]) asm.push(c);
     return { events: (async function* () {})(), snapshot: () => asm.snapshot(),
       settled: Promise.resolve(), abort: async () => {} };
+  };
+}
+
+function fakeEmitter() {
+  return { on: () => () => {}, emit: () => {} };
+}
+
+function capturePromptStream(captured: { system?: string }) {
+  const scripted = scriptedChatStream([TEXT("hi"), TEXT("again")]);
+  return async (request: ChatInput) => {
+    const system = request.messages.find((message) => message.role === "system");
+    if (system && typeof system.content === "string") captured.system = system.content;
+    return scripted(request);
   };
 }
 
@@ -108,6 +122,7 @@ function serviceWith(rootFiles: Record<string, string>, opts: {
 
 const HEADER_S1 = (rootPath: string) =>
   `{"type":"header","header":{"v":1,"id":"s1","rootPath":"${rootPath}","title":"旧","createdAt":"x"}}\n`;
+const encodeHeader = () => HEADER_S1("/lib");
 
 describe("AgentService", () => {
   it("停止后当前控制器立即轮换，同一会话可继续发送", async () => {
@@ -437,5 +452,34 @@ describe("AgentService", () => {
     const { svc, host } = serviceWith({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": HEADER_S1("/lib") }, { scripts: [] });
     await svc.deleteSession("s1");
     expect(host.files["/home/.study-wiki/sessions/lib-root/s1.jsonl"]).toBeUndefined();
+  });
+
+  it("registerPromptSection 注入、排序与注销", async () => {
+    const { svc } = fakeHost({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": encodeHeader() });
+    const captured: { system?: string } = {};
+    const agent = createAgentService({
+      llm: { chatStream: capturePromptStream(captured) } as never,
+      files: svc as never,
+      workspace: {
+        root: "/lib",
+        activeFile: null,
+        events: fakeEmitter(),
+        openFile: async () => true,
+        guardSwitch: () => () => {},
+      } as never,
+    });
+    const calls: string[] = [];
+    const offA = agent.registerPromptSection("a", async () => { calls.push("a"); return "# A 段"; });
+    agent.registerPromptSection("b", async () => null);
+    agent.registerPromptSection("c", async () => "# C 段");
+    const session = await agent.openSession("s1");
+    await session.send("hi");
+    expect(calls).toEqual(["a"]);
+    expect(captured.system!).toContain("# A 段");
+    expect(captured.system!).toContain("# C 段");
+    expect(captured.system!).not.toContain("B 段");
+    offA();
+    await session.send("again");
+    expect(captured.system!).not.toContain("# A 段");
   });
 });

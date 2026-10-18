@@ -12,6 +12,8 @@ export function buildSystemPrompt(input: {
   activeFilePath: string | null;
   mode: ApprovalMode;
   now: string;
+  /** 贡献段（如 wiki 契约）；按序追加在库约定附录之后，null/空白段调用方已滤除。 */
+  extraSections?: readonly string[];
 }): string {
   const sections = [
     "你是学习客户端内的文件 agent，使用简体中文工作。",
@@ -31,6 +33,9 @@ export function buildSystemPrompt(input: {
     ].join("\n"),
   ];
 
-  const prompt = sections.join("\n\n");
-  return input.agentsMd ? `${prompt}\n\n# 库约定（AGENTS.md）\n\n${input.agentsMd}` : prompt;
+  let prompt = sections.join("\n\n");
+  if (input.agentsMd) prompt += `\n\n# 库约定（AGENTS.md）\n\n${input.agentsMd}`;
+  const extras = (input.extraSections ?? []).filter((section) => section.trim());
+  if (extras.length) prompt += `\n\n${extras.join("\n\n")}`;
+  return prompt;
 }

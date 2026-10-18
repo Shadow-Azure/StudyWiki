@@ -54,6 +54,17 @@ export interface AgentSession {
   respond(requestId: string, outcome: ApprovalOutcome): void;
 }
 
+/** prompt 贡献段输入：当前库根与活动文件（绝对路径或 null）。 */
+export interface PromptSectionInput {
+  /** 当前会话库根。 */
+  root: string;
+  /** 活动文件绝对路径；无活动文件为 null。 */
+  activeFilePath: string | null;
+}
+
+/** prompt 贡献段提供者：每回合调用；返回 markdown 段，null 表示本回合不注入。 */
+export type PromptSectionProvider = (input: PromptSectionInput) => Promise<string | null>;
+
 /** Agent 会话注册表：列表/打开/删除与插件生命周期清理。 */
 export interface AgentService {
   /** List valid session headers in the current library root. */
@@ -62,6 +73,8 @@ export interface AgentService {
   openSession(id: string | null, defaultMode?: ApprovalMode): Promise<AgentSession>;
   /** Delete the backing JSONL file and detach any open session instance. */
   deleteSession(id: string): Promise<void>;
+  /** 注册一个 system prompt 贡献段（拼在库约定附录之后）；id 重复覆盖。返回注销函数。 */
+  registerPromptSection(id: string, provider: PromptSectionProvider): () => void;
   /** Abort every open session; used by the cordis plugin disposer. */
   dispose(): void;
 }
@@ -132,6 +145,7 @@ interface InternalSession {
 export function createAgentService(deps: AgentServiceDeps): AgentService {
   const threshold = deps.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
   const sessions = new Map<string, { internal: InternalSession; session: AgentSession }>();
+  const sections = new Map<string, PromptSectionProvider>();
   let disposed = false;
 
   const requireRoot = (): string => {
@@ -281,6 +295,13 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
           }
           await persist(internal, { type: "message", message });
           const agentsMd = await readAgentsMd(internal.currentRoot, deps.files);
+          const activeFilePath = deps.workspace.activeFile?.path ?? null;
+          const sectionInput: PromptSectionInput = { root: internal.currentRoot, activeFilePath };
+          const extraSections: string[] = [];
+          for (const provider of sections.values()) {
+            const section = await provider(sectionInput);
+            if (section !== null && section.trim()) extraSections.push(section);
+          }
           await compactIfNeeded(internal);
           await runTurn(
             effectiveMessages(internal.lines),
@@ -302,6 +323,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
                 activeFilePath: deps.workspace.activeFile?.path ?? null,
                 mode: internal.mode,
                 now: new Date().toISOString(),
+                extraSections,
               }),
               tools: TOOL_DECLARATIONS,
               model: internal.model ?? undefined,
@@ -386,6 +408,13 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
   }
 
   return {
+    registerPromptSection(id, provider) {
+      sections.set(id, provider);
+      return () => {
+        if (sections.get(id) === provider) sections.delete(id);
+      };
+    },
+
     async listSessions() {
       const root = requireRoot();
       let paths: string[];
