@@ -634,3 +634,34 @@ touches:
   - file:scripts/run-gates.mjs
   - file:scripts/route-gates.mjs
   - file:walkthrough/README.md
+architecturalFlowchart:
+  title: YAML 源到静态站的机制骨架
+  nodes:
+    - id: yaml-src
+      label: 封闭 schema 的 YAML 五层源
+      shape: stadium
+    - id: parser
+      label: 零依赖 YAML 子集解析器
+    - id: lib
+      label: 共享校验库
+    - id: gates
+      label: 九条门禁
+    - id: build
+      label: 静态构建器
+    - id: site
+      label: 多页静态站产物
+      shape: rounded
+  edges:
+    - from: yaml-src
+      to: parser
+    - from: parser
+      to: lib
+    - from: lib
+      to: gates
+    - from: lib
+      to: build
+    - from: build
+      to: site
+    - from: gates
+      to: build
+      label: 构建即校验

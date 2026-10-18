@@ -491,13 +491,185 @@ describe("walkthrough-lib", () => {
     );
   });
 
+  it("change 页流程图：architectural 有实质内容时 architecturalFlowchart 必填", () => {
+    const substantive = emptySite();
+    substantive.changes.set("demo-change", {
+      ...validChange(),
+      architectural: "真实架构变化。\n",
+    });
+    expect(validateSchema(substantive)).toContain(
+      "walkthrough/changes/demo-change.yaml: architecturalFlowchart 必填（architectural 非空时）",
+    );
+
+    // "无/无。"占位视为无实质内容，不需要流程图。
+    for (const placeholder of ["无", "无。", " 无。\n"]) {
+      const site = emptySite();
+      site.changes.set("demo-change", {
+        ...validChange(),
+        architectural: placeholder,
+      });
+      expect(validateSchema(site)).toEqual([]);
+    }
+
+    const withChart = emptySite();
+    withChart.changes.set("demo-change", {
+      ...validChange(),
+      architectural: "真实架构变化。\n",
+      architecturalFlowchart: {
+        title: "数据流",
+        nodes: [
+          { id: "a", label: "起点", shape: "stadium" },
+          { id: "b", label: "终点" },
+        ],
+        edges: [{ from: "a", to: "b", label: "推进" }],
+      },
+    });
+    expect(validateSchema(withChart)).toEqual([]);
+  });
+
+  it("change 页流程图：形状校验（direction/shape/重复 id/悬空引用）", () => {
+    const badNodes = emptySite();
+    badNodes.changes.set("demo-change", {
+      ...validChange(),
+      architectural: "真实架构变化。\n",
+      architecturalFlowchart: {
+        title: "图",
+        direction: "XX",
+        nodes: [
+          { id: "a", label: "甲", shape: "circle" },
+          { id: "a", label: "重复" },
+        ],
+        edges: [{ from: "a", to: "a" }],
+      },
+    });
+    const nodeErrors = validateSchema(badNodes);
+    expect(nodeErrors).toContain(
+      "walkthrough/changes/demo-change.yaml: architecturalFlowchart.direction 必须是 LR|TB 之一",
+    );
+    expect(nodeErrors).toContain(
+      "walkthrough/changes/demo-change.yaml architecturalFlowchart.nodes[0]: shape 必须是 rect|rounded|stadium|diamond 之一",
+    );
+    expect(nodeErrors).toContain(
+      "walkthrough/changes/demo-change.yaml architecturalFlowchart.nodes[1]: id 重复: a",
+    );
+
+    // 节点合法时才做悬空引用对账。
+    const dangling = emptySite();
+    dangling.changes.set("demo-change", {
+      ...validChange(),
+      architectural: "真实架构变化。\n",
+      architecturalFlowchart: {
+        nodes: [
+          { id: "a", label: "甲" },
+          { id: "b", label: "乙" },
+        ],
+        edges: [{ from: "a", to: "ghost" }, { from: "a" }],
+      },
+    });
+    const edgeErrors = validateSchema(dangling);
+    expect(edgeErrors).toContain(
+      "walkthrough/changes/demo-change.yaml architecturalFlowchart.edges[0]: to 引用不存在的节点: ghost",
+    );
+    expect(edgeErrors).toContain(
+      "walkthrough/changes/demo-change.yaml architecturalFlowchart.edges[1]: to 必须是非空字符串",
+    );
+  });
+
+  it("change 页流程图：design 与 designFlowcharts 按落地映射小节双向对账", () => {
+    const design = "### 问题\n\n约束。\n\n### 落地映射：功能点 → 变更文件\n\n#### 功能甲\n\n文件树。\n\n#### 功能乙\n\n文件树。\n";
+    const base = { ...validChange(), design };
+
+    // 缺 designFlowcharts 红。
+    const missing = emptySite();
+    missing.changes.set("demo-change", base);
+    expect(validateSchema(missing)).toContain(
+      "walkthrough/changes/demo-change.yaml: designFlowcharts 必填且非空（design 非空时，每个功能点一条）",
+    );
+
+    // 小节名不匹配（双向）红。
+    const mismatched = emptySite();
+    mismatched.changes.set("demo-change", {
+      ...base,
+      designFlowcharts: [
+        {
+          feature: "功能甲",
+          nodes: [
+            { id: "a", label: "甲" },
+            { id: "b", label: "乙" },
+          ],
+          edges: [{ from: "a", to: "b" }],
+        },
+        {
+          feature: "不存在的小节",
+          nodes: [
+            { id: "a", label: "甲" },
+            { id: "b", label: "乙" },
+          ],
+          edges: [{ from: "a", to: "b" }],
+        },
+      ],
+    });
+    const errors = validateSchema(mismatched);
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: design 功能点「功能乙」缺少对应 designFlowcharts 项",
+    );
+    expect(errors).toContain(
+      "walkthrough/changes/demo-change.yaml: designFlowcharts 项「不存在的小节」在 design 落地映射中无此小节",
+    );
+
+    // 覆盖齐全绿。
+    const ok = emptySite();
+    const chart = (feature) => ({
+      feature,
+      nodes: [
+        { id: "a", label: "甲" },
+        { id: "b", label: "乙" },
+      ],
+      edges: [{ from: "a", to: "b" }],
+    });
+    ok.changes.set("demo-change", {
+      ...base,
+      designFlowcharts: [chart("功能甲"), chart("功能乙")],
+    });
+    expect(validateSchema(ok)).toEqual([]);
+
+    // design 缺省时 designFlowcharts 不允许出现。
+    const orphan = emptySite();
+    orphan.changes.set("demo-change", {
+      ...validChange(),
+      designFlowcharts: [chart("功能甲")],
+    });
+    expect(validateSchema(orphan)).toContain(
+      "walkthrough/changes/demo-change.yaml: designFlowcharts 仅在 design 非空时允许出现",
+    );
+  });
+
   it("change 可选 design 字段：markdown 字符串放行，非字符串红", () => {
     const root = tempRoot("walkthrough-lib-design-");
     writeValidSite(root);
-    const good = readFileSync(path.join(root, "walkthrough/changes/demo-change.yaml"), "utf8") + "design: |\n  方案说明。\n";
+    const flowcharts = `design: |
+  方案说明。
+
+  ### 落地映射：功能点 → 变更文件
+
+  #### 唯一功能点
+
+  文件树。
+designFlowcharts:
+  - feature: 唯一功能点
+    nodes:
+      - id: a
+        label: 甲
+      - id: b
+        label: 乙
+    edges:
+      - from: a
+        to: b
+`;
+    const good = readFileSync(path.join(root, "walkthrough/changes/demo-change.yaml"), "utf8") + flowcharts;
     write(root, "walkthrough/changes/demo-change.yaml", good);
     expect(validateSchema(parseSite(root)).some((e) => e.includes("design"))).toBe(false);
-    const bad = readFileSync(path.join(root, "walkthrough/changes/demo-change.yaml"), "utf8").replace("design: |\n  方案说明。\n", "design: 42\n");
+    const bad = readFileSync(path.join(root, "walkthrough/changes/demo-change.yaml"), "utf8").replace(flowcharts, "design: 42\n");
     write(root, "walkthrough/changes/demo-change.yaml", bad);
     expect(validateSchema(parseSite(root)).some((e) => e.includes("design 必须是字符串"))).toBe(true);
   });

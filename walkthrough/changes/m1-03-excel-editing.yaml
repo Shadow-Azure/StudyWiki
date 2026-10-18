@@ -806,3 +806,28 @@ touches:
   - file:src/plugins/doc-excel/index.ts
   - file:src/host/excel.ts
   - file:src-tauri/src/lib.rs
+architecturalFlowchart:
+  title: 编辑从 workbook 到原子落盘
+  nodes:
+    - id: edit
+      label: 用户在 UI 变换 workbook
+      shape: stadium
+    - id: write
+      label: ctx.excel.write 保存
+    - id: rust-write
+      label: Rust 原子写
+    - id: broadcast
+      label: 广播 fs://changed
+    - id: refresh
+      label: 各方刷新视图
+      shape: rounded
+  edges:
+    - from: edit
+      to: write
+    - from: write
+      to: rust-write
+      label: raw binary IPC
+    - from: rust-write
+      to: broadcast
+    - from: broadcast
+      to: refresh

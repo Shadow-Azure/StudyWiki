@@ -459,3 +459,42 @@ touches:
   - file:src-tauri/src/lib.rs
   - file:src/host/windows.ts
   - file:src/bootstrap.ts
+architecturalFlowchart:
+  title: 原生关窗守卫链路
+  nodes:
+    - id: close
+      label: 用户关窗
+      shape: stadium
+    - id: rust-hook
+      label: 主进程同步拦截
+    - id: armed
+      label: 守卫已武装
+      shape: diamond
+    - id: frontend-guard
+      label: 前端聚合守卫判脏
+    - id: confirm
+      label: 脏文档确认弹窗
+    - id: destroy
+      label: 前端显式销毁窗口
+      shape: rounded
+  edges:
+    - from: close
+      to: rust-hook
+    - from: rust-hook
+      to: armed
+      label: 同步事实
+    - from: armed
+      to: frontend-guard
+      label: 是
+    - from: armed
+      to: destroy
+      label: 否
+    - from: frontend-guard
+      to: confirm
+      label: 脏
+    - from: frontend-guard
+      to: destroy
+      label: 干净
+    - from: confirm
+      to: destroy
+      label: 确认关闭

@@ -1840,3 +1840,42 @@ touches:
   - file:src/plugins/agent-core/session.ts
   - file:src/plugins/app-agent/index.ts
   - file:src-tauri/src/grep.rs
+architecturalFlowchart:
+  title: agent 回合状态机与审批
+  nodes:
+    - id: message
+      label: 用户发送消息
+      shape: stadium
+    - id: ui
+      label: app-agent UI 插件
+    - id: core
+      label: agent-core ctx.agent 回合状态机
+    - id: tools
+      label: 四工具 function calling
+    - id: approval
+      label: 需要审批
+      shape: diamond
+    - id: persist
+      label: 会话持久化与 compaction
+    - id: snapshot
+      label: 快照回 UI 并渲染
+      shape: rounded
+  edges:
+    - from: message
+      to: ui
+    - from: ui
+      to: core
+    - from: core
+      to: tools
+    - from: tools
+      to: approval
+    - from: approval
+      to: core
+      label: 用户批准后继续
+    - from: approval
+      to: persist
+      label: 无需审批
+    - from: core
+      to: persist
+    - from: persist
+      to: snapshot

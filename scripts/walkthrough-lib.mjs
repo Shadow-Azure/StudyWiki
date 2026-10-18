@@ -35,7 +35,9 @@ const CHANGE_KEYS = new Set([
   "feature",
   "userFlow",
   "architectural",
+  "architecturalFlowchart",
   "design",
+  "designFlowcharts",
   "codeMap",
   "reviewGuide",
   "verification",
@@ -48,6 +50,11 @@ const CODE_MAP_FILE_KEYS = new Set(["path", "note", "changes"]);
 const CODE_MAP_CHANGE_KEYS = new Set(["snippet", "note"]);
 const REVIEW_GUIDE_KEYS = new Set(["order", "risks", "acceptance"]);
 const ACCEPTANCE_KEYS = new Set(["item", "evidence"]);
+const FLOWCHART_KEYS = new Set(["title", "direction", "nodes", "edges"]);
+const FLOWCHART_NODE_KEYS = new Set(["id", "label", "shape"]);
+const FLOWCHART_EDGE_KEYS = new Set(["from", "to", "label"]);
+const FLOWCHART_NODE_SHAPES = new Set(["rect", "rounded", "stadium", "diamond"]);
+const FLOWCHART_DIRECTIONS = new Set(["LR", "TB"]);
 const CHANGE_ATTENTIONS = new Set(["must-read", "skim", "skip"]);
 /**
  * 机械变更路径归类规则：命中任一规则的路径由机器生成/维护，不承载语义讲解。
@@ -386,6 +393,111 @@ function requireNonEmptyStringArray(value, field, label, errors) {
   }
 }
 
+/** 叙事正文是否有实质内容：非空且不是"无/无。"占位（占位不需要配图）。 */
+function hasSubstance(text) {
+  return isNonEmptyString(text) && !/^\s*无[。.]?\s*$/u.test(text);
+}
+
+/**
+ * 校验单个流程图对象（architecturalFlowchart 或 designFlowcharts 项的图本体）。
+ * 结构：`{ title?, direction?, nodes: [{id, label, shape?}], edges: [{from, to, label?}] }`。
+ * @returns {boolean} 形状是否合法（供调用方决定是否继续做语义对账）。
+ */
+function validateFlowchart(chart, field, label, errors, extraKeys = []) {
+  if (!isObject(chart)) {
+    push(errors, label, `${field} 必须是 map（流程图：title?/direction?/nodes/edges）`);
+    return false;
+  }
+  if (!validateKeys(chart, new Set([...FLOWCHART_KEYS, ...extraKeys]), label, errors)) return false;
+  if (chart.title !== undefined && typeof chart.title !== "string") {
+    push(errors, label, `${field}.title 必须是字符串`);
+  }
+  if (chart.direction !== undefined && !FLOWCHART_DIRECTIONS.has(chart.direction)) {
+    push(errors, label, `${field}.direction 必须是 LR|TB 之一`);
+  }
+  let shapeOk = true;
+  let nodesOk = true;
+  const ids = new Set();
+  if (!Array.isArray(chart.nodes) || chart.nodes.length < 2) {
+    push(errors, label, `${field}.nodes 必须是至少 2 项的数组`);
+    shapeOk = false;
+    nodesOk = false;
+  } else {
+    chart.nodes.forEach((node, index) => {
+      const nodeLabel = `${label} ${field}.nodes[${index}]`;
+      if (!isObject(node)) {
+        push(errors, nodeLabel, "必须是 map");
+        shapeOk = false;
+        nodesOk = false;
+        return;
+      }
+      if (!validateKeys(node, FLOWCHART_NODE_KEYS, nodeLabel, errors)) {
+        shapeOk = false;
+        nodesOk = false;
+      }
+      if (!isNonEmptyString(node.id)) {
+        push(errors, nodeLabel, "id 必须是非空字符串");
+        shapeOk = false;
+        nodesOk = false;
+      } else if (ids.has(node.id)) {
+        push(errors, nodeLabel, `id 重复: ${node.id}`);
+        shapeOk = false;
+        nodesOk = false;
+      } else {
+        ids.add(node.id);
+      }
+      if (!isNonEmptyString(node.label)) {
+        push(errors, nodeLabel, "label 必须是非空字符串");
+        shapeOk = false;
+        nodesOk = false;
+      }
+      if (node.shape !== undefined && !FLOWCHART_NODE_SHAPES.has(node.shape)) {
+        push(errors, nodeLabel, "shape 必须是 rect|rounded|stadium|diamond 之一");
+        shapeOk = false;
+        nodesOk = false;
+      }
+    });
+  }
+  if (!Array.isArray(chart.edges) || chart.edges.length === 0) {
+    push(errors, label, `${field}.edges 必须是非空数组`);
+    shapeOk = false;
+  } else {
+    chart.edges.forEach((edge, index) => {
+      const edgeLabel = `${label} ${field}.edges[${index}]`;
+      if (!isObject(edge)) {
+        push(errors, edgeLabel, "必须是 map");
+        shapeOk = false;
+        return;
+      }
+      if (!validateKeys(edge, FLOWCHART_EDGE_KEYS, edgeLabel, errors)) shapeOk = false;
+      for (const endpoint of ["from", "to"]) {
+        if (!isNonEmptyString(edge[endpoint])) {
+          push(errors, edgeLabel, `${endpoint} 必须是非空字符串`);
+          shapeOk = false;
+        } else if (nodesOk && !ids.has(edge[endpoint])) {
+          push(errors, edgeLabel, `${endpoint} 引用不存在的节点: ${edge[endpoint]}`);
+          shapeOk = false;
+        }
+      }
+      if (edge.label !== undefined && typeof edge.label !== "string") {
+        push(errors, edgeLabel, "label 必须是字符串");
+        shapeOk = false;
+      }
+    });
+  }
+  return shapeOk;
+}
+
+/** 提取 design 正文里"落地映射"功能点小节（#### 标题）名单，与 designFlowcharts 对账。 */
+export function designFeatureHeadings(design) {
+  const headings = [];
+  for (const line of String(design).split("\n")) {
+    const match = /^####\s+(.+?)\s*$/u.exec(line);
+    if (match) headings.push(match[1]);
+  }
+  return headings;
+}
+
 /**
  * 校验 site 中全部页面的封闭 schema。
  * @param {object} site - parseSite 产出的站点对象。
@@ -475,6 +587,60 @@ export function validateSchema(site) {
     requireString(change.architectural, "architectural", label, errors);
     if (change.design !== undefined && typeof change.design !== "string") {
       push(errors, label, "design 必须是字符串（markdown 方案设计说明）");
+    }
+    // 架构影响/方案设计有实质内容时，对应流程图必填：图文结合是变更页的硬性交付面。
+    if (hasSubstance(change.architectural)) {
+      if (change.architecturalFlowchart === undefined) {
+        push(errors, label, "architecturalFlowchart 必填（architectural 非空时）");
+      } else {
+        validateFlowchart(change.architecturalFlowchart, "architecturalFlowchart", label, errors);
+      }
+    } else if (change.architecturalFlowchart !== undefined) {
+      push(errors, label, "architecturalFlowchart 仅在 architectural 非空时允许出现");
+    }
+    if (hasSubstance(change.design)) {
+      if (!Array.isArray(change.designFlowcharts) || change.designFlowcharts.length === 0) {
+        push(errors, label, "designFlowcharts 必填且非空（design 非空时，每个功能点一条）");
+      } else {
+        let flowchartsOk = true;
+        const features = [];
+        change.designFlowcharts.forEach((entry, index) => {
+          const entryLabel = `${label} designFlowcharts[${index}]`;
+          if (!isObject(entry)) {
+            push(errors, entryLabel, "必须是 map");
+            flowchartsOk = false;
+            return;
+          }
+          if (!isNonEmptyString(entry.feature)) {
+            push(errors, entryLabel, "feature 必须是非空字符串（对应 design 落地映射小节名）");
+            flowchartsOk = false;
+          } else {
+            features.push(entry.feature);
+          }
+          if (!validateFlowchart(entry, "designFlowcharts", entryLabel, errors, ["feature"])) {
+            flowchartsOk = false;
+          }
+        });
+        if (flowchartsOk) {
+          const headings = designFeatureHeadings(change.design);
+          if (headings.length > 0) {
+            const headingSet = new Set(headings);
+            const featureSet = new Set(features);
+            for (const heading of headings) {
+              if (!featureSet.has(heading)) {
+                push(errors, label, `design 功能点「${heading}」缺少对应 designFlowcharts 项`);
+              }
+            }
+            for (const feature of features) {
+              if (!headingSet.has(feature)) {
+                push(errors, label, `designFlowcharts 项「${feature}」在 design 落地映射中无此小节`);
+              }
+            }
+          }
+        }
+      }
+    } else if (change.designFlowcharts !== undefined) {
+      push(errors, label, "designFlowcharts 仅在 design 非空时允许出现");
     }
     validateCodeMap(change.codeMap, label, errors);
     validateReviewGuide(change.reviewGuide, label, errors);

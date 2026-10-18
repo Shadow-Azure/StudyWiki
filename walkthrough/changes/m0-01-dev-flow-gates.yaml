@@ -274,3 +274,39 @@ touches:
   - file:scripts/flow-sync.mjs
   - file:scripts/flow-new-issue.mjs
   - file:scripts/install-git-hooks.mjs
+architecturalFlowchart:
+  title: 流程事实源到组合门禁
+  nodes:
+    - id: flow-src
+      label: .agents/flow/ 三层事实源
+      shape: stadium
+    - id: triplet
+      label: issue 三件套 + Agent Note 承载 ADR
+    - id: gates
+      label: 可组合门禁
+    - id: verify-flow
+      label: verify:flow 状态机与双语围栏
+    - id: verify-online
+      label: verify:flow-online 双侧一致
+    - id: diff-check
+      label: diff 改动面校验
+    - id: verdict
+      label: 拦截或放行
+      shape: diamond
+  edges:
+    - from: flow-src
+      to: triplet
+    - from: triplet
+      to: gates
+    - from: gates
+      to: verify-flow
+    - from: gates
+      to: verify-online
+    - from: gates
+      to: diff-check
+    - from: verify-flow
+      to: verdict
+    - from: verify-online
+      to: verdict
+    - from: diff-check
+      to: verdict

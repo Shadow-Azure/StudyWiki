@@ -862,3 +862,32 @@ touches:
   - file:src/host/llm.ts
   - file:src/plugins/llm-settings/model.ts
   - file:src/plugins/llm-settings/index.ts
+architecturalFlowchart:
+  title: 模型供给的权限边界
+  nodes:
+    - id: config
+      label: 用户显式配置 OpenAI 兼容 endpoint
+      shape: stadium
+    - id: rust-own
+      label: Rust 登记配置与脱敏投影
+    - id: llm-service
+      label: ctx.llm 宿主服务
+    - id: consume
+      label: 前端能力消费
+      shape: rounded
+    - id: egress
+      label: 唯一联网出口
+      shape: diamond
+  edges:
+    - from: config
+      to: rust-own
+    - from: rust-own
+      to: llm-service
+    - from: llm-service
+      to: consume
+    - from: consume
+      to: egress
+      label: 推理请求
+    - from: egress
+      to: rust-own
+      label: 出口审计归 Rust

@@ -13,6 +13,9 @@ scope:
   - scripts/build-walkthrough.spec.mjs
   - scripts/walkthrough-lib.mjs
   - scripts/walkthrough-lib.spec.mjs
+  - scripts/walkthrough-flowchart.mjs
+  - scripts/walkthrough-flowchart.spec.mjs
+  - walkthrough/README.md
   - scripts/verify-walkthrough.mjs
   - scripts/verify-walkthrough.spec.mjs
   - scripts/walkthrough-review.mjs

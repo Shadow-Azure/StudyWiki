@@ -41,6 +41,31 @@ userFlow:
   - 确认演示行为
 architectural: |
   架构不变。
+architecturalFlowchart:
+  title: 演示流程
+  nodes:
+    - id: entry
+      label: 入口
+      shape: stadium
+    - id: core
+      label: 核心处理
+    - id: gate
+      label: 是否通过
+      shape: diamond
+    - id: done
+      label: 完成
+      shape: rounded
+  edges:
+    - from: entry
+      to: core
+    - from: core
+      to: gate
+    - from: gate
+      to: done
+      label: 是
+    - from: gate
+      to: core
+      label: 否，重试
 codeMap:
   - group: 实现
     attention: must-read
@@ -225,6 +250,13 @@ describe("build-walkthrough", () => {
 
     // 变更地图：must-read 组展开置顶，skim 组默认折叠并灰显"可扫读"
     expect(changePage).toContain('<section class="map-group must-read">');
+    // 流程图：架构影响章节内渲染内联 SVG figure，marker id 页内唯一。
+    expect(changePage).toContain('class="flowchart-figure"');
+    expect(changePage).toContain('<svg class="flowchart"');
+    expect(changePage).toContain('aria-label="演示流程"');
+    expect(changePage).toContain('id="fc-arrow-demo-change-arch"');
+    expect(changePage).toContain("否，重试");
+    expect(changePage).toContain("<figcaption");
     expect(changePage).toContain('<details class="map-group skim">');
     expect(changePage).toContain("核心变化");
     expect(changePage).toContain(">必读</span>");

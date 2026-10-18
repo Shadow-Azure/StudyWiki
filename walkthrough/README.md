@@ -36,10 +36,15 @@
 | `scale` | map，恰为 `files`/`additions`/`deletions` 三个非负整数；描述整个 PR 的实际规模，--diff 档与 `git diff --numstat` 对账。 |
 | `feature` | 正文字符串：实现了什么功能，缺了什么、现在是什么。 |
 | `userFlow` | 非空字符串数组：用户操作路径，按序渲染为有序列表。 |
-| `architectural` | 正文字符串；无架构变化时写 `无`。 |
+| `architectural` | 正文字符串；无架构变化时写 `无`（`无`/`无。` 占位视为无实质内容，不需要流程图）。 |
+| `architecturalFlowchart` | `architectural` 有实质内容时必填：结构化流程图，构建期渲染为内联 SVG 紧随架构影响章节。形状见下表。 |
+| `design` | 可选 markdown 方案设计；非空时 `designFlowcharts` 必填。 |
+| `designFlowcharts` | `design` 非空时必填且非空：每个落地映射功能点一条，`feature` 与 design 的 `#### ` 小节名双向对账。 |
 | `codeMap` | 非空数组的变更地图分组，见下。 |
 | `reviewGuide` | map：`order`（非空字符串数组，建议阅读顺序）、`risks`（字符串数组，可为空）、`acceptance`（非空数组，项恰为 `item` 与 `evidence` 两个非空字符串）。 |
 | `verification` | 非空字符串数组：实际跑过的门禁/测试。 |
+
+**流程图形状**（`architecturalFlowchart` 与 `designFlowcharts` 项共用）：图本体键封闭为 `title`（可选）/`direction`（可选，`LR` 缺省|`TB`）/`nodes`/`edges`。node 恰为 `id`（非空、图内唯一）、`label`（非空）、`shape`（可选：`rect` 缺省|`rounded`|`stadium` 起止|`diamond` 判断）；edge 恰为 `from`、`to`（必须引用已声明节点）、`label`（可选）。`designFlowcharts` 每项额外必填 `feature`（对应 design 落地映射小节名）。渲染器 home 是 `scripts/walkthrough-flowchart.mjs`（dagre 布局 + 手写 SVG，构建期内联，零 DOM 依赖）。
 
 `codeMap` 每项恰为 `group`（非空字符串）、`attention`、`why`（字符串或 `null`，空理由写 `why: null`）、`files`（非空数组）。file 项恰为 `path` 与 `note` 两个非空字符串；`changes` 可选，必须是 `{snippet, note}` 列表。`attention` 是封闭集合：`must-read`（必读者，进入逐段注解骨架）、`skim`（可扫读，只给规模与文件级注解）、`skip`（可跳过）。must-read 组中的 reviewable 源码文件必须带非空 `changes`；机械路径（`*.i18n.yaml`、`docs/commands.*` 生成区、`pnpm-lock.yaml`；规则的唯一 home 是 `walkthrough-lib.mjs` 导出的 `MECHANICAL_PATTERNS`，`.github/workflows/` 刻意不算机械）不得标 must-read。
 

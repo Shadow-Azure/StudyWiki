@@ -673,3 +673,32 @@ touches:
   - file:src/host/llm-stream.ts
   - file:src/host/llm.ts
   - file:src/host/slots.ts
+architecturalFlowchart:
+  title: 流式推理的宿主缝
+  nodes:
+    - id: invoke
+      label: 插件发起 chatStream
+      shape: stadium
+    - id: guard
+      label: guard 收窄的服务面
+    - id: egress
+      label: Rust 唯一联网出口
+    - id: channel
+      label: 每次 invoke 独立 IPC Channel
+    - id: assemble
+      label: llm-stream 组装消息快照
+    - id: snapshot
+      label: 快照回插件与 UI
+      shape: rounded
+  edges:
+    - from: invoke
+      to: guard
+    - from: guard
+      to: egress
+    - from: egress
+      to: channel
+      label: 流式 chunk
+    - from: channel
+      to: assemble
+    - from: assemble
+      to: snapshot

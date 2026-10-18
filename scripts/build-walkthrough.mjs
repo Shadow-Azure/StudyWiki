@@ -12,6 +12,7 @@ import { posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import MarkdownIt from "markdown-it";
 import { checkAnchors, isReviewableSourcePath, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+import { renderFlowchartSvg } from "./walkthrough-flowchart.mjs";
 import { parseFlowDocument } from "./flow-lib.mjs";
 import { SCAN_ROOTS } from "./gen-code-map.mjs";
 import { collectReviewDiff, hunkForRange } from "./walkthrough-review.mjs";
@@ -336,6 +337,18 @@ ol.user-flow li { margin:5px 0 }
 .review-tree { display:grid; gap:8px } .tree-legend { display:grid; gap:10px; margin-bottom:12px } .review-dir { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden } .review-dir > summary { padding:8px 12px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-dir[open] > summary { border-bottom:1px solid var(--line) } .review-dir > details { margin:6px } .review-file > summary { display:flex; gap:8px; align-items:center; padding:7px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-wrap:anywhere } .review-file > summary .meta { margin-left:auto } .review-file[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0 } .review-file-body { padding:0 10px 10px } .review-dir > summary { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; font:12.5px ui-monospace,SFMono-Regular,monospace; background:var(--panel) } .review-unclassified > summary { color:var(--muted) } .review-file > summary { display:block; padding:10px 12px; cursor:pointer } .review-file > summary .file-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font:12.5px ui-monospace,SFMono-Regular,monospace } .review-file > summary .file-chips { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap } .status-chip,.stat-chip { display:inline-block; padding:1px 8px; border:1px solid var(--line-strong); border-radius:99px; font:11px ui-monospace,SFMono-Regular,monospace; color:var(--muted) } .review-file > summary .summary-line { display:flex; gap:7px; align-items:baseline; margin-top:5px; font-size:12.8px; line-height:1.45; color:var(--muted) } .review-file > summary .summary-label { flex:0 0 auto; white-space:nowrap; color:var(--faint); user-select:none } .review-file > summary .summary-text { flex:1 1 auto; display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow-wrap:anywhere }
 .diff-note { margin:0; border-left:3px solid var(--accent); border-radius:0 }
 table { border-collapse:collapse; width:100%; font-size:13.5px } th,td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top } th { color:var(--muted); font-size:12.5px }
+
+/* ---- 流程图（dagre 布局 + 内联 SVG，见 walkthrough-flowchart.mjs） ---- */
+.flowchart-figure { margin:16px 0; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-x:auto }
+.flowchart { display:block; max-width:100%; height:auto }
+.flowchart text { font-family:inherit }
+.fc-node { fill:var(--surface); stroke:var(--line-strong); stroke-width:1.2 }
+.fc-shape-stadium { fill:var(--accent-soft); stroke:var(--accent) }
+.fc-shape-diamond { fill:var(--accent-soft); stroke:var(--accent) }
+.fc-label { fill:var(--text) }
+.fc-edge { fill:none; stroke:var(--muted); stroke-width:1.3 }
+.fc-arrow { fill:var(--muted) }
+.fc-edge-label { fill:var(--muted) }
 @media (max-width:860px) {
   body { grid-template-columns:1fr }
   .sidebar { position:static; height:auto; max-height:42vh; border-right:0; border-bottom:1px solid var(--line) }
@@ -528,6 +541,44 @@ function renderCodeMapGroups(codeMap, current, site) {
     .join("");
 }
 
+/** 渲染单张流程图为带题注的 figure；idSuffix 保证产物页内 marker id 唯一。 */
+function renderFlowchartFigure(chart, idSuffix) {
+  const svg = renderFlowchartSvg(chart, idSuffix);
+  const caption = chart.title ? `图：${escapeHtml(chart.title)}` : "流程图";
+  return `<figure class="flowchart-figure">${svg}<figcaption class="meta">${caption}</figcaption></figure>`;
+}
+
+/**
+ * 渲染 design 正文并按"落地映射"小节插入对应方案流程图：
+ * 按 #### 标题切分，每个小节 markdown 之后紧跟其 designFlowcharts 流程图。
+ */
+function renderDesignWithFlowcharts(design, designFlowcharts, idPrefix) {
+  const byFeature = new Map((designFlowcharts ?? []).map((entry) => [entry.feature, entry]));
+  const chunks = [];
+  let current = { heading: null, body: [] };
+  for (const line of String(design).split("\n")) {
+    if (/^####\s+/u.test(line)) {
+      chunks.push(current);
+      current = { heading: line, body: [line] };
+    } else {
+      current.body.push(line);
+    }
+  }
+  chunks.push(current);
+  let flowIndex = 0;
+  return chunks
+    .map((chunk) => {
+      const html = renderMarkdown(chunk.body.join("\n"));
+      if (!chunk.heading) return html;
+      const match = /^####\s+(.+?)\s*$/u.exec(chunk.heading);
+      const entry = match ? byFeature.get(match[1]) : undefined;
+      if (!entry) return html;
+      flowIndex += 1;
+      return html + renderFlowchartFigure(entry, `${idPrefix}-design-${flowIndex}`);
+    })
+    .join("");
+}
+
 /** 渲染变更史页（v2 schema：scale 徽章 + feature/userFlow/codeMap/reviewGuide/verification）。 */
 function renderChangePage(issue, page, current, site) {
   const issueUrl = resolveIssueUrl(site.root, issue);
@@ -543,7 +594,13 @@ function renderChangePage(issue, page, current, site) {
     : '<p class="meta">无登记风险。</p>';
   const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
   const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
-  const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section>${page.design ? `<section><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
+  const archFigure = page.architecturalFlowchart
+    ? renderFlowchartFigure(page.architecturalFlowchart, `${issue}-arch`)
+    : "";
+  const designBody = page.design
+    ? renderDesignWithFlowcharts(page.design, page.designFlowcharts, issue)
+    : "";
+  const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}${archFigure}</section>${page.design ? `<section><h2>方案设计</h2>${designBody}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
   return renderPage({
     title: page.title,
     current,
@@ -892,8 +949,13 @@ function renderReviewPage(site, review, root) {
   const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
   const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
   const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
-  const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
-  const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
+  const archFigure = page.architecturalFlowchart
+    ? renderFlowchartFigure(page.architecturalFlowchart, `${slug}-arch`)
+    : "";
+  const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}${archFigure}</section>`;
+  const designSection = page.design
+    ? `<section id="design"><h2>方案设计</h2>${renderDesignWithFlowcharts(page.design, page.designFlowcharts, slug)}</section>`
+    : "";
 
   const rank = { "must-read": 0, skim: 1, skip: 2 };
   const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));

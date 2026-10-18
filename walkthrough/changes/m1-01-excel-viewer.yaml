@@ -909,3 +909,29 @@ touches:
   - file:src/host/files.ts
   - file:src/plugins/doc-excel/model.ts
   - file:src/plugins/doc-excel/index.ts
+architecturalFlowchart:
+  title: xlsx 从字节到查看器渲染
+  nodes:
+    - id: open
+      label: 用户打开 xlsx
+      shape: stadium
+    - id: rust-io
+      label: Rust 读字节与路径授权
+    - id: workbook
+      label: 前端 ExcelJS 解析为 workbook
+    - id: service
+      label: ctx.excel 宿主服务
+    - id: render
+      label: 查看器渲染
+      shape: rounded
+  edges:
+    - from: open
+      to: rust-io
+    - from: rust-io
+      to: workbook
+      label: 字节
+    - from: workbook
+      to: service
+      label: 唯一读写模型
+    - from: service
+      to: render

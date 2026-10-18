@@ -365,3 +365,39 @@ touches:
   - file:src/host/workspace.ts
   - file:src/host/windows.ts
   - file:src/ui/viewer.ts
+architecturalFlowchart:
+  title: 切换守卫上收到 WorkspaceService
+  nodes:
+    - id: request
+      label: 切换或换根请求
+      shape: stadium
+    - id: guard
+      label: WorkspaceService 聚合守卫
+    - id: dirty
+      label: 查看器是否脏
+      shape: diamond
+    - id: confirm
+      label: 查看器确认闭包
+    - id: apply
+      label: openFile/setRoot 返回真并切换
+      shape: rounded
+    - id: keep
+      label: 保持原状态
+      shape: rounded
+  edges:
+    - from: request
+      to: guard
+    - from: guard
+      to: dirty
+    - from: dirty
+      to: confirm
+      label: 脏
+    - from: confirm
+      to: apply
+      label: 用户确认
+    - from: dirty
+      to: apply
+      label: 干净
+    - from: confirm
+      to: keep
+      label: 用户取消

@@ -1,6 +1,6 @@
 kind: change
 issue: m2-walkthrough-backfill
-skill_gen_commit_id: 9e1ac35
+skill_gen_commit_id: ad4df96
 title: #60 Walkthrough 全量回填：文件页/功能页/变更页 + bootstrap 摘除
 scale:
   files: 100
@@ -129,9 +129,11 @@ codeMap:
             note: |
               文件行双行摘要改「文件主要实现 / 当前PR修改点」固定前缀，收起态可见。
           - snippet: |
-              const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
+              const designSection = page.design
+                ? `<section id="design"><h2>方案设计</h2>${renderDesignWithFlowcharts(page.design, page.designFlowcharts, slug)}</section>`
+                : "";
             note: |
-              可选 design 字段（方案设计说明）渲染为独立章节；未写则不渲染——schema 可选语义，内容质量由生成 skill 约束。
+              可选 design 字段渲染为独立章节，并按落地映射小节插入 designFlowcharts 方案流程图；未写则不渲染。
           - snippet: |
               /**
                * 构建 walkthrough 多页静态站。
@@ -198,27 +200,27 @@ codeMap:
                 单文件先定位全部 changes 锚点，再渲染逐段 diff；注解骨架外的变更行收进折叠区，避免漏报也不淹没核心讲解。
           - snippet: |
               function renderReviewPage(site, review, root) {
-              const { base } = review;
-              const diff = collectReviewDiff(root, base);
-              const byPath = new Map(diff.files.map((file) => [file.path, file]));
-              const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
-              const page = site.changes.get(slug);
-              const current = "review.html";
-              const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
-              const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
-              const scale = page.scale ?? {};
-              const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
-              const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
-              const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
-              const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}</section>`;
-              const designSection = page.design ? `<section id="design"><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : "";
-
-              const rank = { "must-read": 0, skim: 1, skip: 2 };
-              const groups = [...(page.codeMap ?? [])].sort((a, b) => (rank[a.attention] ?? 1) - (rank[b.attention] ?? 1));
-              const covered = new Set(groups.flatMap((group) => (group.files ?? []).map((file) => file.path)));
-              const rest = diff.files.filter((file) => !covered.has(file.path));
+                const { base } = review;
+                const diff = collectReviewDiff(root, base);
+                const byPath = new Map(diff.files.map((file) => [file.path, file]));
+                const slug = detectReviewPage(root, site, diff.files.map((file) => file.path), base);
+                const page = site.changes.get(slug);
+                const current = "review.html";
+                const prNumber = /^#(\d+)/u.exec(page.title ?? "")?.[1];
+                const prLink = prNumber ? `https://github.com/Shadow-Azure/StudyWiki/pull/${prNumber}/files` : null;
+                const scale = page.scale ?? {};
+                const meta = `<p class="meta">Issue ${escapeHtml(page.issue ?? slug)} · 检视基线 ${escapeHtml(base)} · ${Number(scale.files ?? diff.files.length)} 个文件 · +${Number(scale.additions ?? 0)} −${Number(scale.deletions ?? 0)}${prLink ? ` · <a href="${escapeHtml(prLink)}">在 GitHub 看完整 diff</a>` : ""}</p>`;
+                const flowSection = `<section><h2>功能</h2>${renderMarkdown(page.feature ?? "")}</section>`;
+                const userFlow = `<section><h2>用户操作路径</h2><ol>${(page.userFlow ?? []).map((step) => `<li>${renderMarkdown(String(step))}</li>`).join("")}</ol></section>`;
+                const archFigure = page.architecturalFlowchart
+                  ? renderFlowchartFigure(page.architecturalFlowchart, `${slug}-arch`)
+                  : "";
+                const archSection = `<section><h2>架构变化</h2>${renderMarkdown(page.architectural ?? "")}${archFigure}</section>`;
+                const designSection = page.design
+                  ? `<section id="design"><h2>方案设计</h2>${renderDesignWithFlowcharts(page.design, page.designFlowcharts, slug)}</section>`
+                  : "";
             note: |
-                检视页从基线采集 diff，探测当前变更页，并按 must-read/skim/skip 排序；已归位文件进入路径树，其余文件单独折叠列出。
+              检视页从基线采集 diff 并探测当前变更页；叙事区（功能/用户路径/架构/方案设计）全部来自变更页 yaml，架构变化章节尾渲染 architecturalFlowchart，方案设计按落地映射小节穿插 designFlowcharts 流程图。
           - snippet: |
               const attentionCounts = (current) => {
                 const totals = new Map();
@@ -250,7 +252,7 @@ codeMap:
               // 链接是唯一的出站锚点（链向 flow issue 登记的 github.url，仅导航不加载资源）。
               // 架构组成树直接按 code-map manifest 渲染两列
               // 文本树（目录顺序复用 gen-code-map 的 SCAN_ROOTS，不在构建器里重复扫描/推导依赖）。
-
+              
               import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
               import { execFileSync } from "node:child_process";
               import path from "node:path";
@@ -258,14 +260,11 @@ codeMap:
               import { pathToFileURL } from "node:url";
               import MarkdownIt from "markdown-it";
               import { checkAnchors, isReviewableSourcePath, locateSnippet, parseSite, validateSchema } from "./walkthrough-lib.mjs";
+              import { renderFlowchartSvg } from "./walkthrough-flowchart.mjs";
               import { parseFlowDocument } from "./flow-lib.mjs";
               import { SCAN_ROOTS } from "./gen-code-map.mjs";
-              import { collectReviewDiff, hunkForRange } from "./walkthrough-review.mjs";
-
-              const markdown = new MarkdownIt({ html: false, linkify: false });
-
             note: |
-                构建器固定离线静态站依赖、walkthrough 校验入口和 markdown-it 安全策略；HTML/链接与远程资源都不得绕过这些缝。
+              构建器固定离线静态站依赖、walkthrough 校验入口和 markdown-it 安全策略；流程图渲染只经 walkthrough-flowchart.mjs，HTML/链接与远程资源都不得绕过这些缝。
           - snippet: |
               /** 逐段百分号编码产物内 URL path；分隔符 `/` 与锚点 `#` 保留结构语义。 */
               function encodeHrefPath(value) {
@@ -466,13 +465,9 @@ codeMap:
                   : '<p class="meta">无登记风险。</p>';
                 const acceptance = `<table class="acceptance"><thead><tr><th>验收项</th><th>证据</th></tr></thead><tbody>${guide.acceptance.map((entry) => `<tr><td>${markdown.renderInline(entry.item)}</td><td>${markdown.renderInline(entry.evidence)}</td></tr>`).join("")}</tbody></table>`;
                 const verification = `<ul class="verify-list">${page.verification.map((item) => `<li>${markdown.renderInline(item)}</li>`).join("")}</ul>`;
-                const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}</section>${page.design ? `<section><h2>方案设计</h2>${renderMarkdown(page.design)}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
-                return renderPage({
-                  title: page.title,
-                  current,
-                  site,
+                const archFigure = page.architecturalFlowchart
             note: |
-                变更页渲染把 Issue 链接、规模徽章、用户路径、检视指引和验证证据编排成静态页，未登记的外链降级为文本。
+              变更页渲染把 Issue 链接、规模徽章、用户路径、检视指引和验证证据编排成静态章节；架构影响与方案设计章节的数据来源同检视页一致。
           - snippet: |
               /** 从 flow 树读 issue 状态（review 模式探测当前 PR 页用）。 */
               function flowStatuses(root) {
@@ -588,6 +583,76 @@ codeMap:
                 }
             note: |
                 CLI 只接受位置参数与 --review <base>；未知 flag、缺 base 和构建异常都输出清晰错误并返回非零。
+          - snippet: |
+              /** 渲染单张流程图为带题注的 figure；idSuffix 保证产物页内 marker id 唯一。 */
+              function renderFlowchartFigure(chart, idSuffix) {
+                const svg = renderFlowchartSvg(chart, idSuffix);
+                const caption = chart.title ? `图：${escapeHtml(chart.title)}` : "流程图";
+                return `<figure class="flowchart-figure">${svg}<figcaption class="meta">${caption}</figcaption></figure>`;
+            note: |
+              流程图统一包成 figure + 题注；idSuffix 用 issue slug 派生，保证同页多张图的 arrow marker id 唯一。
+          - snippet: |
+              /**
+               * 渲染 design 正文并按"落地映射"小节插入对应方案流程图：
+               * 按 #### 标题切分，每个小节 markdown 之后紧跟其 designFlowcharts 流程图。
+               */
+              function renderDesignWithFlowcharts(design, designFlowcharts, idPrefix) {
+                const byFeature = new Map((designFlowcharts ?? []).map((entry) => [entry.feature, entry]));
+                const chunks = [];
+                let current = { heading: null, body: [] };
+                for (const line of String(design).split("\n")) {
+                  if (/^####\s+/u.test(line)) {
+                    chunks.push(current);
+                    current = { heading: line, body: [line] };
+                  } else {
+                    current.body.push(line);
+                  }
+                }
+                chunks.push(current);
+                let flowIndex = 0;
+            note: |
+              design 正文按 #### 标题切块：标题前导文本整体渲染，每个落地映射小节独立成块，为穿插流程图提供挂点。
+          - snippet: |
+                let flowIndex = 0;
+                return chunks
+                  .map((chunk) => {
+                    const html = renderMarkdown(chunk.body.join("\n"));
+                    if (!chunk.heading) return html;
+                    const match = /^####\s+(.+?)\s*$/u.exec(chunk.heading);
+                    const entry = match ? byFeature.get(match[1]) : undefined;
+                    if (!entry) return html;
+                    flowIndex += 1;
+                    return html + renderFlowchartFigure(entry, `${idPrefix}-design-${flowIndex}`);
+                  })
+                  .join("");
+            note: |
+              每个 #### 小节渲染 markdown 后按 feature 名查 designFlowcharts，命中即紧跟对应 SVG；小节名与 yaml 字段双向对账由 schema 门禁保证。
+          - snippet: |
+                const archFigure = page.architecturalFlowchart
+                  ? renderFlowchartFigure(page.architecturalFlowchart, `${issue}-arch`)
+                  : "";
+                const designBody = page.design
+                  ? renderDesignWithFlowcharts(page.design, page.designFlowcharts, issue)
+                  : "";
+                const content = `<h1>${escapeHtml(page.title)}</h1><div class="change-head">${issuePart}${chips}</div><section><h2>功能变化</h2>${renderMarkdown(page.feature)}</section><section><h2>用户操作路径</h2>${userFlow}</section><section><h2>架构影响</h2>${renderMarkdown(page.architectural)}${archFigure}</section>${page.design ? `<section><h2>方案设计</h2>${designBody}</section>` : ""}<section><h2>变更地图</h2>${renderCodeMapGroups(page.codeMap, current, site)}</section><section><h2>检视指引</h2><h3>建议阅读顺序</h3>${reviewOrder}<h3>风险点</h3>${risks}<h3>验收对照</h3>${acceptance}</section><section><h2>验证清单</h2>${verification}</section><section><h2>触及清单</h2>${renderTouches(page.touches, current, site)}</section>`;
+                return renderPage({
+            note: |
+              变更史页同样消费两张图：架构影响章节尾插 architecturalFlowchart，方案设计章节按小节穿插 designFlowcharts，与检视页渲染同源。
+          - snippet: |
+              /* ---- 流程图（dagre 布局 + 内联 SVG，见 walkthrough-flowchart.mjs） ---- */
+              .flowchart-figure { margin:16px 0; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow-x:auto }
+              .flowchart { display:block; max-width:100%; height:auto }
+              .flowchart text { font-family:inherit }
+              .fc-node { fill:var(--surface); stroke:var(--line-strong); stroke-width:1.2 }
+              .fc-shape-stadium { fill:var(--accent-soft); stroke:var(--accent) }
+              .fc-shape-diamond { fill:var(--accent-soft); stroke:var(--accent) }
+              .fc-label { fill:var(--text) }
+              .fc-edge { fill:none; stroke:var(--muted); stroke-width:1.3 }
+              .fc-arrow { fill:var(--muted) }
+              .fc-edge-label { fill:var(--muted) }
+              @media (max-width:860px) {
+            note: |
+              流程图样式全部走站点 CSS 令牌（surface/line-strong/accent-soft），明暗主题自动跟随；横向超长时 figure 滚动而不压扁图。
       - path: scripts/walkthrough-review.mjs
         note: PR 检视 diff 数据层：numstat + 统一 diff hunk 解析 + 注解归位。
         changes:
@@ -725,12 +790,8 @@ codeMap:
                 - 确认演示行为
               architectural: |
                 架构不变。
-              codeMap:
-                - group: 实现
-                  attention: must-read
-                  why: 核心变化
             note: |
-                changeYaml 夹具生成完整 v2 变更页：规模、叙事、must-read/skim 地图、注解、检视指引和 touches 都被 schema 与渲染同时消费。
+              changeYaml 夹具生成完整 v2 变更页：规模、叙事、must-read/skim 地图、注解、检视指引和 touches 都被 schema 与渲染同时消费。
           - snippet: |
               function writeValidSite(root, sourcePath = "src/demo.ts") {
                 write(
@@ -777,6 +838,54 @@ codeMap:
               issue: demo-pr
             note: |
                 review 模式测试创建真实 git 仓库与两文件 diff，并用 must-read/skim 变更页驱动折叠树和逐段 diff 的产物断言。
+          - snippet: |
+              architecturalFlowchart:
+                title: 演示流程
+                nodes:
+                  - id: entry
+                    label: 入口
+                    shape: stadium
+                  - id: core
+                    label: 核心处理
+                  - id: gate
+                    label: 是否通过
+                    shape: diamond
+                  - id: done
+                    label: 完成
+                    shape: rounded
+            note: |
+              夹具为变更页配 architecturalFlowchart：stadium/rect/diamond/rounded 四种 shape 与多节点结构，渲染断言的输入面。
+          - snippet: |
+                edges:
+                  - from: entry
+                    to: core
+                  - from: core
+                    to: gate
+                  - from: gate
+                    to: done
+                    label: 是
+                  - from: gate
+            note: |
+              夹具的 edges 覆盖带标签正向边与回边，marker id 唯一性依赖 idSuffix 派生。
+          - snippet: |
+                  // 流程图：架构影响章节内渲染内联 SVG figure，marker id 页内唯一。
+                  expect(changePage).toContain('class="flowchart-figure"');
+                  expect(changePage).toContain('<svg class="flowchart"');
+                  expect(changePage).toContain('aria-label="演示流程"');
+                  expect(changePage).toContain('id="fc-arrow-demo-change-arch"');
+                  expect(changePage).toContain("否，重试");
+                  expect(changePage).toContain("<figcaption");
+            note: |
+              产物断言锁死流程图交付面：figure 包裹、内联 svg、aria-label、页内唯一 marker id 与题注齐全。
+
+  - group: 流程图渲染器
+    attention: skim
+    why: dagre 自绘 SVG 渲染器与自测试；绘制语义由 walkthrough-flowchart.spec.mjs 逐条锁定，检视扫读即可。
+    files:
+      - path: scripts/walkthrough-flowchart.mjs
+        note: 量尺/折行/dagre 布局/手写 SVG。
+      - path: scripts/walkthrough-flowchart.spec.mjs
+        note: 渲染语义自测试。
   - group: 功能页
     attention: skim
     why: 13 个用户可见功能与登记处互链。
@@ -904,3 +1013,166 @@ touches:
   - feature:multi-window
   - file:walkthrough/manifest.json
   - file:walkthrough/changes/m2-walkthrough-backfill.yaml
+architecturalFlowchart:
+  title: 五层内容到机械保鲜的闭环
+  nodes:
+    - id: five-layer
+      label: YAML 五层内容源
+      shape: stadium
+    - id: lib
+      label: walkthrough-lib 共享事实源
+    - id: anchors
+      label: 源码锚点与行覆盖
+    - id: gates
+      label: verify-walkthrough 门禁
+    - id: build
+      label: build-walkthrough 构建
+    - id: site
+      label: 讲解静态站
+      shape: rounded
+  edges:
+    - from: five-layer
+      to: lib
+    - from: lib
+      to: anchors
+    - from: anchors
+      to: gates
+    - from: lib
+      to: gates
+      label: schema 与对账
+    - from: gates
+      to: build
+    - from: build
+      to: site
+designFlowcharts:
+  - feature: 变更页机制与门禁
+    title: 门禁事实源与自测试
+    nodes:
+      - id: schema
+        label: 封闭 schema 定义
+        shape: stadium
+      - id: lib
+        label: walkthrough-lib 唯一事实源
+      - id: cli
+        label: verify-walkthrough 九条门禁
+      - id: pass
+        label: 绿或红
+        shape: diamond
+      - id: specs
+        label: 两条 spec 自测试
+        shape: rounded
+    edges:
+      - from: schema
+        to: lib
+      - from: lib
+        to: cli
+        label: 消费同一事实源
+      - from: cli
+        to: pass
+      - from: lib
+        to: specs
+  - feature: 渲染与检视模式
+    title: 普通产物叠加本 PR 视角
+    nodes:
+      - id: site-data
+        label: 事实源库数据
+        shape: stadium
+      - id: render
+        label: build-walkthrough 多页渲染
+      - id: review
+        label: --review 检视模式
+      - id: git-diff
+        label: walkthrough-review diff 数据层
+      - id: page
+        label: 本 PR 检视页
+        shape: rounded
+    edges:
+      - from: site-data
+        to: render
+      - from: render
+        to: review
+      - from: git-diff
+        to: review
+        label: numstat 与 hunk
+      - from: review
+        to: page
+  - feature: 内容回填
+    title: 六批文件页与两类聚合页
+    nodes:
+      - id: batch
+        label: 六批文件页并行生成
+        shape: stadium
+      - id: files
+        label: walkthrough/files 注解页
+      - id: features
+        label: features 功能页
+      - id: changes
+        label: changes 变更页
+      - id: meta
+        label: overview 与 architecture
+      - id: manifest
+        label: manifest 定版阈值
+        shape: rounded
+    edges:
+      - from: batch
+        to: files
+      - from: files
+        to: features
+      - from: features
+        to: changes
+        label: 串行补齐
+      - from: changes
+        to: meta
+      - from: meta
+        to: manifest
+  - feature: 保鲜与钩子
+    title: pre-push 保鲜对账
+    nodes:
+      - id: commit
+        label: 提交后 skill 对齐 commit id
+        shape: stadium
+      - id: push
+        label: git push
+      - id: freshness
+        label: 保鲜对账检查
+      - id: stale
+        label: id 落后
+        shape: diamond
+      - id: block
+        label: 拦截并提示
+      - id: allow
+        label: 放行
+        shape: rounded
+    edges:
+      - from: commit
+        to: push
+      - from: push
+        to: freshness
+      - from: freshness
+        to: stale
+      - from: stale
+        to: block
+        label: 是
+      - from: stale
+        to: allow
+        label: 仅元数据对账
+  - feature: 流程件
+    title: 流程三件套随批次落地
+    nodes:
+      - id: issue
+        label: issue 三件套
+        shape: stadium
+      - id: note
+        label: Agent Note
+      - id: plan
+        label: 设计与计划文档
+      - id: pr
+        label: 同 PR 落地
+        shape: rounded
+    edges:
+      - from: issue
+        to: note
+      - from: note
+        to: plan
+      - from: plan
+        to: pr

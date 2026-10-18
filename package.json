@@ -53,6 +53,7 @@
     "@standard-schema/spec": "^1.1.0",
     "@tauri-apps/cli": "^2.9.0",
     "@types/markdown-it": "^14.1.2",
+    "dagre": "^0.8.5",
     "jsdom": "^30.0.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.0",
