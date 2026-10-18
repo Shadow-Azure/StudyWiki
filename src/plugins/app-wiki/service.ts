@@ -87,6 +87,7 @@ export function createWikiService(deps: {
     const evidence = await collectEvidence(root);
     const prevText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
     const prev = prevText === null ? null : parseMachineIndex(prevText);
+    if (evidence.length === 0 && prevText === null) return;
     const probed = new Map<string, ProbeSample>();
     for (const item of evidence) {
       const sample = await probeAbs(`${root}/${item.source}`);

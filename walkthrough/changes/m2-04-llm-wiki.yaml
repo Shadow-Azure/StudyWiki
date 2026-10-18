@@ -77,6 +77,8 @@ architecturalFlowchart:
 design: |
   约束是环境无关、无新运行时依赖、同版本行为一致，并且不能让 agent 手写派生索引。候选包括库内 schema、专用 wiki 工具、向量检索和程序性骨架初始化；最终选择插件内 schema + prompt 贡献缝 + 通用工具。代价是程序必须自己闭合证据、哈希、状态和移动语义。
 
+  未初始化库不应因 prompt 构造产生空索引：refresh 在没有产物且没有旧索引时直接返回，首次对话不会凭空创建 `.study-wiki/`。
+
   #### 判定与索引闭环
 
   图 2 把判定序和索引物化拆开：同路径先给出 fresh/stale，内容哈希再识别 moved，最后才 unknown；索引行始终由现存产物证据驱动，损坏输入丢弃重建。这个顺序避免“移动后的同内容副本”被当成全新源。
@@ -931,6 +933,7 @@ codeMap:
                 const evidence = await collectEvidence(root);
                 const prevText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
                 const prev = prevText === null ? null : parseMachineIndex(prevText);
+                if (evidence.length === 0 && prevText === null) return;
                 const probed = new Map<string, ProbeSample>();
                 for (const item of evidence) {
                   const sample = await probeAbs(`${root}/${item.source}`);
@@ -1842,6 +1845,7 @@ verification:
   - 2026-10-18：pnpm gen:commands — 通过，39 条命令。
   - 2026-10-18：pnpm gen:code-map — 通过，71 个源文件。
   - 2026-10-18：pnpm test — 通过，87 个测试文件 / 768 个用例。
+  - 2026-10-18：pnpm exec vitest run tests/app-wiki-service.test.ts — 通过，11/11（未初始化库不产生空 index.yaml）。
   - 2026-10-18：pnpm verify:layering — 通过。
   - 2026-10-18：pnpm verify:env-independence — 通过。
   - 2026-10-18：pnpm verify:dep-audit — 通过。

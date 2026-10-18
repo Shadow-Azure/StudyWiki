@@ -182,9 +182,10 @@ describe("wiki contextSection", () => {
   });
 
   it("`.study-wiki` 整体删除且无活动文件 → null 且不抛出", async () => {
-    const { filesSvc, workspace } = fakeWikiHost({ activePath: null });
+    const { filesSvc, workspace, files } = fakeWikiHost({ activePath: null });
     const wiki = createWikiService({ files: filesSvc, workspace });
     await expect(wiki.contextSection({ root: "/lib", activeFilePath: null })).resolves.toBeNull();
+    expect(files.has(MACHINE_INDEX)).toBe(false);
   });
 
   it("index 头超预算截断（标记包裹，可独立量长）", async () => {
