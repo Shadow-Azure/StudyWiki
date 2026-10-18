@@ -144,7 +144,7 @@ designFlowcharts:
         to: fresh
         label: 保留/补写记录
     explanation: |
-      上半部分是源状态判定序，菱形按路径和内容哈希依次分流；下半部分说明索引只认产物证据，并由 sources 页路径把产物页绑回同一行。两段分开画是因为状态回答“要不要分析”，reconcile 回答“索引里该有哪些行”；绑定落在“保留/补写记录”这条边里，决定 moved 下次刷新时仍能找到新路径。
+      上半部分是源状态判定序，菱形按路径和内容哈希依次分流；下半部分说明索引只认产物证据，并由 sources 页路径把产物页绑回同一行。两段分开画是因为状态回答“要不要分析”，reconcile 回答“索引里该有哪些行”；绑定落在“保留/补写记录”这条边里，决定 moved 下次刷新时仍能找到新路径，但样本是否刷新仍由哈希一致决定，迁址后再改内容会停在 stale。
 codeMap:
   - group: 知识层核心
     attention: must-read
@@ -1933,7 +1933,7 @@ reviewGuide:
 verification:
   - 2026-10-18：pnpm gen:commands — 通过，39 条命令。
   - 2026-10-18：pnpm gen:code-map — 通过，71 个源文件。
-  - 2026-10-18：pnpm test — 通过，87 个测试文件 / 768 个用例。
+  - 2026-10-18：pnpm exec vitest run --testTimeout=30000 — 通过，87 个测试文件 / 772 个用例。
   - 2026-10-18：pnpm exec vitest run tests/app-wiki-service.test.ts — 通过，11/11（未初始化库不产生空 index.yaml）。
   - 2026-10-18：pnpm verify:layering — 通过。
   - 2026-10-18：pnpm verify:env-independence — 通过。
@@ -1956,4 +1956,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: 633dff6
+skill_gen_commit_id: cd3a054
