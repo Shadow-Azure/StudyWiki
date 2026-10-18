@@ -2,8 +2,8 @@ kind: change
 issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
-  files: 69
-  additions: 7383
+  files: 72
+  additions: 7485
   deletions: 1329
 feature: |
   这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧递归扫描 sources 页，用产物证据和 `probe_source_file` 维护 `.study-wiki/index.yaml`；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
@@ -1818,8 +1818,14 @@ codeMap:
   - group: 测试与验证
     attention: skim
     why: |
-      测试证明状态机、codec、服务和 prompt 缝的行为，检视时按失败语义抽查。
+      测试证明状态机、codec、服务和 prompt 缝的行为；依赖白名单只登记跨平台路径包，检视时按失败语义抽查。
     files:
+      - path: package.json
+        note: |
+          新增 `pathe` 运行时依赖，用同一套 Windows/POSIX 路径语义替代散落的字符串切片。
+      - path: scripts/dep-allowlist.json
+        note: |
+          登记 `pathe`；该包零运行时依赖、浏览器可打包，通过依赖与环境独立门禁。
       - path: tests/agent-prompt.test.ts
         note: |
           覆盖纯函数、假 ctx 与端到端服务行为。
@@ -1967,4 +1973,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: cd3a054
+skill_gen_commit_id: 882554b
