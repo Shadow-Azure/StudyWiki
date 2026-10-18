@@ -19,7 +19,10 @@ scope:
   - tests/**
   - docs/architecture.*
   - docs/commands.*
+  - package.json
+  - pnpm-lock.yaml
   - scripts/code-map.manifest.json
+  - scripts/dep-allowlist.json
   - walkthrough/files/**
   - walkthrough/features/**
   - walkthrough/changes/**
@@ -47,3 +50,4 @@ llm-wiki is the compiled knowledge layer built on the agent (immutable raw + an 
 - `index.yaml` records source path, kind, SHA-256 content hash, size, analysis time, and artifact, and is deterministically rebuilt from surviving artifact evidence.
 - `probe_source_file` provides authorized size/mtime/SHA-256; state classification follows same path, same content hash, then unknown, producing fresh/stale/moved/unknown.
 - Moved sources re-point the index row while building prompt context; text writes create parent directories automatically.
+- Windows/POSIX file-tree paths are normalized so the index path, sources page, and active-source state have identical semantics on all three desktop platforms.
