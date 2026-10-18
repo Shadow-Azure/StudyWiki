@@ -1,4 +1,6 @@
-/** 机器索引 `.study-wiki/index.yaml` 的受限 yaml 子集解析/序列化。 */
+/** 机器索引 `.study-wiki/index.yaml` 的受限 yaml 子集解析/序列化。
+ * 格式是 LF-only：解析器不归一化 CRLF，遇到 CR 按损坏输入拒绝。
+ */
 
 /** 源类型：文本或视频。 */
 export type SourceKind = "text" | "video";
@@ -36,6 +38,8 @@ const FIELDS = [
 type Field = (typeof FIELDS)[number];
 const ITEM_RE = /^  - ([a-zA-Z0-9]+): (.*)$/;
 const CONT_RE = /^    ([a-zA-Z0-9]+): (.*)$/;
+const INVALID_VALUE = Symbol("invalid value");
+type ParsedValue = string | number | null | typeof INVALID_VALUE;
 
 function unquote(raw: string): string | null {
   if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
@@ -59,16 +63,18 @@ function unquote(raw: string): string | null {
 function parseValue(
   field: Field,
   raw: string,
-): string | number | null | undefined {
+): ParsedValue {
   if (field === "artifact" && raw === "null") return null;
   if (field === "size") {
-    if (!/^\d+$/.test(raw)) return undefined;
-    return Number(raw);
+    if (!/^\d+$/.test(raw)) return INVALID_VALUE;
+    const size = Number(raw);
+    return Number.isSafeInteger(size) ? size : INVALID_VALUE;
   }
   if (field === "kind") {
-    return raw === "text" || raw === "video" ? raw : undefined;
+    return raw === "text" || raw === "video" ? raw : INVALID_VALUE;
   }
-  return unquote(raw);
+  const value = unquote(raw);
+  return value === null ? INVALID_VALUE : value;
 }
 
 /** 解析机器索引；任何偏离受限 yaml 子集的输入都返回 null。
@@ -76,6 +82,7 @@ function parseValue(
  * @returns 解析结果；输入损坏时返回 null。
  */
 export function parseMachineIndex(text: string): MachineIndex | null {
+  if (text.includes("\r")) return null;
   const lines = text.split("\n").filter((line) => line.trim() !== "");
   if (lines.length === 0) return null;
   if (lines[0] !== "version: 1") return null;
@@ -113,7 +120,7 @@ export function parseMachineIndex(text: string): MachineIndex | null {
       return null;
     }
     const value = parseValue(key, match[2]);
-    if (value === undefined) return null;
+    if (value === INVALID_VALUE) return null;
     seen.add(key);
     current[key] = value;
   }
@@ -126,6 +133,33 @@ export function parseMachineIndex(text: string): MachineIndex | null {
  * @returns 受限 yaml 子集文本。
  */
 export function serializeMachineIndex(index: MachineIndex): string {
+  if (index === null || index.version !== 1 || !Array.isArray(index.sources)) {
+    throw new Error("machine index must contain version 1 and a sources array");
+  }
+  for (const source of index.sources) {
+    if (
+      source === null ||
+      (source.kind !== "text" && source.kind !== "video") ||
+      !Number.isSafeInteger(source.size) ||
+      source.size < 0 ||
+      typeof source.path !== "string" ||
+      typeof source.sha256 !== "string" ||
+      typeof source.analyzedAt !== "string" ||
+      (source.artifact !== null && typeof source.artifact !== "string")
+    ) {
+      throw new Error("machine index contains an unrepresentable source");
+    }
+    for (const value of [
+      source.path,
+      source.sha256,
+      source.analyzedAt,
+      source.artifact,
+    ]) {
+      if (value !== null && /[\n\r\u2028\u2029]/u.test(value)) {
+        throw new Error("machine index strings must not contain line breaks");
+      }
+    }
+  }
   const quote = (value: string) =>
     `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   const lines = [`version: ${index.version}`, "sources:"];
