@@ -70,12 +70,13 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
 src-tauri/                          Rust 壳
   config.rs                         用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
   grep.rs                           agent grep 原生命令：sidecar ripgrep 裸 argv spawn + rg --json 流式解析 + raw/timeout/limit 预算与 SEARCH_* 错误词表
-  lib.rs                            tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、grep.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、windows.rs）
+  lib.rs                            tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、grep.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、probe.rs、windows.rs）
   llm.rs                            LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口 + 附件大小门禁（单件 20 MB / 聚合 100 MB）（唯一联网点，ureq rustls）
   llm_stream.rs                     流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                           入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                   macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                        插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
+  probe.rs                          源文件探测：授权命令返回大小/mtime/流式 SHA-256，known size+mtime 命中时跳过内容重读
   windows.rs                        窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO
 vendor/                             vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md
 ```

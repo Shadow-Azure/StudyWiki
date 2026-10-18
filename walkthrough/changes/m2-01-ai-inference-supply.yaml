@@ -107,6 +107,7 @@ codeMap:
                   .invoke_handler(tauri::generate_handler![
                       read_tree,
                       read_text_file,
+                      probe_source_file,
                       grep_files,
                       write_text_file,
                       read_binary_file,

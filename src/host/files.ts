@@ -30,6 +30,16 @@ export interface GrepResult {
   truncated: boolean;
 }
 
+/** 源文件探测样本（`probe_source_file` 命令返回）。 */
+export interface ProbeSample {
+  /** 文件大小（字节）。 */
+  size: number;
+  /** 修改时间（Unix 毫秒）。 */
+  mtimeMs: number;
+  /** 流式 SHA-256（小写 hex）。 */
+  sha256: string;
+}
+
 /** Arguments accepted by Tauri 2 raw/JSON invoke; limited to what the files commands use. */
 export type FilesInvokeArgs = Record<string, unknown> | Uint8Array;
 
@@ -124,6 +134,14 @@ export class FilesService {
   /** Add an existing path to this window's dynamic read-only grants; write access stays root-only. */
   authorizeReadPath(path: string): Promise<void> {
     return this.#deps.invoke("authorize_read_path", { path }) as Promise<void>;
+  }
+
+  /** 探测源文件的大小/mtime/SHA-256；known 命中（size+mtimeMs 一致）时跳过哈希。
+   * @param path 绝对路径；库外路径与 `..` 组件被拒绝。
+   * @param known 上次探测样本（缓存快路径）。
+   * @returns 最新探测样本。 */
+  probeSourceFile(path: string, known?: ProbeSample): Promise<ProbeSample> {
+    return this.#deps.invoke("probe_source_file", { path, known }) as Promise<ProbeSample>;
   }
 
   /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */

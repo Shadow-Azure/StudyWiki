@@ -752,6 +752,14 @@ codeMap:
                   return this.#deps.invoke("authorize_read_path", { path }) as Promise<void>;
                 }
 
+              /** 探测源文件的大小/mtime/SHA-256；known 命中（size+mtimeMs 一致）时跳过哈希。
+               * @param path 绝对路径；库外路径与 `..` 组件被拒绝。
+               * @param known 上次探测样本（缓存快路径）。
+               * @returns 最新探测样本。 */
+              probeSourceFile(path: string, known?: ProbeSample): Promise<ProbeSample> {
+                return this.#deps.invoke("probe_source_file", { path, known }) as Promise<ProbeSample>;
+              }
+
                 /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
                 agentSessionPaths(root: string): Promise<string[]> {
                   return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;

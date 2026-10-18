@@ -12,6 +12,7 @@ pub mod config;
 mod grep;
 pub mod llm;
 mod llm_stream;
+mod probe;
 
 #[cfg(target_os = "macos")]
 pub mod native_close;
@@ -622,6 +623,28 @@ fn read_text_file<R: tauri::Runtime>(
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
+/// agent wiki 源探测：读域授权校验后返回大小/mtime/SHA-256；known 命中跳过哈希。
+#[tauri::command]
+fn probe_source_file<R: tauri::Runtime>(
+    window: tauri::Window<R>,
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+    known: Option<crate::probe::ProbeSample>,
+) -> Result<crate::probe::ProbeSample, crate::probe::ProbeError> {
+    let config_root = config::app_studywiki_dir(&app).map_err(|e| crate::probe::ProbeError {
+        code: "PROBE_UNAUTHORIZED".into(),
+        message: e,
+    })?;
+    ensure_authorized_read(&state, window.label(), &path, &config_root).map_err(|e| {
+        crate::probe::ProbeError {
+            code: "PROBE_UNAUTHORIZED".into(),
+            message: e,
+        }
+    })?;
+    crate::probe::probe_file(std::path::Path::new(&path), known)
+}
+
 /// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含当前窗口读 grants。
 #[tauri::command]
 fn grep_files<R: tauri::Runtime>(
@@ -665,6 +688,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
     .invoke_handler(tauri::generate_handler![
         read_tree,
         read_text_file,
+        probe_source_file,
         grep_files,
         write_text_file,
         read_binary_file,
