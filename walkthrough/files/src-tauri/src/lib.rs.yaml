@@ -42,8 +42,6 @@ segments:
       pub mod windows;
 
       /// 递归树节点：`kind` 由扩展名分派（单一决策点），目录递归展开。
-    note: 这里声明 Rust 模块边界，并给出非 macOS 的原生关窗空实现，让上层无需平台分支即可注册命令。模块划分把文件访问、配置、LLM、插件、搜索和窗口能力收敛到壳层。
-  - snippet: |
       #[derive(Serialize)]
       #[serde(rename_all = "camelCase")]
       pub struct FileNode {
@@ -113,9 +111,13 @@ segments:
           Ok(out)
       }
 
-    note: 这里定义前后端共享的 FileNode，并在 Rust 侧判定 Markdown、视频、Excel 类型。目录遍历跳过隐藏项，按文件名排序后递归建树，形成 read_tree 的稳定基础形状。
-  - snippet: |
       fn std_write(path: &Path, contents: &str) -> Result<(), String> {
+          if let Some(parent) = path.parent() {
+              if !parent.as_os_str().is_empty() {
+                  fs::create_dir_all(parent)
+                      .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+              }
+          }
           fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
       }
 
@@ -169,8 +171,6 @@ segments:
       fn user_sessions_dir(home: &Path) -> PathBuf {
           home.join(".study-wiki").join("sessions")
       }
-    note: 这里实现文本写入、临时文件命名和 rename 的原子写缝，并收敛 JSONL 追加与用户级会话根。rename 失败时清理临时文件；JSONL 逐行带换行直接追加，会话日志固定落在学习库外，避免 grep 回声。
-  - snippet: |
 
       /// FNV-1a 64：跨启动稳定的短路径 hash，不依赖 Rust HashMap 迭代种子。
       fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -289,8 +289,6 @@ segments:
       /// assetProtocol 的 allow_directory 授权同源；含 `..` 组件直接拒（前缀组件可
       /// 恰匹配 root 而 OS 解析后落在 root 外，必须在词法层收口）；symlink 跟随
       /// 不在本层防线（停机坪）。
-    note: 这里把工作区根稳定映射到 agent 会话目录，并迁移旧 library 会话。生成文件先做根域与存在性检查，迁移只在目标不存在时复制；目录名 FNV 哈希避免路径字符与长度问题。
-  - snippet: |
       fn path_authorized_with(
           reg: &windows::WindowRegistry,
           path: &str,
@@ -399,8 +397,6 @@ segments:
       /// 递归扫描打开的库根，返回整棵文件树。错误携带 OS 失败原文。
       /// 路径必须落在窗口注册表已授权 root 之内（欢迎态无授权即拒——
       /// 命令面与 assetProtocol 运行期授权同源收口）。
-    note: 这里收敛路径授权：先取窗口 root 与动态 grants，再做词法组件级检查；symlink 跟随不在该层防线，动态授权处仅 canonicalize 一次。raw IPC 请求从专用 header 解码路径，让二进制命令也能强制走同一授权缝。
-  - snippet: |
       #[tauri::command]
       fn read_tree(
           app: tauri::AppHandle,
@@ -520,8 +516,6 @@ segments:
       }
 
       /// 列出某学习库在用户级会话域中的 JSONL 文件；调用前迁移旧库内文件。
-    note: 这里实现文件树、文本、二进制和动态只读授权命令。所有读写都先过授权；binary 命令走 raw Response，授权读目录时把目录加入 asset scope，失败路径会移除 grant，避免授权滞留。
-  - snippet: |
       #[tauri::command]
       fn agent_session_paths(
           app: tauri::AppHandle,
@@ -628,8 +622,6 @@ segments:
       /// Reads a whole file as a UTF-8 string — the markdown viewer's data source.
       /// Errors carry the OS failure verbatim.
       /// 读域为当前窗口 root + 当前窗口动态读 grants（欢迎态无授权即拒）。
-    note: 这里暴露 agent 会话路径与 JSONL 读写命令。路径解析、写入、追加和删除全部复用前面授权与原子 IO 缝，让会话持久化不绕过文件安全边界。
-  - snippet: |
       #[tauri::command]
       fn read_text_file<R: tauri::Runtime>(
           app: tauri::AppHandle<R>,
@@ -695,8 +687,6 @@ segments:
       }
 
       /// 装配发布运行的完整 Tauri builder。
-    note: 这里是文本读取与 agent 搜索的命令包装。read_text_file 继续走授权，grep_files 先归一化 root、检查 sidecar，再把预算参数交给 grep 模块，前端只见统一错误形状。
-  - snippet: |
       pub fn app_builder() -> tauri::Builder<tauri::Wry> {
           configure_window_lifecycle(
               tauri::Builder::<tauri::Wry>::new().plugin(tauri_plugin_dialog::init()),
@@ -823,8 +813,6 @@ segments:
           });
       }
 
-    note: 这里总装 tauri::Builder：注册文件、窗口、配置、插件、LLM 与 grep 命令，接线窗口销毁，安装 macOS 关窗 hook。raw binary builder 插入自定义协议处理；run 建立窗口注册表并启动应用。
-  - snippet: |
       #[cfg(test)]
       mod tests {
           use super::*;
@@ -1077,6 +1065,27 @@ segments:
           }
 
           #[test]
+          fn std_write_creates_missing_parent_dirs() {
+              let dir = std::env::temp_dir().join(format!("sw-stdwrite-{}", std::process::id()));
+              let _ = std::fs::remove_dir_all(&dir);
+              let p = dir.join("a/b/c/page.md");
+              std_write(&p, "body").unwrap();
+              assert_eq!(std::fs::read_to_string(&p).unwrap(), "body");
+              std::fs::remove_dir_all(&dir).unwrap();
+          }
+
+          #[test]
+          fn std_write_errors_when_parent_component_is_file() {
+              let dir = std::env::temp_dir().join(format!("sw-stdwrite-bad-{}", std::process::id()));
+              let _ = std::fs::remove_dir_all(&dir);
+              std::fs::create_dir_all(&dir).unwrap();
+              std::fs::write(dir.join("blocker"), b"x").unwrap();
+              let p = dir.join("blocker/page.md");
+              assert!(std_write(&p, "body").is_err());
+              std::fs::remove_dir_all(&dir).unwrap();
+          }
+
+          #[test]
           fn write_text_file_roundtrip() {
               let dir = fixture_tree();
               let p = dir.join("Sub/a.md");
@@ -1085,5 +1094,5 @@ segments:
               std::fs::remove_dir_all(&dir).unwrap();
           }
       }
-
-    note: 这里用内存和临时目录覆盖类型判定、原子写、会话迁移、路径授权、header 解码与关键命令。测试保证授权边界、失败清理和 raw IPC 测试装配不因重构回退。
+    note: |
+      Tauri 总装层把授权根上的文件树/读写/probe/grep、用户级 agent JSONL、raw binary IPC、窗口/插件命令和 LLM 命令统一注册到 Rust 面；MockRuntime 与测试覆盖这些边界，前端插件不得绕过该面触达系统。

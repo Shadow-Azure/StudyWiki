@@ -103,11 +103,13 @@ export type FileNode = {
 };
 ```
 
-命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
+命令清单（含签名）见 [commands.md](commands.md) 生成区。
 
 数据流：树读取——选文件夹→`read_tree` 定 kind→view-filetree 渲染；打开——`workspace.openFile` 过守卫后按 kind 分派：markdown、excel、视频各走专用面，other 由 shell 提示；保存广播 `fs://changed`；换根先守卫确认再 Rust 授权登记；建窗由 Rust 创建，新窗 bootstrap 领 root 后激活插件；外置插件安装/启停/重载/回退/移除经 plugin-manager，`ext:` 走唯一 blob 缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理由插件发起，宿主路由 endpoint 并做能力门禁，Rust 只读配置与传输 HTTPS；流式经 Channel，`llm_chat_abort` 置停。
 
 Agent 回合：`ctx.agent` 经 `ctx.llm.chatStream` 带 tools；`tool_calls` 串行，四工具经 `ctx.files`，写先审批、越界读授权后重试（契约见 [agent.md](plugins/agent.md)）。
+
+llm-wiki：`ctx.wiki` 判态并物化 `.study-wiki/index.yaml`；wiki 页由 agent 维护，schema 入 prompt。
 
 ## 关键决策点
 

@@ -103,11 +103,13 @@ export type FileNode = {
 };
 ```
 
-The authoritative command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
+The command surface (with signatures) lives in the generated region of [commands.en.md](commands.en.md).
 
 Data flows: tree reading — pick a folder→`read_tree` assigns kind→view-filetree renders; opening — `workspace.openFile` passes the guard and dispatches by kind to the markdown, Excel, video, or hint surface; saving broadcasts `fs://changed`; root switching confirms with the guard before Rust authorization/registration; Rust creates windows, then the new bootstrap fetches the root and activates plugins; external plugin install/toggle/reload/rollback/remove goes through plugin-manager, and `ext:` uses the sole blob seam (details in [dynamic.en.md](plugins/dynamic.en.md)); plugins initiate LLM inference, the host routes the endpoint and gates capabilities, and Rust only reads configuration and transports HTTPS; streaming goes through a Channel, and `llm_chat_abort` sets the stop flag.
 
 Agent turn: `ctx.agent` calls `ctx.llm.chatStream` with tools. `tool_calls` are fed back serially; the four tools run through `ctx.files`, writes pass approval, and outside reads are retried after authorization (contract in [agent.en.md](plugins/agent.en.md)).
+
+llm-wiki: `ctx.wiki` classifies sources and materializes `.study-wiki/index.yaml`; the agent maintains wiki pages, and the schema enters the prompt.
 
 ## Key decision points
 

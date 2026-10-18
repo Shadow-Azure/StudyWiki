@@ -1,0 +1,34 @@
+kind: file-page
+source: src/plugins/app-wiki/index.ts
+summary: app-wiki cordis 插件：注入 agent/files/workspace，发布 ctx.wiki 并注册/注销 prompt 贡献段与事件失效
+segments:
+  - snippet: |
+      import type { Context } from "cordis";
+      import { createWikiService } from "./service";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "app-wiki";
+      /** Service keys awaited before apply runs. */
+      export const inject = ["agent", "files", "workspace"];
+
+      /** Publish the wiki knowledge layer as `ctx.wiki`; register the prompt section.
+       * @param ctx Host context with the three injected services.
+       * @returns Disposer used by cordis lifecycle teardown.
+       */
+      export function apply(ctx: Context): () => void {
+        const wiki = createWikiService({ files: ctx.files, workspace: ctx.workspace });
+        ctx.reflect.provide("wiki", wiki);
+        const unregister = ctx.agent.registerPromptSection(
+          "wiki",
+          (input) => wiki.contextSection(input),
+        );
+        const offRoot = ctx.workspace.events.on("root-changed", () => wiki.invalidate());
+        const offFile = ctx.workspace.events.on("file-opened", () => wiki.invalidate());
+        return () => {
+          offRoot();
+          offFile();
+          unregister();
+        };
+      }
+    note: |
+      插件装配是 wiki 层的唯一运行时入口：创建服务、发布 ctx.wiki、注册 prompt 贡献段，并监听换根/打开文件事件触发缓存失效。反注册顺序先拆事件，再拆 prompt 贡献段。

@@ -1,0 +1,1575 @@
+kind: change
+issue: m2-04-llm-wiki
+title: llm-wiki 知识层（#31）
+scale:
+  files: 69
+  additions: 6760
+  deletions: 1420
+feature: |
+  这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧用产物证据和 `probe_source_file` 维护 `.study-wiki/index.yaml`，源变更、移动和未分析都有确定状态。
+
+  ![llm-wiki 数据流](../assets/m2-04-llm-wiki/knowledge-flow.svg)
+
+  *图 1：从用户动作到 wiki 页面、机器索引与 system prompt 的闭环。*
+userFlow:
+  - 用户打开文本源并要求 agent 分析；系统通过 prompt 收到“活动文件尚未分析”，agent 先读原文。
+  - agent 按确认的要点写入 sources/concepts/entities 页面；每次写仍走审批，目录不存在时由写命令自动创建。
+  - 用户后续提问；agent 先读 llm-wiki/index.md 定位相关页，再带 [[wikilink]] 引用作答，未覆盖时明说并提议 ingest。
+  - 用户修改源文件后提问；prompt 显示“已变更，请重新 ingest”，避免旧结论被当作最新知识。
+  - 用户把源文件移动后提问；程序按相同内容哈希识别 moved，把索引行重指到新路径并按已分析继续回答。
+  - 用户打开视频源；系统明确提示转录能力等待 m3，不伪造主题或时间戳。
+architectural: |
+  新增 `app-wiki` 内置插件发布 `ctx.wiki`，并经 `ctx.agent.registerPromptSection` 进入 system prompt；这保持了插件只经宿主服务的分层。wiki 页面由 agent 写，机器索引由服务独占写，二者通过现存产物证据关联。
+
+  链路沿图 1：活动源经 files 服务进入 Rust probe；probe 返回 size/mtime/SHA-256，app-wiki 先物化 index.yaml，再按同路径、同哈希、unknown 判定 fresh/stale/moved/unknown。状态、index 头部和 schema 组成 prompt 段，驱动下一轮 ingest/query/lint。
+architecturalFlowchart:
+  title: llm-wiki 数据流
+  direction: LR
+  nodes:
+    - id: user
+      label: 用户动作
+      shape: rounded
+    - id: agent
+      label: agent
+      shape: rounded
+    - id: wiki-service
+      label: app-wiki 服务
+      shape: rect
+    - id: probe
+      label: Rust probe 命令
+      shape: rect
+    - id: index
+      label: 机器索引
+      shape: rect
+    - id: pages
+      label: wiki 页面
+      shape: rect
+    - id: prompt
+      label: system prompt
+      shape: rect
+  edges:
+    - from: user
+      to: agent
+      label: 发起分析/提问/lint
+    - from: agent
+      to: wiki-service
+      label: 读取 prompt 段
+    - from: wiki-service
+      to: probe
+      label: 探测活动源
+    - from: probe
+      to: prompt
+      label: 返回状态证据
+    - from: wiki-service
+      to: index
+      label: 确定性物化
+    - from: wiki-service
+      to: pages
+      label: 经 agent 写入
+    - from: pages
+      to: index
+      label: 产物证据驱动行存在
+    - from: prompt
+      to: agent
+      label: 注入 schema 与状态
+  explanation: |
+    图表达闭环而不是单向管道：agent 写 wiki 页面，页面作为产物证据让服务生成机器索引；下一回合索引和 probe 状态又作为 prompt 回到 agent。这样人工/LLM 只维护可读产物，程序负责可验证登记。
+design: |
+  约束是环境无关、无新运行时依赖、同版本行为一致，并且不能让 agent 手写派生索引。候选包括库内 schema、专用 wiki 工具、向量检索和程序性骨架初始化；最终选择插件内 schema + prompt 贡献缝 + 通用工具。代价是程序必须自己闭合证据、哈希、状态和移动语义。
+
+  #### 判定与索引闭环
+
+  图 2 把判定序和索引物化拆开：同路径先给出 fresh/stale，内容哈希再识别 moved，最后才 unknown；索引行始终由现存产物证据驱动，损坏输入丢弃重建。这个顺序避免“移动后的同内容副本”被当成全新源。
+designFlowcharts:
+  - feature: 判定与索引闭环
+    title: 判定与索引闭环
+    direction: TB
+    nodes:
+      - id: sample
+        label: probe 样本
+        shape: rect
+      - id: path
+        label: 同路径记录
+        shape: diamond
+      - id: hash
+        label: 同内容哈希记录
+        shape: diamond
+      - id: fresh
+        label: fresh
+        shape: stadium
+      - id: stale
+        label: stale
+        shape: stadium
+      - id: moved
+        label: moved
+        shape: stadium
+      - id: unknown
+        label: unknown
+        shape: stadium
+      - id: evidence
+        label: 产物证据
+        shape: rect
+      - id: reconcile
+        label: reconcileIndex
+        shape: rect
+    edges:
+      - from: sample
+        to: path
+        label: 输入
+      - from: path
+        to: fresh
+        label: 哈希相同
+      - from: path
+        to: stale
+        label: 哈希不同
+      - from: path
+        to: hash
+        label: 无路径记录
+      - from: hash
+        to: moved
+        label: 找到记录
+      - from: hash
+        to: unknown
+        label: 无记录
+      - from: evidence
+        to: reconcile
+        label: 现存 sources 页
+      - from: reconcile
+        to: fresh
+        label: 保留/补写记录
+    explanation: |
+      上半部分是源状态判定序，菱形按路径和内容哈希依次分流；下半部分说明索引只认产物证据。两段分开画是因为状态回答“要不要分析”，reconcile 回答“索引里该有哪些行”。
+codeMap:
+  - group: 知识层核心
+    attention: must-read
+    why: |
+      状态判定、索引物化、schema 注入和源探测是本 PR 的行为心脏。
+    files:
+      - path: src/plugins/app-wiki/index-yaml.ts
+        note: |
+          机器索引 codec 是程序独占格式的唯一读写边界。
+        changes:
+          - snippet: |
+              /** 机器索引 `.study-wiki/index.yaml` 的受限 yaml 子集解析/序列化。
+               * 格式是 LF-only：解析器不归一化 CRLF，遇到 CR 按损坏输入拒绝。
+               */
+
+            note: |
+              数据类型固定六字段，值必须能安全落在受限 YAML 子集内。
+          - snippet: |
+              /** 源类型：文本或视频。 */
+            note: |
+              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
+          - snippet: |
+              export type SourceKind = "text" | "video";
+
+            note: |
+              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null。
+          - snippet: |
+              /** 一条源记录：源 → 产物映射 + 内容哈希 + 分析时间。 */
+            note: |
+              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
+          - snippet: |
+              export interface SourceRecord {
+                /** 库相对路径。 */
+                path: string;
+                /** 源类型：文本或视频（决定 ingest 路径）。 */
+                kind: SourceKind;
+                /** 源内容 SHA-256（小写 hex）。 */
+                sha256: string;
+                /** 文件大小（字节）。 */
+                size: number;
+                /** 最近一次分析完成时间（ISO）。 */
+                analyzedAt: string;
+                /** 产物目录（库相对路径）；文本源为 null（产物即源本身）。 */
+                artifact: string | null;
+            note: |
+              记录必须恰好六个字段且不重复；任何未知形状立即返回 null。
+          - snippet: |
+              }
+
+            note: |
+              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
+          - snippet: |
+              /** 机器索引顶层结构。 */
+            note: |
+              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
+          - snippet: |
+              export interface MachineIndex {
+                version: 1;
+                sources: SourceRecord[];
+            note: |
+              数据类型固定六字段，值必须能安全落在受限 YAML 子集内。
+          - snippet: |
+              }
+
+            note: |
+              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
+          - snippet: |
+              const FIELDS = [
+                "path",
+                "kind",
+                "sha256",
+                "size",
+                "analyzedAt",
+                "artifact",
+            note: |
+              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null。
+          - snippet: |
+              ] as const;
+            note: |
+              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
+          - snippet: |
+              type Field = (typeof FIELDS)[number];
+            note: |
+              记录必须恰好六个字段且不重复；任何未知形状立即返回 null。
+          - snippet: |
+              const ITEM_RE = /^  - ([a-zA-Z0-9]+): (.*)$/;
+            note: |
+              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
+          - snippet: |
+              const CONT_RE = /^    ([a-zA-Z0-9]+): (.*)$/;
+            note: |
+              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
+          - snippet: |
+              const INVALID_VALUE = Symbol("invalid value");
+            note: |
+              数据类型固定六字段，值必须能安全落在受限 YAML 子集内。
+          - snippet: |
+              type ParsedValue = string | number | null | typeof INVALID_VALUE;
+
+            note: |
+              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
+          - snippet: |
+              function unquote(raw: string): string | null {
+                if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
+                const inner = raw.slice(1, -1);
+                let result = "";
+                for (let index = 0; index < inner.length; index += 1) {
+                  const char = inner[index];
+                  if (char === '"') return null;
+                  if (char !== "\\") {
+                    result += char;
+                    continue;
+                  }
+                  const escaped = inner[index + 1];
+                  if (escaped !== "\\" && escaped !== '"') return null;
+                  result += escaped;
+                  index += 1;
+                }
+                return result;
+            note: |
+              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null。
+          - snippet: |
+              }
+
+            note: |
+              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
+          - snippet: |
+              function parseValue(
+                field: Field,
+                raw: string,
+            note: |
+              记录必须恰好六个字段且不重复；任何未知形状立即返回 null。
+          - snippet: |
+              ): ParsedValue {
+                if (field === "artifact" && raw === "null") return null;
+                if (field === "size") {
+                  if (!/^\d+$/.test(raw)) return INVALID_VALUE;
+                  const size = Number(raw);
+                  return Number.isSafeInteger(size) ? size : INVALID_VALUE;
+                }
+                if (field === "kind") {
+                  return raw === "text" || raw === "video" ? raw : INVALID_VALUE;
+                }
+                const value = unquote(raw);
+                return value === null ? INVALID_VALUE : value;
+            note: |
+              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
+          - snippet: |
+              }
+
+            note: |
+              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
+          - snippet: |
+              /** 解析机器索引；任何偏离受限 yaml 子集的输入都返回 null。
+               * @param text 机器索引文件文本。
+               * @returns 解析结果；输入损坏时返回 null。
+               */
+            note: |
+              数据类型固定六字段，值必须能安全落在受限 YAML 子集内。
+          - snippet: |
+              export function parseMachineIndex(text: string): MachineIndex | null {
+                if (text.includes("\r")) return null;
+                const lines = text.split("\n").filter((line) => line.trim() !== "");
+                if (lines.length === 0) return null;
+                if (lines[0] !== "version: 1") return null;
+                const rest = lines.slice(1);
+                if (rest.length === 0) return null;
+                if (rest[0] === "sources: []") {
+                  return rest.length === 1 ? { version: 1, sources: [] } : null;
+                }
+                if (rest[0] !== "sources:") return null;
+
+                const sources: SourceRecord[] = [];
+                let current: Partial<Record<Field, string | number | null>> | null = null;
+                const seen = new Set<Field>();
+                const flush = (): boolean => {
+                  if (current === null) return true;
+                  if (seen.size !== FIELDS.length) return false;
+                  sources.push(current as SourceRecord);
+                  return true;
+            note: |
+              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
+          - snippet: |
+              if (!flush()) return null;
+              return { version: 1, sources };
+            note: |
+              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null。
+          - snippet: |
+              }
+
+            note: |
+              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
+          - snippet: |
+              /** 序列化机器索引；输出可被 `parseMachineIndex` 恒等还原。
+               * @param index 机器索引。
+               * @returns 受限 yaml 子集文本。
+               */
+            note: |
+              记录必须恰好六个字段且不重复；任何未知形状立即返回 null。
+          - snippet: |
+              export function serializeMachineIndex(index: MachineIndex): string {
+                if (index === null || index.version !== 1 || !Array.isArray(index.sources)) {
+                  throw new Error("machine index must contain version 1 and a sources array");
+                }
+                for (const source of index.sources) {
+                  if (
+                    source === null ||
+                    (source.kind !== "text" && source.kind !== "video") ||
+                    !Number.isSafeInteger(source.size) ||
+                    source.size < 0 ||
+                    typeof source.path !== "string" ||
+                    typeof source.sha256 !== "string" ||
+                    typeof source.analyzedAt !== "string" ||
+                    (source.artifact !== null && typeof source.artifact !== "string")
+                  ) {
+                    throw new Error("machine index contains an unrepresentable source");
+                  }
+                  for (const value of [
+                    source.path,
+                    source.sha256,
+            note: |
+              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
+          - snippet: |
+              return `${lines.join("\n")}\n`;
+            note: |
+              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
+          - snippet: |
+              }
+            note: |
+              数据类型固定六字段，值必须能安全落在受限 YAML 子集内。
+      - path: src/plugins/app-wiki/index.ts
+        note: |
+          插件装配把服务、prompt 贡献段和缓存失效事件接成生命周期。
+        changes:
+          - snippet: |
+              import type { Context } from "cordis";
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              import { createWikiService } from "./service";
+
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              /** Plugin id in the manifest and the static module table. */
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              export const name = "app-wiki";
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              /** Service keys awaited before apply runs. */
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              export const inject = ["agent", "files", "workspace"];
+
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              /** Publish the wiki knowledge layer as `ctx.wiki`; register the prompt section.
+               * @param ctx Host context with the three injected services.
+               * @returns Disposer used by cordis lifecycle teardown.
+               */
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              export function apply(ctx: Context): () => void {
+                const wiki = createWikiService({ files: ctx.files, workspace: ctx.workspace });
+                ctx.reflect.provide("wiki", wiki);
+                const unregister = ctx.agent.registerPromptSection(
+                  "wiki",
+                  (input) => wiki.contextSection(input),
+                );
+                const offRoot = ctx.workspace.events.on("root-changed", () => wiki.invalidate());
+                const offFile = ctx.workspace.events.on("file-opened", () => wiki.invalidate());
+                return () => {
+                  offRoot();
+                  offFile();
+                  unregister();
+                };
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+          - snippet: |
+              }
+            note: |
+              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+      - path: src/plugins/app-wiki/schema.ts
+        note: |
+          schema 是插件持有的 LLM 行为契约，不复制到库内。
+        changes:
+          - snippet: |
+              /** llm-wiki 维护契约（schema v1）：插件持有的行为契约，经 prompt 贡献缝注入。
+               * 设计约束：改 schema 即改 LLM 行为，不改代码；≤ 6000 字符（token 预算）；库内不复制本文件。 */
+
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              /** llm-wiki 维护契约版本。 */
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              export const WIKI_SCHEMA_VERSION = 1;
+
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              /** llm-wiki 维护契约全文，注入 system prompt。 */
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              export const WIKI_SCHEMA = `# llm-wiki 维护契约（schema v1）
+
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              你是本学习库的 llm-wiki 维护者：你读 wiki，也写 wiki；用户只读（除非明确要求参与）。
+
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              ## 结构约定
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              - 库根下 \`.study-wiki/llm-wiki/\` 是你全权维护的 wiki 层；\`.study-wiki/index.yaml\` 与 \`.study-wiki/raw/\` 是程序维护的，绝对不要手改。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              - wiki 层布局：\`index.md\`（内容目录，每次操作后更新）、\`log.md\`（只追加的操作日志）、\`overview.md\`（全局综合判断）、\`sources/\`（每源一页）、\`concepts/\`、\`entities/\`。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              - 每个 wiki 页必须有 YAML frontmatter：
+                ---
+                title: 页面标题
+                type: source | concept | entity
+                source: 源库相对路径（仅 source 页必填）
+                created: YYYY-MM-DD
+                updated: YYYY-MM-DD
+                confidence: high | medium | low
+                related: ["其他页路径或 [[wikilink]]"]
+                ---
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              - 页间交叉引用用 [[wikilink]]；sources 页路径按 \`<源相对路径去扩展名>.md\` 嵌套镜像（如 \`sources/courses/rust/ownership.md\`）。
+
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              ## sources 页必备两节
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              1. \`## 摘要\`：3-8 句精炼摘要。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              2. \`## 主题对照\`：主题 ↔ 位置对照表。文本源用章节/行号区间；视频源（m3 起）用时间戳区间，数据来自 \`.study-wiki/raw/<源>/topics.md\`（存在时）。格式 \`| 主题 | 位置 |\`，位置如 \`L12-L48\` 或 \`00:03:20-00:07:45\`。
+
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              ## ingest 流程（用户要求分析某源时）
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              1. 确认源状态（活动文件或用户指定路径）；程序提示会说明未分析/已过期。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              2. 通读源（大文件分段 read）。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              3. 与用户确认要点（用户赶时间可直接做，做完汇报）。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              4. 建/更新 sources 页（含主题对照）。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              5. 更新相关 concepts/entities 页（新页带完整 frontmatter）。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              6. 更新 index.md（目录反映全部页面）；log.md 追加一行：时间、动作、涉及页。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              7. 汇报：改了哪些页、新增哪些概念、有哪些矛盾存疑。
+
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              ## query 流程（用户提问时）
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              1. 先读 \`llm-wiki/index.md\` 定位相关页；时间戳问题先查对应 sources 页的主题对照节。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              2. 读相关页（必要时含 \`.study-wiki/raw/\` 下的 transcript/topics）。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              3. 作答带 [[wikilink]] 引用；wiki 未覆盖时明说「wiki 未覆盖，基于原文回答」，事后提议 ingest。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              4. 有价值的结论主动提议归档为新页/更新旧页，经用户确认再写。
+
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              ## lint 流程（用户说 lint / 检查时）
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              1. 页面间矛盾（同一概念多处表述冲突）。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              2. 孤儿页：无任何入链的页。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              3. 被多页提及但没有独立页的概念（候选新概念）。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              4. 被新来源取代的过时结论（结合 log.md 与 frontmatter 的 updated）。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              5. index.md 与实际页面列表的不一致。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              6. 输出问题清单 + 建议修复顺序；只修用户点头的项。
+
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              ## 视频源（m3 前）
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              视频源暂无转录能力：只报告状态，不伪造内容；可建议用户先记笔记或等待转录里程碑。
+
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              ## 纪律
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              - 写 wiki 页用 write/edit 工具，目标路径必须在 \`.study-wiki/llm-wiki/\` 内（write 会自动建目录）。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              - 不修改 \`.study-wiki/index.yaml\`、\`.study-wiki/raw/\` 与库内原文。
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+          - snippet: |
+              - 不确定的信息标 confidence: low，不编造。
+            note: |
+              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+          - snippet: |
+              `;
+            note: |
+              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+      - path: src/plugins/app-wiki/service.ts
+        note: |
+          wiki 服务把源状态、产物证据和 prompt 上下文收在一个闭环里。
+        changes:
+          - snippet: |
+              import type { FilesService, ProbeSample } from "../../host/files";
+            note: |
+              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
+          - snippet: |
+              import type { WorkspaceFacade } from "../../host/workspace";
+            note: |
+              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
+          - snippet: |
+              import type { PromptSectionInput } from "../agent-core/service";
+            note: |
+              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
+          - snippet: |
+              import { WIKI_SCHEMA } from "./schema";
+            note: |
+              对缺 probe 的证据保留旧分析时间，索引文本变化时才写盘。
+          - snippet: |
+              import {
+                classifySource,
+                createProbeCache,
+                kindFromPath,
+                parseMachineIndex,
+                reconcileIndex,
+                serializeMachineIndex,
+                type ArtifactEvidence,
+                type MachineIndex,
+                type SourceRecord,
+                type SourceState,
+            note: |
+              contextSection 无根时返回 null；有活动文件时先刷新索引并判定状态。
+          - snippet: |
+              } from "./state";
+
+            note: |
+              moved 分支重写索引 path，但向 prompt 报告为已分析，避免无谓重跑。
+          - snippet: |
+              const SOURCES_DIR = ".study-wiki/llm-wiki/sources";
+            note: |
+              index.md 头部按行数和字符双预算截断，防止上下文无限膨胀。
+          - snippet: |
+              const INDEX_MD = ".study-wiki/llm-wiki/index.md";
+            note: |
+              sourceState 和 invalidate 是程序消费者的窄出口。
+          - snippet: |
+              const INDEX_YAML = ".study-wiki/index.yaml";
+            note: |
+              路径、状态句、sources 页路径和 frontmatter 解析保持库相对路径稳定。
+          - snippet: |
+              const HEAD_LINE_BUDGET = 80;
+            note: |
+              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
+          - snippet: |
+              const HEAD_CHAR_BUDGET = 4096;
+            note: |
+              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
+          - snippet: |
+              const TRUNCATION_SUFFIX = "…（截断）";
+
+            note: |
+              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
+          - snippet: |
+              /** wiki 知识层服务：源状态判定与 prompt 贡献段。 */
+            note: |
+              对缺 probe 的证据保留旧分析时间，索引文本变化时才写盘。
+          - snippet: |
+              export interface WikiService {
+                /** 某库相对路径源的分析状态（内部先物化索引再判定）。 */
+                sourceState(relPath: string): Promise<SourceState>;
+                /** prompt 贡献段：wiki 未初始化且无库内活动文件时返回 null。 */
+                contextSection(input: PromptSectionInput): Promise<string | null>;
+                /** 失效 probe 缓存与根记忆（换库根/活动文件切换时由事件触发）。 */
+                invalidate(): void;
+            note: |
+              contextSection 无根时返回 null；有活动文件时先刷新索引并判定状态。
+          - snippet: |
+              }
+
+            note: |
+              moved 分支重写索引 path，但向 prompt 报告为已分析，避免无谓重跑。
+          - snippet: |
+              /** 组装 wiki 服务。
+               * @param deps 文件通道与窗口工作区投影。
+               * @returns 可注入 cordis 的 wiki 服务实例。
+               */
+            note: |
+              index.md 头部按行数和字符双预算截断，防止上下文无限膨胀。
+          - snippet: |
+              export function createWikiService(deps: {
+                files: FilesService;
+                workspace: WorkspaceFacade;
+            note: |
+              sourceState 和 invalidate 是程序消费者的窄出口。
+          - snippet: |
+              }): WikiService {
+                const cache = createProbeCache();
+                const knownSamples = new Map<string, ProbeSample>();
+                let lastRoot: string | null = null;
+
+                async function probeAbs(path: string): Promise<ProbeSample | null> {
+                  try {
+                    const fresh = await deps.files.probeSourceFile(path, knownSamples.get(path));
+                    const sample = cache.get(path, fresh);
+                    knownSamples.set(path, sample);
+                    return sample;
+                  } catch {
+                    knownSamples.delete(path);
+                    return null;
+                  }
+                }
+
+                async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
+                  const evidence = new Map<string, number>();
+                  let nodes;
+            note: |
+              路径、状态句、sources 页路径和 frontmatter 解析保持库相对路径稳定。
+          - snippet: |
+              return {
+                async sourceState(relPath) {
+                  const root = deps.workspace.root;
+                  if (root === null) return { state: "unknown" };
+                  await refresh(root);
+                  const text = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
+                  const index = text === null ? null : parseMachineIndex(text);
+                  const sample = await probeAbs(`${root}/${relPath}`);
+                  return sample === null ? { state: "unknown" } : classifySource(index, relPath, sample);
+                },
+                contextSection,
+                invalidate() {
+                  cache.invalidate();
+                  knownSamples.clear();
+                  lastRoot = null;
+                },
+              };
+            note: |
+              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
+          - snippet: |
+              }
+
+            note: |
+              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
+          - snippet: |
+              function toRel(root: string, path: string | null): string | null {
+                if (path === null || !path.startsWith(`${root}/`)) return null;
+                const rel = path.slice(root.length + 1);
+                return rel.length === 0 ? null : rel;
+            note: |
+              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
+          - snippet: |
+              }
+
+            note: |
+              对缺 probe 的证据保留旧分析时间，索引文本变化时才写盘。
+          - snippet: |
+              function stateLine(state: SourceState, rel: string): string {
+                if (state.state === "fresh") {
+                  return `活动文件已分析：${sourcesPagePath(state.record.path)}`;
+                }
+                if (state.state === "stale") {
+                  return `活动文件已变更，请重新 ingest：${rel}`;
+                }
+                if (kindFromPath(rel) === "video") {
+                  return `活动文件尚未分析；转录能力后续里程碑提供：${rel}`;
+                }
+                return `活动文件尚未分析：${rel}`;
+            note: |
+              contextSection 无根时返回 null；有活动文件时先刷新索引并判定状态。
+          - snippet: |
+              }
+
+            note: |
+              moved 分支重写索引 path，但向 prompt 报告为已分析，避免无谓重跑。
+          - snippet: |
+              function sourcesPagePath(source: string): string {
+                const withoutExtension = source.replace(/\.[^./\\]+$/u, "");
+                return `${SOURCES_DIR}/${withoutExtension}.md`;
+            note: |
+              index.md 头部按行数和字符双预算截断，防止上下文无限膨胀。
+          - snippet: |
+              }
+
+            note: |
+              sourceState 和 invalidate 是程序消费者的窄出口。
+          - snippet: |
+              function readFrontmatterSource(text: string): string | null {
+                if (!text.startsWith("---\n")) return null;
+                const end = text.indexOf("\n---", 4);
+                if (end === -1) return null;
+                for (const line of text.slice(4, end).split("\n")) {
+                  const match = line.match(/^source:\s*(.*?)\s*$/u);
+                  if (match === null) continue;
+                  return unquoteFrontmatterValue(match[1]);
+                }
+                return null;
+            note: |
+              路径、状态句、sources 页路径和 frontmatter 解析保持库相对路径稳定。
+          - snippet: |
+              }
+
+            note: |
+              probeAbs 通过 files 服务调用原生命令，并用缓存降低重复哈希成本。
+          - snippet: |
+              function unquoteFrontmatterValue(value: string): string {
+                const quoted =
+                  value.length >= 2 &&
+                  ((value.startsWith('"') && value.endsWith('"')) ||
+                    (value.startsWith("'") && value.endsWith("'")));
+                if (quoted) {
+                  return value.slice(1, -1);
+                }
+                return value;
+            note: |
+              collectEvidence 从 sources 页 frontmatter 反查源，以产物 mtime 作为分析时间证据。
+          - snippet: |
+              }
+            note: |
+              refresh 换根时清缓存，读取旧索引，只为证据中的源重建行。
+      - path: src/plugins/app-wiki/state.ts
+        note: |
+          状态与 reconcile 是纯函数，便于覆盖所有状态迁移和证据边界。
+        changes:
+          - snippet: |
+              /** 源状态机与机器索引 reconcile：纯函数，无 IO，vitest 主战场。 */
+            note: |
+              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+          - snippet: |
+              import type { ProbeSample } from "../../host/files";
+            note: |
+              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+          - snippet: |
+              import {
+                parseMachineIndex,
+                serializeMachineIndex,
+                type MachineIndex,
+                type SourceRecord,
+            note: |
+              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+          - snippet: |
+              } from "./index-yaml";
+
+            note: |
+              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+          - snippet: |
+              export { parseMachineIndex, serializeMachineIndex };
+            note: |
+              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+          - snippet: |
+              export type { MachineIndex, SourceRecord };
+
+            note: |
+              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+          - snippet: |
+              /** 源分析状态：unknown（无产物/无记录）、fresh、stale（源已变更）、moved（源迁址）。 */
+            note: |
+              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+          - snippet: |
+              export type SourceState =
+                | { state: "unknown" }
+                | { state: "fresh"; record: SourceRecord }
+                | { state: "stale"; record: SourceRecord; sample: ProbeSample }
+                | { state: "moved"; record: SourceRecord; sample: ProbeSample };
+
+            note: |
+              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+          - snippet: |
+              /** probe 缓存句柄：按路径取可信样本，并可整体失效。 */
+            note: |
+              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+          - snippet: |
+              export interface ProbeCache {
+                /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
+                get(path: string, fresh: ProbeSample): ProbeSample;
+                /** 全量失效（换库根等场景）。 */
+                invalidate(): void;
+            note: |
+              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+          - snippet: |
+              }
+
+            note: |
+              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+          - snippet: |
+              /** 按判定序识别源分析状态：fresh、stale、moved 或 unknown。
+               * @param index 当前机器索引；null 表示无索引。
+               * @param relPath 库相对源路径。
+               * @param sample 当前源探测样本。
+               * @returns 源状态与判定所用的旧记录/新样本。
+               */
+            note: |
+              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+          - snippet: |
+              export function classifySource(
+                index: MachineIndex | null,
+                relPath: string,
+                sample: ProbeSample,
+            note: |
+              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+          - snippet: |
+              ): SourceState {
+                const byPath = index?.sources.find((record) => record.path === relPath);
+                if (byPath) {
+                  return byPath.sha256 === sample.sha256
+                    ? { state: "fresh", record: byPath }
+                    : { state: "stale", record: byPath, sample };
+                }
+                const byHash = index?.sources.find((record) => record.sha256 === sample.sha256);
+                if (byHash) return { state: "moved", record: byHash, sample };
+                return { state: "unknown" };
+            note: |
+              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+          - snippet: |
+              }
+
+            note: |
+              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+          - snippet: |
+              /** 创建 path → 样本缓存；get 以 size+mtimeMs 校验，命中省哈希（靠命令快路径）。
+               * @returns probe 缓存句柄。
+               */
+            note: |
+              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+          - snippet: |
+              export function createProbeCache(): ProbeCache {
+                const map = new Map<string, ProbeSample>();
+                return {
+                  /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
+                  get(path: string, fresh: ProbeSample): ProbeSample {
+                    const hit = map.get(path);
+                    if (hit && hit.size === fresh.size && hit.mtimeMs === fresh.mtimeMs) {
+                      return hit;
+                    }
+                    map.set(path, fresh);
+                    return fresh;
+                  },
+                  /** 全量失效（换库根等场景）。 */
+                  invalidate() {
+                    map.clear();
+                  },
+                };
+            note: |
+              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+          - snippet: |
+              }
+
+            note: |
+              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+          - snippet: |
+              /** 产物证据：某源有已分析产物；newestArtifactMtimeMs 为产物最新 mtime（Unix 毫秒）。 */
+            note: |
+              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+          - snippet: |
+              export interface ArtifactEvidence {
+                /** 库相对源路径。 */
+                source: string;
+                /** 产物最新 mtime（Unix 毫秒），转为 analyzedAt。 */
+                newestArtifactMtimeMs: number;
+            note: |
+              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+          - snippet: |
+              }
+
+            note: |
+              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+          - snippet: |
+              /** 物化机器索引：行存在 ⇔ 证据存在；probed 缺哈希的行保留旧值；moved 保留 artifact 只改 path。
+               * @param prev 旧机器索引；null 表示无旧索引。
+               * @param evidence 现存产物证据列表。
+               * @param probed 按证据源路径提供的探测样本。
+               * @returns 新机器索引。
+               */
+            note: |
+              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+          - snippet: |
+              export function reconcileIndex(
+                prev: MachineIndex | null,
+                evidence: ArtifactEvidence[],
+                probed: Map<string, ProbeSample>,
+            note: |
+              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+          - snippet: |
+              ): MachineIndex {
+                const sources: SourceRecord[] = evidence.map((event) => {
+                  const old =
+                    prev?.sources.find((record) => record.path === event.source) ??
+                    prev?.sources.find(
+                      (record) => probed.get(event.source)?.sha256 === record.sha256,
+                    );
+                  const sample = probed.get(event.source);
+                  return {
+                    path: event.source,
+                    kind: old?.kind ?? kindFromPath(event.source),
+                    sha256: sample?.sha256 ?? old?.sha256 ?? "",
+                    size: sample?.size ?? old?.size ?? 0,
+                    analyzedAt: new Date(event.newestArtifactMtimeMs).toISOString(),
+                    artifact: old?.artifact ?? null,
+                  };
+                });
+                return { version: 1, sources };
+            note: |
+              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+          - snippet: |
+              }
+
+            note: |
+              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+          - snippet: |
+              const VIDEO_EXT = new Set(["mp4", "mkv", "avi", "mov", "webm"]);
+
+            note: |
+              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+          - snippet: |
+              /** 按扩展名推断源类型：已知视频扩展名 → video，其余按 text（m2 文本闭环）。
+               * @param relPath 库相对源路径。
+               * @returns 推断出的源类型。
+               */
+            note: |
+              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+          - snippet: |
+              export function kindFromPath(relPath: string): SourceRecord["kind"] {
+                const ext = relPath.split(".").pop()?.toLowerCase() ?? "";
+                return VIDEO_EXT.has(ext) ? "video" : "text";
+            note: |
+              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+          - snippet: |
+              }
+            note: |
+              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+      - path: src-tauri/src/probe.rs
+        note: |
+          Rust probe 提供授权后的元数据和流式 SHA-256，避免前端读整文件。
+        changes:
+          - snippet: |
+              //! 源文件探测：流式 SHA-256 + 大小 + mtime；known 命中（size + mtimeMs 一致）
+            note: |
+              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
+          - snippet: |
+              //! 时跳过哈希（视频大文件每回合重哈希不可接受）。错误带稳定 code，message 仅诊断。
+
+            note: |
+              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
+          - snippet: |
+              use serde::{Deserialize, Serialize};
+            note: |
+              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
+          - snippet: |
+              use sha2::{Digest, Sha256};
+            note: |
+              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+          - snippet: |
+              use std::path::Path;
+
+            note: |
+              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
+          - snippet: |
+              const CHUNK: usize = 64 * 1024;
+
+            note: |
+              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
+          - snippet: |
+              #[derive(Clone, Debug, Serialize, Deserialize)]
+            note: |
+              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
+          - snippet: |
+              #[serde(rename_all = "camelCase")]
+            note: |
+              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
+          - snippet: |
+              pub struct ProbeSample {
+                  pub size: u64,
+                  pub mtime_ms: i64,
+                  pub sha256: String,
+            note: |
+              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+          - snippet: |
+              }
+
+            note: |
+              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
+          - snippet: |
+              #[derive(Debug, Serialize)]
+            note: |
+              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
+          - snippet: |
+              pub struct ProbeError {
+                  pub code: String,
+                  pub message: String,
+            note: |
+              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
+          - snippet: |
+              }
+
+            note: |
+              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
+          - snippet: |
+              fn err(code: &str, message: String) -> ProbeError {
+                  ProbeError {
+                      code: code.into(),
+                      message,
+                  }
+            note: |
+              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+          - snippet: |
+              }
+
+            note: |
+              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
+          - snippet: |
+              /// 探测文件：返回大小、mtime（Unix 毫秒）与流式 SHA-256。known 提供且
+            note: |
+              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
+          - snippet: |
+              /// size/mtime 与磁盘一致时原样返回 known.sha256（快路径，不重读内容）。
+            note: |
+              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
+          - snippet: |
+              pub fn probe_file(path: &Path, known: Option<ProbeSample>) -> Result<ProbeSample, ProbeError> {
+                  if path
+                      .components()
+                      .any(|c| matches!(c, std::path::Component::ParentDir))
+                  {
+                      return Err(err(
+                          "PROBE_INVALID_PATH",
+                          format!("路径不得含 .. 组件：{}", path.display()),
+                      ));
+                  }
+                  let meta = std::fs::metadata(path).map_err(|e| {
+                      err(
+                          "PROBE_NOT_FOUND",
+                          format!("metadata {}: {e}", path.display()),
+                      )
+                  })?;
+                  let size = meta.len();
+                  let mtime_ms = meta
+                      .modified()
+                      .map_err(|e| err("PROBE_STAT", format!("mtime {}: {e}", path.display())))?
+            note: |
+              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
+          - snippet: |
+              if n == 0 {
+                  break;
+              }
+              hasher.update(&buf[..n]);
+            note: |
+              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+          - snippet: |
+              }
+
+            note: |
+              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
+          - snippet: |
+              #[cfg(test)]
+            note: |
+              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
+          - snippet: |
+              mod tests {
+                  use super::*;
+
+                  #[test]
+                  fn hashes_known_content() {
+                      let dir = std::env::temp_dir().join(format!("sw-probe-{}", std::process::id()));
+                      let _ = std::fs::remove_dir_all(&dir);
+                      std::fs::create_dir_all(&dir).unwrap();
+                      let p = dir.join("a.md");
+                      std::fs::write(&p, b"hello study-wiki").unwrap();
+                      let r = probe_file(&p, None).unwrap();
+                      assert_eq!(r.size, 16);
+                      assert_eq!(r.sha256.len(), 64);
+                      assert!(r.mtime_ms > 0);
+                      std::fs::remove_dir_all(&dir).unwrap();
+                  }
+
+                  #[test]
+                  fn known_fast_path_skips_hash() {
+                      let dir = std::env::temp_dir().join(format!("sw-probe-fast-{}", std::process::id()));
+            note: |
+              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
+          - snippet: |
+              let e = probe_file(Path::new("/tmp/../etc/passwd"), None).unwrap_err();
+              assert_eq!(e.code, "PROBE_INVALID_PATH");
+            note: |
+              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
+          - snippet: |
+              }
+            note: |
+              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+      - path: src/plugins/agent-core/prompt.ts
+        note: |
+          系统提示组装新增贡献段输入并保持纯函数。
+        changes:
+          - snippet: |
+              export function buildSystemPrompt(input: {
+                root: string;
+                agentsMd: string | null;
+                activeFilePath: string | null;
+                mode: ApprovalMode;
+                now: string;
+                /** 贡献段（如 wiki 契约）；按序追加在库约定附录之后，null/空白段调用方已滤除。 */
+                extraSections?: readonly string[];
+              }): string {
+                const sections = [
+            note: |
+              输入契约新增 extraSections，调用方已过滤空白段。
+          - snippet: |
+              let prompt = sections.join("\n\n");
+              if (input.agentsMd) prompt += `\n\n# 库约定（AGENTS.md）\n\n${input.agentsMd}`;
+              const extras = (input.extraSections ?? []).filter((section) => section.trim());
+              if (extras.length) prompt += `\n\n${extras.join("\n\n")}`;
+              return prompt;
+            note: |
+              库约定先追加，贡献段按传入顺序继续追加并返回最终 prompt。
+      - path: src/plugins/agent-core/service.ts
+        note: |
+          agent 服务提供贡献段注册表并在每回合组装。
+        changes:
+          - snippet: |
+              /** prompt 贡献段输入：当前库根与活动文件（绝对路径或 null）。 */
+              export interface PromptSectionInput {
+                /** 当前会话库根。 */
+                root: string;
+                /** 活动文件绝对路径；无活动文件为 null。 */
+                activeFilePath: string | null;
+              }
+
+              /** prompt 贡献段提供者：每回合调用；返回 markdown 段，null 表示本回合不注入。 */
+              export type PromptSectionProvider = (input: PromptSectionInput) => Promise<string | null>;
+
+              /** Agent 会话注册表：列表/打开/删除与插件生命周期清理。 */
+              export interface AgentService {
+                /** List valid session headers in the current library root. */
+                listSessions(): Promise<SessionMeta[]>;
+                /** Open an existing session by id, or create a new session using `defaultMode` when null. */
+                openSession(id: string | null, defaultMode?: ApprovalMode): Promise<AgentSession>;
+                /** Delete the backing JSONL file and detach any open session instance. */
+                deleteSession(id: string): Promise<void>;
+                /** 注册一个 system prompt 贡献段（拼在库约定附录之后）；id 重复覆盖。返回注销函数。 */
+                registerPromptSection(id: string, provider: PromptSectionProvider): () => void;
+                /** Abort every open session; used by the cordis plugin disposer. */
+            note: |
+              对外类型声明 prompt 贡献段输入、provider 和注册/注销方法。
+          - snippet: |
+              export function createAgentService(deps: AgentServiceDeps): AgentService {
+                const threshold = deps.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
+                const sessions = new Map<string, { internal: InternalSession; session: AgentSession }>();
+                const sections = new Map<string, PromptSectionProvider>();
+                let disposed = false;
+
+                const requireRoot = (): string => {
+                  const root = deps.workspace.root;
+                  if (!root) throw new Error("尚未打开学习库");
+                  return root;
+                };
+
+                function readHeader(text: string): SessionHeader | null {
+                  try {
+            note: |
+              服务内部新增 sections Map，与 sessions 并列保存插件贡献。
+          - snippet: |
+              await persist(internal, { type: "message", message });
+              const agentsMd = await readAgentsMd(internal.currentRoot, deps.files);
+              const activeFilePath = deps.workspace.activeFile?.path ?? null;
+              const sectionInput: PromptSectionInput = { root: internal.currentRoot, activeFilePath };
+              const extraSections: string[] = [];
+              for (const provider of sections.values()) {
+                const section = await provider(sectionInput);
+                if (section !== null && section.trim()) extraSections.push(section);
+              }
+            note: |
+              每回合逐 provider 调用，过滤 null 与空白后得到 extraSections。
+          - snippet: |
+              systemPrompt: () => buildSystemPrompt({
+                root: internal.currentRoot,
+                agentsMd: agentsMd,
+                activeFilePath: deps.workspace.activeFile?.path ?? null,
+                mode: internal.mode,
+                now: new Date().toISOString(),
+                extraSections,
+              }),
+            note: |
+              buildSystemPrompt 接收 extraSections，压缩仍发生在 provider 之后。
+          - snippet: |
+
+              return {
+                registerPromptSection(id, provider) {
+                  sections.set(id, provider);
+                  return () => {
+                    if (sections.get(id) === provider) sections.delete(id);
+                  };
+                },
+
+                async listSessions() {
+                  const root = requireRoot();
+                  let paths: string[];
+            note: |
+              注册 id 覆盖；注销只删除仍是当前 provider 的项，避免后注册先注销误删。
+      - path: src-tauri/src/lib.rs
+        note: |
+          Tauri 总装注册 probe 并支撑 wiki 深路径写。
+        changes:
+          - snippet: |
+              use tauri::ipc::{InvokeBody, Request, Response};
+              use tauri::{Emitter, Manager};
+
+              pub mod config;
+              mod grep;
+              pub mod llm;
+              mod llm_stream;
+              mod probe;
+
+              #[cfg(target_os = "macos")]
+              pub mod native_close;
+            note: |
+              模块表引入 probe，保持 Rust 壳唯一命令装配点。
+          - snippet: |
+              fn std_write(path: &Path, contents: &str) -> Result<(), String> {
+                  if let Some(parent) = path.parent() {
+                      if !parent.as_os_str().is_empty() {
+                          fs::create_dir_all(parent)
+                              .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+                      }
+                  }
+                  fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
+            note: |
+              std_write 自动创建父目录；文件组件冲突仍由 create_dir_all/write 暴露。
+          - snippet: |
+              /// agent wiki 源探测：读域授权校验后返回大小/mtime/SHA-256；known 命中跳过哈希。
+              #[tauri::command]
+              fn probe_source_file<R: tauri::Runtime>(
+                  window: tauri::Window<R>,
+                  app: tauri::AppHandle<R>,
+                  state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+                  path: String,
+                  known: Option<crate::probe::ProbeSample>,
+              ) -> Result<crate::probe::ProbeSample, crate::probe::ProbeError> {
+                  let config_root = config::app_studywiki_dir(&app).map_err(|e| crate::probe::ProbeError {
+                      code: "PROBE_UNAUTHORIZED".into(),
+                      message: e,
+                  })?;
+                  ensure_authorized_read(&state, window.label(), &path, &config_root).map_err(|e| {
+                      crate::probe::ProbeError {
+                          code: "PROBE_UNAUTHORIZED".into(),
+                          message: e,
+                      }
+                  })?;
+                  crate::probe::probe_file(std::path::Path::new(&path), known)
+              }
+            note: |
+              probe 命令复用读授权和配置域校验，错误统一投影为 PROBE_UNAUTHORIZED。
+          - snippet: |
+              )
+              .setup(|app| {
+                  // 用户配置根一次性迁移：老 app_config_dir 的插件清单/目录搬入 ~/.studywiki。
+                  config::migrate_legacy(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+                  Ok(())
+              })
+              .invoke_handler(tauri::generate_handler![
+                  read_tree,
+                  read_text_file,
+                  probe_source_file,
+                  grep_files,
+            note: |
+              invoke 面注册 probe_source_file，插件仍无法直接触达系统。
+      - path: src/host/files.ts
+        note: |
+          files facade 暴露 probe 类型安全入口。
+        changes:
+          - snippet: |
+              import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+              import { listen } from "@tauri-apps/api/event";
+              import { open } from "@tauri-apps/plugin-dialog";
+              import { createEmitter } from "./emitter";
+              import type { FileNode } from "../types";
+
+              /** Parameters for the agent grep tool; `path` must already be read-authorized. */
+              export interface GrepRequest {
+                pattern: string;
+                path: string;
+                glob?: string;
+                ignoreCase?: boolean;
+                literal?: boolean;
+                context?: number;
+                limit?: number;
+              }
+
+              /** One grep hit, with nearby context lines and no line-number prefixes. */
+              export interface GrepMatch {
+                path: string;
+                line: number;
+                text: string;
+                before: string[];
+                after: string[];
+              }
+            note: |
+              ProbeSample 与调用签名进入宿主文件服务，前端不 import Tauri 绑定。
+      - path: src/host/context.d.ts
+        note: |
+          Context 编译期出口新增 wiki 服务。
+        changes:
+          - snippet: |
+              import type { Context } from "cordis";
+              import type { FilesService } from "./files";
+              import type { ExcelService } from "./excel";
+              import type { WindowsService } from "./windows";
+              import type { WorkspaceFacade } from "./workspace";
+              import type { SlotsService } from "./slots";
+              import type { PluginsService } from "./plugins";
+              import type { LlmService } from "./llm";
+              import type { AgentService } from "../plugins/agent-core/service";
+              import type { WikiService } from "../plugins/app-wiki/service";
+
+              declare module "cordis" {
+                interface Context {
+                  /** 文件通道（读树/读写文本/选目录/媒体 URL/fs 变更流）。 */
+                  files: FilesService;
+                  /** Excel 数据模型服务（xlsx 解析/序列化；人与 AI 共用读写面）。 */
+                  excel: ExcelService;
+                  /** 窗口身份/创建/原生确认框/关窗守卫。 */
+                  windows: WindowsService;
+                  /** 窗口 scope 工作区插件面（读/事件/守卫打开；换根仅经 windows 单路）。 */
+                  workspace: WorkspaceFacade;
+                  /** 类型化 UI 槽位注册表。 */
+                  slots: SlotsService;
+                  /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */
+                  plugins: PluginsService;
+                  /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
+                  llm: LlmService;
+                  /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
+                  agent: AgentService;
+                  /** wiki 知识层服务（内置插件 app-wiki 提供；外置插件 guard 白名单不含）。 */
+                  wiki: WikiService;
+                }
+              }
+            note: |
+              app-wiki 提供的 WikiService 挂入 Context；外置插件运行时仍受 guard 白名单限制。
+      - path: src/loader/table.ts
+        note: |
+          静态内置插件表注册 app-wiki。
+        changes:
+          - snippet: |
+              import type { PluginModule } from "./types";
+              import * as appShell from "../plugins/app-shell";
+              import * as viewFiletree from "../plugins/view-filetree";
+              import * as docMarkdown from "../plugins/doc-markdown";
+              import * as docVideo from "../plugins/doc-video";
+              import * as docExcel from "../plugins/doc-excel";
+              import * as appAgent from "../plugins/app-agent";
+              import * as appWindows from "../plugins/app-windows";
+              import * as pluginManager from "../plugins/plugin-manager";
+              import * as llmSettings from "../plugins/llm-settings";
+              import * as agentCore from "../plugins/agent-core";
+              import * as appWiki from "../plugins/app-wiki";
+
+              /** One static module table row. */
+              export interface TableEntry {
+                plugin: PluginModule;
+                defaults: Record<string, unknown>;
+              }
+
+              /** Static module table: every built-in plugin keyed by id. Rows land with
+               * their plugin tasks; Phase 2 adds external modules as another source. */
+              export type ModuleTable = Record<string, TableEntry>;
+
+              /** The build-time module table (single home). */
+              export const MODULE_TABLE: ModuleTable = {};
+            note: |
+              装载表新增 app-wiki 行，随构建期模块打包而不是运行时下载。
+  - group: 测试与验证
+    attention: skim
+    why: |
+      测试证明状态机、codec、服务和 prompt 缝的行为，检视时按失败语义抽查。
+    files:
+      - path: tests/agent-prompt.test.ts
+        note: |
+          覆盖纯函数、假 ctx 与端到端服务行为。
+      - path: tests/agent-service.test.ts
+        note: |
+          覆盖纯函数、假 ctx 与端到端服务行为。
+      - path: tests/app-wiki-index-yaml.test.ts
+        note: |
+          覆盖纯函数、假 ctx 与端到端服务行为。
+      - path: tests/app-wiki-schema.test.ts
+        note: |
+          覆盖纯函数、假 ctx 与端到端服务行为。
+      - path: tests/app-wiki-service.test.ts
+        note: |
+          覆盖纯函数、假 ctx 与端到端服务行为。
+      - path: tests/app-wiki-state.test.ts
+        note: |
+          覆盖纯函数、假 ctx 与端到端服务行为。
+  - group: 文档与流程
+    attention: skip
+    why: |
+      生成区、双语记录和流程页由门禁对账。
+    files:
+      - path: docs/architecture.md
+        note: |
+          组成树与数据流地图。
+      - path: docs/commands.md
+        note: |
+          probe 命令生成区。
+      - path: scripts/code-map.manifest.json
+        note: |
+          新源文件职责登记。
+      - path: .agents/flow/issues/m2-04-llm-wiki.md
+        note: |
+          issue 状态、scope 与验收。
+      - path: .agents/notes/implemented/architecture/2026-10-18-llm-wiki.md
+        note: |
+          落地决策与替代方案。
+reviewGuide:
+  order:
+    - 先读 src/plugins/app-wiki/state.ts：确认 fresh/stale/moved/unknown 判定序和 reconcile 保留字段。
+    - 再读 src/plugins/app-wiki/service.ts：检查产物证据、损坏索引、moved 重指和 prompt 有界性。
+    - 接着读 src-tauri/src/probe.rs 与 lib.rs 注册段：确认授权边界、快路径和父目录创建。
+    - 然后读 agent-core prompt/service 贡献缝：确认顺序、空白过滤、覆盖注册和注销语义。
+    - 最后抽查 codec 与测试：坏输入必须返回 null 或稳定错误，快慢哈希必须一致。
+  risks:
+    - 同哈希多条记录时当前 find 取第一条；如果未来允许复制源，tie-break 不明确会重复或误指 moved。
+    - 产物证据来自 sources 页与 mtime；若外部工具改写页面，分析时间会被当作新证据刷新。
+    - 索引是程序独占但仍落在库内；如果 agent 绕过 schema 修改它，损坏重建会丢人工改动。
+  acceptance:
+    - item: schema 随 prompt 注入且有贡献段注册/注销
+      evidence: tests/agent-prompt.test.ts；tests/agent-service.test.ts
+    - item: 机器索引可解析/序列化且坏输入返回 null
+      evidence: tests/app-wiki-index-yaml.test.ts
+    - item: 源状态与产物证据 reconcile 可回归
+      evidence: tests/app-wiki-state.test.ts；tests/app-wiki-service.test.ts
+    - item: probe 快慢路径、路径拒绝和深目录写通过
+      evidence: cargo test；src-tauri/src/lib.rs tests
+    - item: 机械面和文档门禁全绿
+      evidence: pnpm verify:commands；pnpm lint:docs；pnpm verify:docs
+verification:
+  - 2026-10-18：pnpm gen:commands — 通过，39 条命令。
+  - 2026-10-18：pnpm gen:code-map — 通过，71 个源文件。
+  - 2026-10-18：pnpm test — 通过，87 个测试文件 / 768 个用例。
+  - 2026-10-18：pnpm verify:layering — 通过。
+  - 2026-10-18：pnpm verify:env-independence — 通过。
+  - 2026-10-18：pnpm verify:dep-audit — 通过。
+  - 2026-10-18：pnpm verify:flow、pnpm verify:commands — 通过。
+  - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm lint:docs — 通过，14 叶全绿。
+  - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm verify:docs — 17/18 叶通过；gate-self-tests 的 install-git-hooks commit-msg 用例在并行满载时 5 秒超时，单跑 6/6 通过，与本分支改动无关。
+touches:
+  - file:src-tauri/src/lib.rs
+  - file:src-tauri/src/probe.rs
+  - file:src/host/context.d.ts
+  - file:src/host/files.ts
+  - file:src/loader/table.ts
+  - file:src/plugins/agent-core/prompt.ts
+  - file:src/plugins/agent-core/service.ts
+  - file:src/plugins/app-wiki/index-yaml.ts
+  - file:src/plugins/app-wiki/index.ts
+  - file:src/plugins/app-wiki/schema.ts
+  - file:src/plugins/app-wiki/service.ts
+  - file:src/plugins/app-wiki/state.ts
+  - feature:agent-chat
+skill_gen_commit_id: a919f4e
