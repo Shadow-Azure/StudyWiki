@@ -107,6 +107,12 @@ fn walk_dir(root: &Path) -> Result<Vec<FileNode>, String> {
 }
 
 fn std_write(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        }
+    }
     fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
@@ -1051,6 +1057,27 @@ mod tests {
         assert!(decode_path_header("/lib/%2").is_err());
         assert!(decode_path_header("/lib/%zz").is_err());
         assert!(decode_path_header("/lib/%FF").is_err());
+    }
+
+    #[test]
+    fn std_write_creates_missing_parent_dirs() {
+        let dir = std::env::temp_dir().join(format!("sw-stdwrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let p = dir.join("a/b/c/page.md");
+        std_write(&p, "body").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "body");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn std_write_errors_when_parent_component_is_file() {
+        let dir = std::env::temp_dir().join(format!("sw-stdwrite-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("blocker"), b"x").unwrap();
+        let p = dir.join("blocker/page.md");
+        assert!(std_write(&p, "body").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
