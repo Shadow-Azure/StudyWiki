@@ -28,4 +28,4 @@ Status: implemented
 
 ## Consequences
 
-讲解源从"纯文本"扩为"文本 + 结构化图"，walkthrough 的 YAML 子集解析器继续零依赖（流程图字段落在既有的列表/嵌套 map 形状内）。schema 校验多了一块图文配平硬门禁（CI 与构建期同跑），skill `walkthrough-change-metadata-gen` 负责生成时的图质量。代价是表达能力封顶于流程图（DAG + 分支 + 起止/判断形状）；将来若需要时序图/状态图，需另立字段或另选渲染器，届时重开评估。
+讲解源从"纯文本"扩为"文本 + 结构化图"，walkthrough 的 YAML 子集解析器继续零依赖（流程图字段落在既有的列表/嵌套 map 形状内）。schema 校验多了一块图文配平硬门禁（CI 与构建期同跑），skill `walkthrough-change-metadata-gen` 负责生成时的图质量，并要求每张图的讲解由独立 subagent 研究后由主线程统一收口。代价是表达能力封顶于流程图（DAG + 分支 + 起止/判断形状）；将来若需要时序图/状态图，需另立字段或另选渲染器，届时重开评估。

@@ -1104,7 +1104,7 @@ touches:
   - file:walkthrough/changes/m2-walkthrough-backfill.yaml
 architecturalFlowchart:
   title: 五层内容到机械保鲜的闭环
-  explanation: 表达五层 YAML 源到静态站的保鲜闭环：共享库是唯一事实源，门禁与构建都消费它；「schema 与对账」回边强调校验是持续约束，不是构建前的一次性步骤。
+  explanation: 五层 YAML 源统一汇入 walkthrough-lib 共享事实源，先经源码锚点与行覆盖进入门禁，再由构建产出讲解静态站；LR 主链按消费顺序表达机械保鲜，「schema 与对账」强调校验是持续约束。
   nodes:
     - id: five-layer
       label: YAML 五层内容源
@@ -1137,7 +1137,7 @@ architecturalFlowchart:
 designFlowcharts:
   - feature: 变更页机制与门禁
     title: 门禁事实源与自测试
-    explanation: 表达规则单源的设计：封闭 schema 先进 lib，门禁 CLI 与两条 spec 都是它的下游，互为回归防线；LR 主链即依赖方向。
+    explanation: 封闭 schema 定义收敛到 walkthrough-lib 唯一事实源，verify-walkthrough 九条门禁与两条 spec 自测试都消费它；LR 主链表达依赖方向，绿或红统一由同一规则裁决。
     nodes:
       - id: schema
         label: 封闭 schema 定义
@@ -1164,7 +1164,7 @@ designFlowcharts:
         to: specs
   - feature: 渲染与检视模式
     title: 普通产物叠加本 PR 视角
-    explanation: 表达检视页不复制讲解内容：多页渲染与 diff 数据层两路输入在 --review 模式汇合，叙事仍来自变更页单一事实源。
+    explanation: 事实源库数据经 build-walkthrough 多页渲染进入 --review 检视模式，walkthrough-review diff 数据层再叠加 numstat 与 hunk；单向 LR 链表达检视页不复制讲解内容，叙事仍来自单一事实源。
     nodes:
       - id: site-data
         label: 事实源库数据
@@ -1190,7 +1190,7 @@ designFlowcharts:
         to: page
   - feature: 内容回填
     title: 六批文件页与两类聚合页
-    explanation: 表达回填的收口次序：文件页并行铺开，功能页与变更页串行对齐登记处，overview/architecture/manifest 最后定版；串行边强调依赖而非时间。
+    explanation: 六批文件页并行生成，features 功能页与 changes 变更页串行补齐；overview 与 architecture 先聚合叙事，manifest 定版阈值最后收口，因为覆盖率结论必须依赖全部页面完成。
     nodes:
       - id: batch
         label: 六批文件页并行生成
@@ -1220,7 +1220,7 @@ designFlowcharts:
         to: manifest
   - feature: 保鲜与钩子
     title: pre-push 保鲜对账
-    explanation: 表达推送时的分支语义：id 落后且中间有非 changes 提交才拦截，「仅元数据对账」放行是容错出口；菱形两条出边一一对应该规则的两个出口。
+    explanation: pre-push 前的保鲜对账检查从提交后 skill 对齐 commit id 开始；id 落后且中间有非 changes 提交才拦截并提示，仅元数据对账则放行。菱形两条出边一一对应该规则的拦截与容错出口。
     nodes:
       - id: commit
         label: 提交后 skill 对齐 commit id
@@ -1252,7 +1252,7 @@ designFlowcharts:
         label: 仅元数据对账
   - feature: 流程件
     title: 流程三件套随批次落地
-    explanation: 表达流程件是批次的伴生交付而非独立任务：issue 先行、Note 记决策、设计文档随后，同 PR 落地。
+    explanation: LR 链表达流程件的伴生写作依赖：先登记 issue 三件套，再由 Agent Note 记录决策与校准，设计与计划文档随后修订，最后随同 PR 落地，避免流程件脱批。
     nodes:
       - id: issue
         label: issue 三件套

@@ -60,9 +60,14 @@ designFlowcharts:
 - **术语一字不差**：正文出现的模块/动作名与图中节点 label 相同——同一东西两个名字是失败产出。
 - **分支必讲**：图里带标签的分支边（是/否、成功/失败），正文要讲清每个走向的后果。
 
+## 讲解生成分工
+
+主线程先登记每张流程图的 key、feature/图题、节点边结构和相邻叙事；然后**每张图派发一个独立 subagent**生成 `explanation` 草稿。subagent 只研究并返回 `key + explanation + 证据 + 不确定点`，不直接写 yaml。主线程校验一一对应、术语一致和证据充分后统一写入；缺返回或 key 对不上时要求该 subagent 重做。
+
 ## 门禁语义（自检用）
 
 - `nodes` 至少 2 项、`edges` 非空；节点 id 唯一；边端点必须闭合。
 - 每个流程图的 `explanation` 必须是非空字符串；缺失或空说明都是红门禁。
+- 每张流程图必须有独立 subagent 讲解草稿；多图共用一个 subagent 视为未完成本 skill。
 - `architecturalFlowchart`/`designFlowcharts` 在正文无实质内容时不得出现。
 - 形状/方向/引用错误都是红门禁（`node scripts/verify-walkthrough.mjs`）。
