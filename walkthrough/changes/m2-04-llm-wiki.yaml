@@ -1866,4 +1866,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: a919f4e
+skill_gen_commit_id: 684e30b
