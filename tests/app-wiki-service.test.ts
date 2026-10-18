@@ -13,6 +13,7 @@ function fakeWikiHost(opts: {
   files?: Record<string, string>;
   activePath?: string | null;
   probe?: (path: string) => ProbeSample | null;
+  tree?: (root: string) => FileNode[];
 }) {
   const files = new Map(Object.entries(opts.files ?? {}));
   const probeImpl = opts.probe ?? (() => ({ size: 10, mtimeMs: 1000, sha256: "aa".repeat(32) }));
@@ -25,7 +26,7 @@ function fakeWikiHost(opts: {
     writeText: async (path: string, contents: string) => {
       files.set(path, contents);
     },
-    readTree: async (root: string) => buildTree(root, [...files.keys()]),
+    readTree: async (root: string) => opts.tree?.(root) ?? buildTree(root, [...files.keys()]),
     probeSourceFile: async (path: string) => {
       const sample = probeImpl(path);
       if (sample === null) throw new Error("ENOENT");
@@ -125,6 +126,54 @@ describe("wiki contextSection", () => {
       'page: ".study-wiki/llm-wiki/sources/notes/a.md"',
     );
     expect((await wiki.sourceState("notes/a.md")).state).toBe("fresh");
+  });
+
+  it("Windows 形状路径 → 索引、page 与活动源状态都按库相对路径物化", async () => {
+    const root = String.raw`C:\lib`;
+    const sourcePage = String.raw`C:\lib\.study-wiki\llm-wiki\sources\notes\rust.md`;
+    const activePath = String.raw`C:\lib\notes\rust.md`;
+    const treeRoots: string[] = [];
+    const { filesSvc, workspace, files } = fakeWikiHost({
+      root,
+      activePath,
+      files: {
+        [sourcePage]: "---\ntype: source\n---\n# Rust",
+      },
+      tree: (requested) => {
+        treeRoots.push(requested);
+        return [
+          {
+            name: "notes",
+            path: String.raw`C:\lib\.study-wiki\llm-wiki\sources\notes`,
+            kind: "dir",
+            children: [{ name: "rust.md", path: sourcePage, kind: "markdown" }],
+          },
+        ];
+      },
+      probe: (path) => {
+        const normalized = path.replaceAll("\\", "/");
+        if (normalized.endsWith("/sources/notes/rust.md")) {
+          return { size: 21, mtimeMs: 1000, sha256: "aa".repeat(32) };
+        }
+        if (normalized === "C:/lib/notes/rust.md") {
+          return { size: 9, mtimeMs: 3000, sha256: "aa".repeat(32) };
+        }
+        return null;
+      },
+    });
+    const wiki = createWikiService({ files: filesSvc, workspace });
+    const section = await wiki.contextSection({ root, activeFilePath: activePath });
+    const machineIndex = files.get("C:/lib/.study-wiki/index.yaml");
+
+    expect(section).toContain("活动文件已分析");
+    expect(machineIndex).toContain('path: "notes/rust.md"');
+    expect(machineIndex).toContain(
+      'page: ".study-wiki/llm-wiki/sources/notes/rust.md"',
+    );
+    expect(machineIndex).toContain(`"${"aa".repeat(32)}"`);
+    expect(machineIndex).toContain("size: 9");
+    expect(treeRoots).toEqual(["C:/lib/.study-wiki/llm-wiki/sources"]);
+    expect((await wiki.sourceState("notes/rust.md")).state).toBe("fresh");
   });
 
   it("源内容变化 → stale 并提示重新 ingest", async () => {

@@ -47,6 +47,7 @@
     "codemirror": "^6.0.2",
     "exceljs": "^4.4.0",
     "markdown-it": "^14.1.0",
+    "pathe": "^2.0.3",
     "zod": "^4.6.4"
   },
   "devDependencies": {

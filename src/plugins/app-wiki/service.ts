@@ -1,3 +1,4 @@
+import { isAbsolute, join, normalize, relative } from "pathe";
 import type { FilesService, ProbeSample } from "../../host/files";
 import type { WorkspaceFacade } from "../../host/workspace";
 import type { FileNode } from "../../types";
@@ -46,29 +47,32 @@ export function createWikiService(deps: {
   let lastRoot: string | null = null;
 
   async function probeAbs(path: string): Promise<ProbeSample | null> {
+    const target = normalize(path);
     try {
-      const fresh = await deps.files.probeSourceFile(path, knownSamples.get(path));
-      const sample = cache.get(path, fresh);
-      knownSamples.set(path, sample);
+      const fresh = await deps.files.probeSourceFile(target, knownSamples.get(target));
+      const sample = cache.get(target, fresh);
+      knownSamples.set(target, sample);
       return sample;
     } catch {
-      knownSamples.delete(path);
+      knownSamples.delete(target);
       return null;
     }
   }
 
   async function collectEvidence(root: string): Promise<ArtifactEvidence[]> {
     const evidence = new Map<string, ArtifactEvidence>();
+    const sourcesRoot = join(root, SOURCES_DIR);
     let nodes;
     try {
-      nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
+      nodes = await deps.files.readTree(sourcesRoot);
     } catch {
       return [];
     }
     for (const path of markdownPaths(nodes)) {
       const page = toRel(root, path);
-      if (page === null) continue;
-      const rel = path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+      const sourceRel = relativeTo(sourcesRoot, path);
+      if (page === null || sourceRel === null) continue;
+      const rel = sourceRel.slice(0, -".md".length);
       const source = await resolveSourceFromPage(path, rel);
       const sample = await probeAbs(path);
       if (sample === null) continue;
@@ -86,7 +90,7 @@ export function createWikiService(deps: {
       knownSamples.clear();
       lastRoot = root;
     }
-    const prevText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
+    const prevText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
     const prev = prevText === null ? null : parseMachineIndex(prevText);
     const evidence = await collectEvidence(root);
     if (evidence.length === 0 && prevText === null) return;
@@ -100,7 +104,7 @@ export function createWikiService(deps: {
         previous.page === item.page &&
         previous.path !== item.source;
       const source = linked ? previous.path : item.source;
-      const sample = await probeAbs(`${root}/${source}`);
+      const sample = await probeAbs(join(root, source));
       if (
         sample !== null &&
         (previous === undefined || previous.sha256 === sample.sha256)
@@ -119,7 +123,7 @@ export function createWikiService(deps: {
     } satisfies MachineIndex;
     const serialized = serializeMachineIndex(next);
     if (serialized !== prevText) {
-      await deps.files.writeText(`${root}/${INDEX_YAML}`, serialized);
+      await deps.files.writeText(join(root, INDEX_YAML), serialized);
     }
   }
 
@@ -127,17 +131,17 @@ export function createWikiService(deps: {
     const root = deps.workspace.root;
     if (root === null) return null;
     await refresh(root);
-    const indexText = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
+    const indexText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
     const index = indexText === null ? null : parseMachineIndex(indexText);
     const initialized = await deps.files
-      .readText(`${root}/${INDEX_MD}`)
+      .readText(join(root, INDEX_MD))
       .then(() => true)
       .catch(() => false);
 
     const rel = toRel(root, input.activeFilePath);
     const parts: string[] = [];
     if (rel !== null) {
-      const sample = await probeAbs(`${root}/${rel}`);
+      const sample = await probeAbs(join(root, rel));
       if (sample !== null) {
         const state = classifySource(index, rel, sample);
         if (state.state === "moved") {
@@ -156,7 +160,7 @@ export function createWikiService(deps: {
             version: 1,
             sources: index!.sources.map((item) => (item === state.record ? record : item)),
           };
-          await deps.files.writeText(`${root}/${INDEX_YAML}`, serializeMachineIndex(rewritten));
+          await deps.files.writeText(join(root, INDEX_YAML), serializeMachineIndex(rewritten));
           parts.push(stateLine({ state: "fresh", record }, rel));
         } else {
           parts.push(stateLine(state, rel));
@@ -176,7 +180,7 @@ export function createWikiService(deps: {
   }
 
   async function boundedHead(root: string): Promise<string | null> {
-    const text = await deps.files.readText(`${root}/${INDEX_MD}`).catch(() => null);
+    const text = await deps.files.readText(join(root, INDEX_MD)).catch(() => null);
     if (text === null) return null;
     const lines = text.split("\n");
     const lineLimited = lines.slice(0, HEAD_LINE_BUDGET).join("\n");
@@ -197,14 +201,17 @@ export function createWikiService(deps: {
   }
 
   async function findSourcePage(root: string, source: string): Promise<string | null> {
+    const sourcesRoot = join(root, SOURCES_DIR);
     let nodes;
     try {
-      nodes = await deps.files.readTree(`${root}/${SOURCES_DIR}`);
+      nodes = await deps.files.readTree(sourcesRoot);
     } catch {
       return null;
     }
     for (const path of markdownPaths(nodes)) {
-      const rel = path.slice(`${root}/${SOURCES_DIR}/`.length, -".md".length);
+      const sourceRel = relativeTo(sourcesRoot, path);
+      if (sourceRel === null) continue;
+      const rel = sourceRel.slice(0, -".md".length);
       if ((await resolveSourceFromPage(path, rel)) === source) {
         return toRel(root, path);
       }
@@ -217,10 +224,11 @@ export function createWikiService(deps: {
       const root = deps.workspace.root;
       if (root === null) return { state: "unknown" };
       await refresh(root);
-      const text = await deps.files.readText(`${root}/${INDEX_YAML}`).catch(() => null);
+      const text = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
       const index = text === null ? null : parseMachineIndex(text);
-      const sample = await probeAbs(`${root}/${relPath}`);
-      return sample === null ? { state: "unknown" } : classifySource(index, relPath, sample);
+      const rel = normalize(relPath);
+      const sample = await probeAbs(join(root, rel));
+      return sample === null ? { state: "unknown" } : classifySource(index, rel, sample);
     },
     contextSection,
     invalidate() {
@@ -232,9 +240,15 @@ export function createWikiService(deps: {
 }
 
 function toRel(root: string, path: string | null): string | null {
-  if (path === null || !path.startsWith(`${root}/`)) return null;
-  const rel = path.slice(root.length + 1);
-  return rel.length === 0 ? null : rel;
+  return path === null ? null : relativeTo(root, path);
+}
+
+function relativeTo(root: string, path: string): string | null {
+  const rel = relative(root, path);
+  if (rel.length === 0 || isAbsolute(rel) || rel === ".." || rel.startsWith("../")) {
+    return null;
+  }
+  return rel;
 }
 
 function stateLine(state: SourceState, rel: string): string {
