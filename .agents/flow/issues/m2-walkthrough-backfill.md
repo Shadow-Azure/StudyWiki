@@ -17,6 +17,8 @@ scope:
   - scripts/verify-walkthrough.spec.mjs
   - scripts/walkthrough-review.mjs
   - scripts/walkthrough-review.spec.mjs
+  - scripts/check-review-freshness.mjs
+  - scripts/check-review-freshness.spec.mjs
   - package.json
   - AGENTS.md
   - scripts/install-git-hooks.mjs
