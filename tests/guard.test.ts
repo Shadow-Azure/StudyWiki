@@ -173,6 +173,22 @@ test("模块形状原样透传（name/inject 不变，apply 被包装）", () =>
   expect(wrapped.apply).not.toBe(src.apply);
 });
 
+test("门面按 inject 依赖声明暴露服务，不把服务名当权限清单", () => {
+  const agent = { openSession: () => "session" };
+  const wiki = { contextSection: () => "wiki" };
+  const mod = guardExternalModule({
+    name: "ext-internal-services",
+    inject: ["agent", "wiki"],
+    apply: (ctx: any) => {
+      expect(ctx.agent.openSession()).toBe("session");
+      expect(ctx.wiki.contextSection()).toBe("wiki");
+      expect(() => ctx.files).toThrow(/未声明的服务 "files"/);
+      return () => {};
+    },
+  });
+  (mod.apply as any)({ agent, wiki, files: {} }, {});
+});
+
 test("门面：workspace 仅暴露插件安全面，拒绝换根私有缝", () => {
   const workspace = {
     root: "/x",
