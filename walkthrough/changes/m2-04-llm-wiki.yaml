@@ -3,7 +3,7 @@ issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
   files: 72
-  additions: 7485
+  additions: 7499
   deletions: 1329
 feature: |
   这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧递归扫描 sources 页，用产物证据和 `probe_source_file` 维护 `.study-wiki/index.yaml`；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
@@ -1955,7 +1955,7 @@ verification:
   - 2026-10-18：pnpm verify:layering — 通过。
   - 2026-10-18：pnpm verify:env-independence — 通过。
   - 2026-10-18：pnpm verify:dep-audit — 通过。
-  - 2026-10-18：pnpm verify:flow、pnpm verify:commands — 通过。
+  - 2026-10-18：pnpm verify:flow、node scripts/verify-flow.mjs --diff origin/main、pnpm verify:commands — 通过。
   - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm lint:docs — 通过，14 叶全绿。
   - 2026-10-18：node scripts/verify-walkthrough.mjs --diff origin/main — 通过（codeMap 覆盖、逐段 ≤20 行、注解覆盖率 ≥90%）。
   - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm verify:docs — 17/18 叶通过；gate-self-tests 的 install-git-hooks commit-msg 用例在并行满载时 5 秒超时，单跑 6/6 通过，与本分支改动无关。
@@ -1973,4 +1973,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: 882554b
+skill_gen_commit_id: c23ea53
