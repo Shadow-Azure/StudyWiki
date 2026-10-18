@@ -2,9 +2,9 @@ kind: change
 issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
-  files: 72
-  additions: 7616
-  deletions: 1329
+  files: 84
+  additions: 7683
+  deletions: 1362
 feature: |
   这个分支把“知识复利”从想法变成可运行的知识层：agent 不新增 wiki 专用工具，而是在每回合收到插件发布的 schema、活动源状态和有界的 wiki 目录头部；它继续用 read/grep/write/edit 维护页面。程序侧只在打开源时探测该源并更新它自己的 `.study-wiki/index.yaml` 行，未打开源不扫描、不探测；源变更、移动和未分析都有确定状态，移动后的绑定也能跨回合保持。
 
@@ -1729,6 +1729,37 @@ codeMap:
               });
             note: |
               装载表新增 app-wiki 行；默认配置为空，随构建期模块打包而不是运行时下载。
+  - group: 外置插件契约
+    attention: must-read
+    why: |
+      inject 的语义同时影响外部插件启动与门面暴露；误读成权限白名单会让人高估隔离强度。
+    files:
+      - path: src/loader/guard.ts
+        note: |
+          外置门面只按 inject 依赖声明暴露已提供的服务；声明决定启动依赖，不构成授权。
+        changes:
+          - snippet: |
+              /** 外置插件 guard 门面（只包外置；内置一等公民静态表直装）。
+               * 服务面：只按 inject 依赖声明暴露已提供的宿主服务；声明是启动依赖，不是授权。
+               * 未声明的 JS 协议属性按缺席返回 undefined，
+            note: |
+              注释把 inject 定位为启动依赖，服务面只是按声明收窄，避免读者把模块清单当成权限清单。
+          - snippet: |
+              /** 单插件门面 Proxy：按 inject 依赖声明暴露服务；声明不等于授权。 */
+              function facade(name: string, ctx: unknown, declared: Set<string>): unknown {
+                const wrapped = new Map<string, unknown>();
+                return new Proxy(Object.create(null), {
+                  get(_target, prop) {
+                    // symbol 探测与未声明 JS 协议属性一律缺席；已声明同名服务优先放行。
+                    if (typeof prop !== "string") return undefined;
+                    if (!declared.has(prop) && jsProtocolProperties.has(prop)) return undefined;
+                    if (!declared.has(prop)) {
+                      throw new Error(
+                        `外置插件 ${name} 读取了未声明的服务 "${prop}"——guard 门面只暴露 inject 声明过的服务；若要依赖它，请在 inject 数组里声明 "${prop}" 后重新加载。已声明：${[...declared].join(", ") || "（无）"}`,
+                      );
+                    }
+            note: |
+              未声明服务继续教学拒绝，错误文案改成「依赖声明」口径；已声明服务按名称换取受限包装，门面依旧不是沙箱。
   - group: 测试与验证
     attention: skim
     why: |
@@ -1758,6 +1789,9 @@ codeMap:
       - path: tests/app-wiki-state.test.ts
         note: |
           覆盖纯函数、假 ctx 与端到端服务行为。
+      - path: tests/guard.test.ts
+        note: |
+          钉住门面按 inject 声明暴露服务：声明 agent/wiki 可读，未声明服务教学拒绝。
   - group: 文档与流程
     attention: skip
     why: |
@@ -1781,6 +1815,24 @@ codeMap:
       - path: docs/architecture.en.md
         note: |
           架构页英文镜像，组成树与数据流地图与中文侧同步。
+      - path: docs/README.md
+        note: |
+          文档索引同步外置 API 口径：agent/wiki 是内置内部服务。
+      - path: docs/README.en.md
+        note: |
+          README 英文镜像，外置 API 口径与中文侧同步。
+      - path: docs/plugins/agent.md
+        note: |
+          agent 插件能力说明，标明它是内置内部服务而非外置 API 承诺。
+      - path: docs/plugins/agent.en.md
+        note: |
+          agent 插件说明英文镜像，与中文侧同步。
+      - path: docs/plugins/contract.md
+        note: |
+          外置插件契约：inject 只声明依赖，服务面与成员白名单另行收窄。
+      - path: docs/plugins/contract.en.md
+        note: |
+          外置插件契约英文镜像，与中文侧同步。
       - path: .agents/flow/issues/m2-04-llm-wiki.en.md
         note: |
           issue #31 英文镜像，状态、scope 与验收与中文侧同步。
@@ -1849,6 +1901,7 @@ reviewGuide:
     - 同哈希多条记录时当前 find 取第一条；如果未来允许复制源，tie-break 不明确会重复或误指 moved。
     - 产物证据来自 sources 页与 mtime；若外部工具改写页面，分析时间会被当作新证据刷新。
     - 索引是程序独占但仍落在库内；如果 agent 绕过 schema 修改它，损坏重建会丢人工改动。
+    - inject 不是权限边界；把它当白名单会高估外置插件的隔离强度，限制暴露面必须另设服务面 allowlist。
   acceptance:
     - item: schema 随 prompt 注入且有贡献段注册/注销
       evidence: tests/agent-prompt.test.ts；tests/agent-service.test.ts
@@ -1863,7 +1916,8 @@ reviewGuide:
 verification:
   - 2026-10-18：pnpm gen:commands — 通过，39 条命令。
   - 2026-10-18：pnpm gen:code-map — 通过，71 个源文件。
-  - 2026-10-18：npm_config_cache=/tmp/sw-pr62-windows-npm-cache pnpm test — 通过，87 个测试文件 / 776 个用例。
+  - 2026-10-18：npm_config_cache=/tmp/sw-npm-cache pnpm test — 通过，87 个测试文件 / 777 个用例。
+  - 2026-10-18：pnpm exec vitest run tests/guard.test.ts — 通过，14/14（含 inject 依赖语义）。
   - 2026-10-18：pnpm exec vitest run tests/app-wiki-service.test.ts — 通过，16/16（含 Windows 形状路径与活动源惰性索引边界）。
   - 2026-10-18：pnpm build — 通过，tsc 与 Vite 生产构建完成。
   - 2026-10-18：pnpm verify:layering — 通过。
@@ -1879,6 +1933,7 @@ touches:
   - file:src/host/context.d.ts
   - file:src/host/files.ts
   - file:src/loader/table.ts
+  - file:src/loader/guard.ts
   - file:src/plugins/agent-core/prompt.ts
   - file:src/plugins/agent-core/service.ts
   - file:src/plugins/app-wiki/index-yaml.ts
@@ -1887,4 +1942,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: 18a1900
+skill_gen_commit_id: 4dafbd2

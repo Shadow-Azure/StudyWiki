@@ -1,6 +1,6 @@
 kind: change
 issue: m2-03-basic-agent
-skill_gen_commit_id: cd3a054
+skill_gen_commit_id: 4dafbd2
 title: #51 基础 agent 插件
 scale:
   files: 99
@@ -1696,7 +1696,7 @@ codeMap:
     why: 插件用法、架构和生成区随 agent 面更新。
     files:
       - path: docs/plugins/agent.md
-        note: agent 插件能力与使用边界。
+        note: agent 插件能力与使用边界；agent 是内置内部服务，不属于外置 API 承诺，外置 inject 只声明依赖。
       - path: docs/environment-independence.md
         note: pinned ripgrep 供给约束。
       - path: docs/commands.md
