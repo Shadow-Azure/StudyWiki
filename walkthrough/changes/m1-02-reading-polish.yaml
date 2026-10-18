@@ -1,0 +1,404 @@
+kind: change
+issue: m1-02-reading-polish
+skill_gen_commit_id: b6bb224
+title: #44 阅读体验统一
+scale:
+  files: 42
+  additions: 1653
+  deletions: 180
+feature: |
+  Markdown、Excel 和视频在同一窗口内有一致的打开、切换、加载、错误、标题与保存体验。未打开文档和已开库未选文档有空态；脏文档切换或换库必须确认；视频支持空格暂停和左右方向键快退快进。
+userFlow:
+  - 切换文件或换库时有未保存修改，先弹确认框，取消则停留原文件。
+  - 未打开文档与已开库未选文档时，主区显示统一空态。
+  - 按 Mod-S 保存 markdown 或 excel；视频按空格暂停、左右方向键快退快进五秒。
+  - 加载中显示统一加载条，失败显示统一错误条，窗口标题跟随活动文档。
+architectural: |
+  切换守卫上收到 `WorkspaceService`，查看器只自证是否脏并提供确认闭包；`openFile` 与 `setRoot` 返回异步布尔，任一守卫拒绝即保持原状态。外置插件只能访问窄化的 workspace facade，不能编程换根或建窗。
+codeMap:
+  - group: 守卫与共享查看器
+    attention: must-read
+    why: 守卫状态机与统一查看器套件是本期全部新语义。
+    files:
+      - path: src/host/workspace.ts
+        note: 维护 root、activeFile、事件流、切换守卫和插件 facade。
+        changes:
+          - snippet: |
+              /** Window-scoped workspace state: which root is open, which file is active. */
+              export class WorkspaceService {
+                readonly facade: WorkspaceFacade;
+                #root: string | null = null;
+                #activeFile: FileNode | null = null;
+                readonly #switchGuards = new Set<SwitchGuard>();
+                readonly events: Emitter<WorkspaceEvents> = createEmitter<WorkspaceEvents>();
+
+                constructor() {
+                  const service = this;
+                  this.facade = Object.freeze({
+                    get root() { return service.root; },
+                    get activeFile() { return service.activeFile; },
+                    get events() { return service.events; },
+                    openFile: (file: FileNode) => service.openFile(file),
+                    guardSwitch: (isDirty: () => boolean, confirmDiscard: () => Promise<boolean>) =>
+                      service.guardSwitch(isDirty, confirmDiscard),
+                  });
+                }
+
+                /** The opened folder, or null in welcome state. */
+                get root(): string | null {
+                  return this.#root;
+                }
+
+                /** The currently open document, if any. */
+                get activeFile(): FileNode | null {
+                  return this.#activeFile;
+                }
+
+                /** Register a guard consulted before switching the active file or root.
+                 * @param isDirty Returns true when this guard owns unsaved work.
+                 * @param confirmDiscard Resolves true to discard the unsaved work.
+                 * @returns Disposer removing the guard. */
+                guardSwitch(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): () => void {
+                  const guard: SwitchGuard = { isDirty, confirmDiscard };
+                  this.#switchGuards.add(guard);
+                  return () => this.#switchGuards.delete(guard);
+                }
+
+                /** Ask every registered switch guard whether unsaved work may be discarded.
+                 * @returns True when the pending switch may proceed. */
+                async confirmSwitch(): Promise<boolean> {
+                  for (const guard of this.#switchGuards) {
+                    if (!guard.isDirty()) continue;
+                    if (!(await guard.confirmDiscard())) return false;
+                  }
+                  return true;
+                }
+
+            note: |
+                本次变更把未保存切换决策上收到 confirmSwitch：逐个询问 dirty 守卫，任一拒绝立即失败，文件切换和换根共用同一条路径。
+
+      - path: src/host/windows.ts
+        note: 换根、切文件与关窗先聚合并发守卫，再决定变更或销毁。
+        changes:
+          - snippet: |
+              /** Window-scoped service: window identity, creation, close guarding. */
+              export class WindowsService {
+                readonly #deps: WindowsDeps;
+                #workspace: WorkspaceService | null = null;
+                #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+                #nextGuardId = 0;
+                #offNativeClose: (() => void | Promise<void>) | null = null;
+                #closing = false;
+
+                constructor(deps: WindowsDeps = defaultWindowsDeps) {
+                  this.#deps = deps;
+                }
+
+                /** This window's Tauri label. */
+                currentLabel(): string {
+                  return this.#deps.currentLabel();
+                }
+
+                /** Create a new window, optionally opening `root`; returns the new label. */
+                async create(root?: string): Promise<string> {
+                  return this.#deps.invoke("create_window", { root }) as Promise<string>;
+                }
+
+                /** Fetch this window's registered workspace root (null = welcome state). */
+                async fetchRoot(label: string): Promise<string | null> {
+                  const state = await this.#deps.invoke("get_window_state", { label });
+                  return (state as string | null) ?? null;
+                }
+
+                /** Persist this window's workspace root Rust-side (registry upsert + asset
+                 * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+                async setRoot(label: string, root: string | null): Promise<void> {
+                  await this.#deps.invoke("set_window_root", { label, root });
+                }
+
+                /** Bind this window-scoped service to its private workspace controller.
+                 * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+                bindWorkspace(workspace: WorkspaceService): void {
+                  this.#workspace = workspace;
+                }
+
+                /** Full root change in one call: Rust-side grant + registry upsert first
+                 * (fail-closed), then the workspace switch. Every root change goes through
+                 * here — Activity Rail button, welcome-state button, boot re-grant — so the
+                 * grant-before-switch ordering is structural, not conventional. Passing
+                 * null clears the frontend only (no Rust call).
+                 * @returns True when the root changed; false when a workspace switch guard rejected it. */
+                async changeRoot(root: string | null): Promise<boolean> {
+                  if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+                  const workspace = this.#workspace;
+                  if (!(await workspace.confirmSwitch())) return false;
+                  if (root !== null) await this.setRoot(this.currentLabel(), root);
+                  workspace.forceSetRoot(root);
+                  return true;
+                }
+
+                /** Native confirm dialog (close-guard prompt); true = proceed. */
+                confirmDialog(message: string): Promise<boolean> {
+                  return this.#deps.confirmDialog(message);
+                }
+
+                /** Mark this window's close listener as ready; the native shell can now
+                 * synchronously cancel native close requests before asking the webview. */
+                async markCloseGuardReady(): Promise<void> {
+                  await this.#syncNativeReady();
+                }
+
+                /** Force this window's native close-guard flag, bypassing live state. */
+                async #setNativeReady(ready: boolean): Promise<void> {
+                  await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+                }
+
+                /** Arm the native shell only while the aggregated listener is installed, so
+                 * startup, guard-less and already-confirmed windows keep native direct close. */
+                async #syncNativeReady(): Promise<void> {
+                  await this.#setNativeReady(this.#offNativeClose !== null);
+                }
+
+                /** Aggregate document guards into one close decision. Every native request
+                 * is synchronously cancelled first; only when every dirty guard confirms the
+                 * discard does this method close through the destroy seam. */
+                async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
+                  const id = this.#nextGuardId++;
+                  this.#guards.set(id, { isDirty, confirmDiscard });
+                  if (!this.#offNativeClose) {
+                    this.#offNativeClose = await this.#deps.onCloseRequested((e) => void this.#handleClose(e));
+                    (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose = () => {
+                      void this.#handleClose({ preventDefault: () => {} });
+                    };
+                    await this.#syncNativeReady();
+                  }
+                  return async () => {
+                    this.#guards.delete(id);
+                    if (this.#guards.size === 0 && this.#offNativeClose) {
+                      const off = this.#offNativeClose;
+                      this.#offNativeClose = null;
+                      await off();
+                      delete (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose;
+                      await this.#syncNativeReady();
+                    }
+                  };
+                }
+
+                async #handleClose(e: { preventDefault(): void }): Promise<void> {
+                  e.preventDefault();
+                  if (this.#closing) return;
+                  this.#closing = true;
+                  try {
+                    for (const guard of this.#guards.values()) {
+                      if (!guard.isDirty()) continue;
+                      if (!(await guard.confirmDiscard())) return;
+                    }
+                    await this.#setNativeReady(false);
+                    await this.#deps.destroy();
+                  } finally {
+                    this.#closing = false;
+                  }
+                }
+              }
+
+            note: |
+                本次变更加入了关窗前的守卫聚合：先阻止原生销毁并防重入，再逐个确认文档；全部放行后才标记 native ready 并销毁窗口。
+
+      - path: src/ui/viewer.ts
+        note: 统一错误条、加载态、窗口标题规则和 Mod-S 键位。
+        changes:
+          - snippet: |
+              /** Show an in-app discard confirmation and resolve the user's choice.
+               * Used for close guarding: Tauri's native confirm is not presented while a
+               * CloseRequested handler is pending on macOS, so this stays inside the webview.
+               * @param file Name of the dirty document shown in the prompt.
+               * @param action Verb used on the confirm button ("关闭" / "切换").
+               * @returns True to discard and proceed, false to cancel. */
+              export function confirmDiscardDialog(file: string, action = "关闭"): Promise<boolean> {
+                return new Promise((resolve) => {
+                  const overlay = document.createElement("div");
+                  overlay.className = "viewer-confirm";
+                  overlay.setAttribute("role", "dialog");
+                  overlay.setAttribute("aria-modal", "true");
+                  overlay.setAttribute("aria-label", `放弃未保存的修改并${action}`);
+                  const card = document.createElement("div");
+                  card.className = "viewer-confirm-card";
+                  const title = document.createElement("h2");
+                  title.textContent = `放弃对 ${file} 的未保存修改并${action}？`;
+                  const hint = document.createElement("p");
+                  hint.textContent = "确认后未保存的修改将丢失。";
+                  const actions = document.createElement("div");
+                  actions.className = "viewer-confirm-actions";
+                  const done = (value: boolean): void => {
+                    overlay.remove();
+                    resolve(value);
+                  };
+                  const cancelBtn = labelButton("close", "取消", { className: "btn btn-ghost" });
+                  cancelBtn.addEventListener("click", () => done(false));
+                  const discardBtn = labelButton("trash", `放弃并${action}`, { className: "btn btn-danger" });
+                  discardBtn.addEventListener("click", () => done(true));
+                  const onKeyDown = (event: KeyboardEvent): void => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      done(false);
+                    }
+                  };
+                  overlay.addEventListener("keydown", onKeyDown);
+                  overlay.addEventListener("click", (event) => {
+                    if (event.target === overlay) done(false);
+                  });
+                  actions.append(cancelBtn, discardBtn);
+                  card.append(title, hint, actions);
+                  overlay.append(card);
+                  document.body.append(overlay);
+                  discardBtn.focus();
+                });
+              }
+
+            note: |
+                本次变更加入了 webview 内丢弃确认框，替代 CloseRequested 期间不可靠的原生 confirm；Escape、遮罩和按钮都返回可等待结论。
+
+          - snippet: |
+              /** Bind a window-level Mod-S shortcut for one viewer.
+               * @param isActive Returns true only while the owning viewer is active.
+               * @param save Runs the viewer save action.
+               * @returns Disposer removing the shortcut listener. */
+              export function bindSaveShortcut(isActive: () => boolean, save: () => void): () => void {
+                const onKeyDown = (event: KeyboardEvent): void => {
+                  const target = event.target;
+                  // CodeMirror owns Mod-S inside `.cm-content`; its keymap already swallows that event.
+                  if (target instanceof HTMLElement && target.closest(".cm-content")) return;
+                  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s" || !isActive()) return;
+                  event.preventDefault();
+                  save();
+                };
+                window.addEventListener("keydown", onKeyDown);
+                return () => window.removeEventListener("keydown", onKeyDown);
+              }
+
+            note: |
+                本次变更加入了统一 Mod-S 保存键，仅窗口活跃时触发，并让编辑器内已消费的键位优先，避免各文档查看器抢快捷键。
+
+      - path: src/loader/guard.ts
+        note: 外置插件 workspace 与 windows 服务面收窄。
+        changes:
+          - snippet: |
+              /** Service members external plugins may touch; unlisted services keep their full method surface. */
+              const publicServiceMembers: Record<string, Set<string>> = {
+                workspace: new Set(["root", "activeFile", "events", "openFile", "guardSwitch"]),
+                windows: new Set(["currentLabel", "fetchRoot", "confirmDialog", "guardClose"]),
+                // LLM：外置插件可列举/探测/调用非流式与流式推理，配置写面（upsert/remove）与预设表仅内置插件可用。
+                llm: new Set(["listEndpoints", "probe", "chat", "chatStream"]),
+              };
+
+            note: |
+                本次变更收紧了外置插件可见的 workspace/windows 成员面，保留阅读和守卫所需方法，移除编程换根等宿主控制能力。
+
+  - group: 查看器接入
+    attention: skim
+    why: 三格式查看器接入共享套件与代际防竞态。
+    files:
+      - path: src/plugins/doc-markdown/index.ts
+        note: 单调 open sequence 拒绝迟到读取，保存捕获快照。
+      - path: src/plugins/doc-excel/index.ts
+        note: 错误与加载互斥，保留 sequence 防竞态。
+      - path: src/plugins/doc-video/index.ts
+        note: Space 与左右方向键，迟到错误按渲染代际丢弃。
+      - path: src/plugins/app-shell/index.ts
+        note: 窗口标题基线，文档插件自持时覆盖。
+      - path: src/plugins/app-windows/index.ts
+        note: 多窗口与守卫路径接线。
+      - path: src/bootstrap.ts
+        note: workspace controller 与 windows 服务绑定。
+  - group: 测试
+    attention: skim
+    why: 守卫、竞态与键位行为由测试钉住。
+    files:
+      - path: tests/guard.test.ts
+        note: 切换守卫拒绝与放行。
+      - path: tests/ui-viewer.test.ts
+        note: 共享错误条、加载态与标题规则。
+      - path: tests/doc-markdown-edit.test.ts
+        note: 保存代际与脏状态。
+      - path: tests/doc-video.test.ts
+        note: 播放键与迟到错误。
+      - path: tests/host-services.test.ts
+        note: workspace 与 windows 服务组合。
+  - group: 机械伴生
+    attention: skip
+    why: null
+    files:
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: docs/architecture.i18n.yaml
+        note: 配对记录，代表全部 i18n 伴生文件。
+reviewGuide:
+  order:
+    - src/host/workspace.ts
+    - src/host/windows.ts
+    - src/ui/viewer.ts
+    - src/plugins/doc-markdown/index.ts
+    - tests/guard.test.ts
+  risks:
+    - 真实 Tauri 下 CloseRequested 处理期间原生 confirm 不显示，守卫确认改走应用内自绘对话框。
+    - openFile 与 setRoot 改异步布尔，调用方忽略返回值会产生时序竞态。
+  acceptance:
+    - item: 三格式切换一致且空态明确
+      evidence: tests/ui-viewer.test.ts 与 tests/app-shell.test.ts
+    - item: 脏文档切换与换库被守卫拦下
+      evidence: tests/guard.test.ts 与 tests/host-services.test.ts
+    - item: Mod-S、视频 Space 与方向键可用
+      evidence: tests/doc-markdown-edit.test.ts 与 tests/doc-video.test.ts
+    - item: pnpm test、build、verify:layering、verify:env-independence 绿
+      evidence: 本仓门禁套件
+verification:
+  - pnpm test（vitest）
+  - pnpm build
+  - pnpm verify:layering
+  - pnpm verify:env-independence
+  - cargo test
+touches:
+  - feature:markdown-read
+  - feature:excel-view
+  - feature:video-play
+  - feature:multi-window
+  - file:src/host/workspace.ts
+  - file:src/host/windows.ts
+  - file:src/ui/viewer.ts
+architecturalFlowchart:
+  title: 切换守卫上收到 WorkspaceService
+  explanation: 表达切换请求必须先经过 WorkspaceService 聚合守卫：脏文档分支先确认，干净与取消分支都收敛到明确状态；集中画这条链说明守卫不能散落在各个查看器入口。
+  nodes:
+    - id: request
+      label: 切换或换根请求
+      shape: stadium
+    - id: guard
+      label: WorkspaceService 聚合守卫
+    - id: dirty
+      label: 查看器是否脏
+      shape: diamond
+    - id: confirm
+      label: 查看器确认闭包
+    - id: apply
+      label: openFile/setRoot 返回真并切换
+      shape: rounded
+    - id: keep
+      label: 保持原状态
+      shape: rounded
+  edges:
+    - from: request
+      to: guard
+    - from: guard
+      to: dirty
+    - from: dirty
+      to: confirm
+      label: 脏
+    - from: confirm
+      to: apply
+      label: 用户确认
+    - from: dirty
+      to: apply
+      label: 干净
+    - from: confirm
+      to: keep
+      label: 用户取消

@@ -1,0 +1,177 @@
+kind: file-page
+source: src/bootstrap.ts
+summary: 每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）
+segments:
+  - snippet: |
+      import { Context } from "cordis";
+      import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+      import { listen } from "@tauri-apps/api/event";
+      import { open, confirm } from "@tauri-apps/plugin-dialog";
+      import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+      import { FilesService, type FilesInvokeArgs, type FilesInvokeOptions } from "./host/files";
+      import { ExcelService } from "./host/excel";
+      import { WindowsService, defaultWindowsDeps } from "./host/windows";
+      import { WorkspaceService } from "./host/workspace";
+      import { SlotsService } from "./host/slots";
+      import { PluginsService, defaultPluginsDeps } from "./host/plugins";
+      import { LlmService } from "./host/llm";
+      import { loadExternalModule } from "./loader/external";
+      import { loadManifest } from "./loader/manifest";
+      import { boot } from "./loader/boot";
+      import { MODULE_TABLE, type ModuleTable } from "./loader/table";
+    note: |
+      导入面先集中暴露宿主边界：Context 是启动产物，七个宿主服务与 loader 组成启动装配链；Tauri API 只在 defaultEnv 绑定处进入业务代码。
+  - snippet: |
+      /** Injected environment; defaults bind real Tauri APIs (tests fake these). */
+      export interface BootstrapEnv {
+        invoke: (cmd: string, args?: FilesInvokeArgs, options?: FilesInvokeOptions) => Promise<unknown>;
+        listen: (event: string, cb: (e: { payload: unknown }) => void) => Promise<() => void>;
+        openDialog: () => Promise<string | null>;
+        assetUrl: (path: string) => string;
+        currentLabel: () => string;
+        onCloseRequested: (cb: (e: { preventDefault(): void }) => void) => Promise<() => void>;
+        /** Native confirm dialog (close-guard prompt); defaults to the real one. */
+        confirmDialog?: (message: string) => Promise<boolean>;
+        table?: ModuleTable;
+        /** 外置装载通道注桩（测试用）；缺省为真实 blob 通道。 */
+        loadExternal?: (code: string) => Promise<Record<string, unknown>>;
+        /** 本地导入 tgz 的选框注桩（测试用）；缺省为真实 dialog。 */
+        openTgz?: () => Promise<string | null>;
+      }
+    note: |
+      BootstrapEnv 是窗口启动的接缝：Tauri 命令、事件、对话框、资源 URL、窗口身份与关闭确认都可替换。table、外置装载和 tgz 选择是测试探针，缺省时仍走真实通道。
+  - snippet: |
+      /** Real bindings. */
+      export const defaultEnv: BootstrapEnv = {
+        invoke,
+        listen,
+        openDialog: () => open({ directory: true, multiple: false }) as Promise<string | null>,
+        assetUrl: convertFileSrc,
+        currentLabel: () => getCurrentWebviewWindow().label,
+        onCloseRequested: (cb) => getCurrentWebviewWindow().onCloseRequested(cb),
+        confirmDialog: (message) => confirm(message, { title: "StudyWiki" }),
+      };
+    note: |
+      defaultEnv 是生产绑定集合，把真实 Tauri API 收拢成可注入对象。服务代码只依赖这个形状，浏览器测试或单元测试即可提供假实现。
+  - snippet: |
+      /** Per-window bootstrap: label → root → context + host services → manifest → boot.
+       * @param env Injected bindings; omitted fields fall back to the real Tauri ones.
+       * @returns The activated host context (plugins attached, audit passed). */
+      export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context> {
+        const ctx = new Context();
+        const files = new FilesService({ invoke: env.invoke, listen: env.listen, openDialog: env.openDialog, assetUrl: env.assetUrl });
+        const excel = new ExcelService(files);
+        const windows = new WindowsService({
+          invoke: env.invoke,
+          currentLabel: env.currentLabel,
+          onCloseRequested: env.onCloseRequested,
+          confirmDialog: env.confirmDialog ?? defaultWindowsDeps.confirmDialog,
+          destroy: defaultWindowsDeps.destroy,
+        });
+        const workspace = new WorkspaceService();
+        windows.bindWorkspace(workspace);
+        const slots = new SlotsService();
+        const plugins = new PluginsService({
+          invoke: env.invoke,
+          loadExternal: env.loadExternal ?? loadExternalModule,
+          pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
+        });
+        const llm = new LlmService({ invoke: env.invoke });
+        ctx.reflect.provide("files", files);
+        ctx.reflect.provide("excel", excel);
+        ctx.reflect.provide("windows", windows);
+        ctx.reflect.provide("workspace", workspace.facade);
+        ctx.reflect.provide("slots", slots);
+        ctx.reflect.provide("plugins", plugins);
+        ctx.reflect.provide("llm", llm);
+    note: |
+      每个窗口独立创建 Context，并装配七个宿主服务后逐一注入。文件服务先组装成 Excel 的依赖，workspace 绑给 windows，插件服务获得唯一外置装载缝。
+  - snippet: |
+      export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context> {
+        const ctx = new Context();
+        const files = new FilesService({ invoke: env.invoke, listen: env.listen, openDialog: env.openDialog, assetUrl: env.assetUrl });
+        const excel = new ExcelService(files);
+        const windows = new WindowsService({
+          invoke: env.invoke,
+          currentLabel: env.currentLabel,
+          onCloseRequested: env.onCloseRequested,
+          confirmDialog: env.confirmDialog ?? defaultWindowsDeps.confirmDialog,
+          destroy: defaultWindowsDeps.destroy,
+        });
+        const workspace = new WorkspaceService();
+        windows.bindWorkspace(workspace);
+        const slots = new SlotsService();
+        const plugins = new PluginsService({
+          invoke: env.invoke,
+          loadExternal: env.loadExternal ?? loadExternalModule,
+          pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
+        });
+        const llm = new LlmService({ invoke: env.invoke });
+        ctx.reflect.provide("files", files);
+        ctx.reflect.provide("excel", excel);
+        ctx.reflect.provide("windows", windows);
+        ctx.reflect.provide("workspace", workspace.facade);
+        ctx.reflect.provide("slots", slots);
+        ctx.reflect.provide("plugins", plugins);
+        ctx.reflect.provide("llm", llm);
+        await files.start();
+        // 持久 root 启动即重授权（配置 scope 已收空，运行期动态注入是唯一通道）。
+        const root = await windows.fetchRoot(windows.currentLabel());
+        await windows.changeRoot(root);
+        // 注入行叠加在静态表上（同 id 覆盖）：测试补探针行时，默认清单仍含全部内置插件。
+        const table: ModuleTable = { ...MODULE_TABLE, ...env.table };
+        const manifest = await loadManifest(
+          () => env.invoke("read_manifest") as Promise<string | null>,
+          (json) => env.invoke("write_manifest", { json }).then(() => undefined),
+          table,
+        );
+    note: |
+      文件服务启动后读取当前窗口的持久 root 并重新授权。装载清单使用静态表叠加注入行，同 id 覆盖让测试可以在不丢内置插件的情况下加探针。
+  - snippet: |
+      export async function bootstrap(env: BootstrapEnv = defaultEnv): Promise<Context> {
+        const ctx = new Context();
+        const files = new FilesService({ invoke: env.invoke, listen: env.listen, openDialog: env.openDialog, assetUrl: env.assetUrl });
+        const excel = new ExcelService(files);
+        const windows = new WindowsService({
+          invoke: env.invoke,
+          currentLabel: env.currentLabel,
+          onCloseRequested: env.onCloseRequested,
+          confirmDialog: env.confirmDialog ?? defaultWindowsDeps.confirmDialog,
+          destroy: defaultWindowsDeps.destroy,
+        });
+        const workspace = new WorkspaceService();
+        windows.bindWorkspace(workspace);
+        const slots = new SlotsService();
+        const plugins = new PluginsService({
+          invoke: env.invoke,
+          loadExternal: env.loadExternal ?? loadExternalModule,
+          pickTgz: env.openTgz ?? defaultPluginsDeps.pickTgz,
+        });
+        const llm = new LlmService({ invoke: env.invoke });
+        ctx.reflect.provide("files", files);
+        ctx.reflect.provide("excel", excel);
+        ctx.reflect.provide("windows", windows);
+        ctx.reflect.provide("workspace", workspace.facade);
+        ctx.reflect.provide("slots", slots);
+        ctx.reflect.provide("plugins", plugins);
+        ctx.reflect.provide("llm", llm);
+        await files.start();
+        // 持久 root 启动即重授权（配置 scope 已收空，运行期动态注入是唯一通道）。
+        const root = await windows.fetchRoot(windows.currentLabel());
+        await windows.changeRoot(root);
+        // 注入行叠加在静态表上（同 id 覆盖）：测试补探针行时，默认清单仍含全部内置插件。
+        const table: ModuleTable = { ...MODULE_TABLE, ...env.table };
+        const manifest = await loadManifest(
+          () => env.invoke("read_manifest") as Promise<string | null>,
+          (json) => env.invoke("write_manifest", { json }).then(() => undefined),
+          table,
+        );
+        const report = await boot(ctx, manifest, table, (name) => plugins.loadModule(name), {
+          snapshot: (name) => plugins.snapshot(name),
+        });
+        plugins.bootBroken = report.broken;
+        await windows.markCloseGuardReady();
+        return ctx;
+      }
+    note: |
+      boot 返回的报告里，内置失败已经抛错，外置坏行交给插件服务投影。最后标记关闭守卫就绪并返回已激活 Context，入口层拿到的就是可用宿主。

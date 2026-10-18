@@ -1,0 +1,58 @@
+kind: file-page
+source: src/loader/table.ts
+summary: 静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）
+segments:
+  - snippet: |
+      import type { PluginModule } from "./types";
+      import * as appShell from "../plugins/app-shell";
+      import * as viewFiletree from "../plugins/view-filetree";
+      import * as docMarkdown from "../plugins/doc-markdown";
+      import * as docVideo from "../plugins/doc-video";
+      import * as docExcel from "../plugins/doc-excel";
+      import * as appAgent from "../plugins/app-agent";
+      import * as appWindows from "../plugins/app-windows";
+      import * as pluginManager from "../plugins/plugin-manager";
+      import * as llmSettings from "../plugins/llm-settings";
+      import * as agentCore from "../plugins/agent-core";
+    note: |
+      静态表直接 import 全部内置插件模块。构建器因此能在打包期确定内置集合，不留下运行时发现机制。
+  - snippet: |
+      /** One static module table row. */
+      export interface TableEntry {
+        plugin: PluginModule;
+        defaults: Record<string, unknown>;
+      }
+    note: |
+      TableEntry 成对保存插件模块和默认配置。默认配置跟插件一起登记，避免散落在启动代码里。
+  - snippet: |
+      /** Static module table: every built-in plugin keyed by id. Rows land with
+       * their plugin tasks; Phase 2 adds external modules as another source. */
+      export type ModuleTable = Record<string, TableEntry>;
+
+      /** The build-time module table (single home). */
+      export const MODULE_TABLE: ModuleTable = {};
+    note: |
+      ModuleTable 是 id 到 TableEntry 的记录，MODULE_TABLE 是内置插件的单一 home。清单和 boot 都以它为内置解析源。
+  - snippet: |
+      Object.assign(MODULE_TABLE, {
+        "app-shell": { plugin: appShell as PluginModule, defaults: { title: "StudyWiki" } },
+        "view-filetree": { plugin: viewFiletree as PluginModule, defaults: { ignoreDotfiles: true } },
+        "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
+        "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
+        "doc-excel": { plugin: docExcel as PluginModule, defaults: {} },
+    note: |
+      Object.assign 先登记 shell、文件树和三种文档插件，并写入必要默认值。每行对应一个插件任务落地，方便审查插件增长。
+  - snippet: |
+      Object.assign(MODULE_TABLE, {
+        "app-shell": { plugin: appShell as PluginModule, defaults: { title: "StudyWiki" } },
+        "view-filetree": { plugin: viewFiletree as PluginModule, defaults: { ignoreDotfiles: true } },
+        "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
+        "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
+        "doc-excel": { plugin: docExcel as PluginModule, defaults: {} },
+        "app-agent": { plugin: appAgent as PluginModule, defaults: {} },
+        "app-windows": { plugin: appWindows as PluginModule, defaults: {} },
+        "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
+        "llm-settings": { plugin: llmSettings as PluginModule, defaults: {} },
+        "agent-core": { plugin: agentCore as PluginModule, defaults: {} },
+    note: |
+      后半段登记 agent、窗口、插件管理、LLM 设置和 agent-core。整个表在构建期闭合，新增或退役内置插件必须改这里。

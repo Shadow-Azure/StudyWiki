@@ -1,0 +1,94 @@
+kind: file-page
+source: src/plugins/app-agent/attachments.ts
+summary: app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
+segments:
+  - snippet: |
+      /** Media source accepted by the chat wire contract; mirrors `host/llm.ts`. */
+      export type MediaSource =
+        | { kind: "path"; path: string }
+        | { kind: "inline"; data: string; mimeType: string }
+        | { kind: "url"; url: string };
+
+      /** A media item staged in the composer before a chat request is sent. */
+      export interface PendingAttachment {
+        /** Content part sent verbatim to `ctx.llm.chatStream`. */
+        part: { type: "image" | "audio"; source: MediaSource };
+        /** Short chip label shown to the user. */
+        label: string;
+      }
+
+      /** 单附件解码字节上限：与 Rust llm.rs `MAX_ATTACHMENT_BYTES` 同值同语义（硬上限 + 明确报错，
+       * 不做压缩/归一化——OpenAI 兼容图片 base64 上限 20 MB）。 */
+      export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+    note: |
+      附件契约定义发送前可携带的媒体来源和暂存项，并与宿主 LLM 服务的 inline 来源保持同形。20 MB 是读取字节前的硬上限，明确拒绝超限文件而不做压缩或格式转换。
+  - snippet: |
+      /** Outcome of converting one pasted/dropped file: an accepted attachment, or a
+       * user-facing rejection (unsupported type / over the size hard cap). */
+      export type AttachmentResult =
+        | { ok: true; attachment: PendingAttachment }
+        | { ok: false; reason: "unsupported" | "oversized"; message: string };
+    note: |
+      转换结果用可区分联合表达成功与用户可读失败。unsupported 与 oversized 分开，界面能直接给出准确原因。
+  - snippet: |
+      /** Uint8Array → base64：8 KB 分块调 `String.fromCharCode.apply`，避免逐字节
+       * `binary +=` 的千万级循环卡主线程（输出与逐字节拼接逐位一致）。 */
+      function bytesToBase64(bytes: Uint8Array): string {
+        const CHUNK = 8 * 1024;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]);
+        }
+        return btoa(binary);
+      }
+    note: |
+      base64 编码按小块调用批量转换，避免大文件逐字符拼接造成主线程长时间阻塞。分块输出与普通二进制拼接结果一致。
+  - snippet: |
+      /** Convert a pasted or dropped image/audio File to an inline attachment.
+       * Text and unsupported MIME types are rejected; files over MAX_ATTACHMENT_BYTES
+       * are rejected before their bytes are read (hard cap + clear error, no compression).
+       * @param file Browser file supplied by clipboard or drag-and-drop.
+       * @returns Accepted attachment with base64 data, or a rejection with a user-facing message. */
+      export async function fileToAttachment(file: File): Promise<AttachmentResult> {
+        const isImage = file.type.startsWith("image/");
+        const isAudio = ["audio/mpeg", "audio/wav", "audio/x-wav"].includes(file.type);
+        const name = file.name || (isImage ? "粘贴的图片" : "粘贴的音频");
+        if (!isImage && !isAudio) {
+          return { ok: false, reason: "unsupported", message: `不支持的附件类型：${name}` };
+        }
+    note: |
+      fileToAttachment 接受粘贴或拖拽的浏览器文件，并先按 MIME 判定图片或音频。不支持的类型在读字节前就返回用户可读拒绝，名称缺失时仍有稳定显示。
+  - snippet: |
+      /** Convert a pasted or dropped image/audio File to an inline attachment.
+       * Text and unsupported MIME types are rejected; files over MAX_ATTACHMENT_BYTES
+       * are rejected before their bytes are read (hard cap + clear error, no compression).
+       * @param file Browser file supplied by clipboard or drag-and-drop.
+       * @returns Accepted attachment with base64 data, or a rejection with a user-facing message. */
+      export async function fileToAttachment(file: File): Promise<AttachmentResult> {
+        const isImage = file.type.startsWith("image/");
+        const isAudio = ["audio/mpeg", "audio/wav", "audio/x-wav"].includes(file.type);
+        const name = file.name || (isImage ? "粘贴的图片" : "粘贴的音频");
+        if (!isImage && !isAudio) {
+          return { ok: false, reason: "unsupported", message: `不支持的附件类型：${name}` };
+        }
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          return {
+            ok: false,
+            reason: "oversized",
+            message: `附件超过大小上限 20 MB：${name}（请压缩或分段后再试）`,
+          };
+        }
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        return {
+          ok: true,
+          attachment: {
+            part: {
+              type: isImage ? "image" : "audio",
+              source: { kind: "inline", data: bytesToBase64(bytes), mimeType: file.type },
+            },
+            label: name,
+          },
+        };
+      }
+    note: |
+      超限文件在读入 arrayBuffer 前被拒绝，避免浪费内存。合法文件读成字节后转为 inline base64，并保留 MIME 与显示标签，形成可直接进入聊天请求的内容部件。

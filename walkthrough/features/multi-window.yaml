@@ -1,0 +1,80 @@
+kind: feature
+slug: multi-window
+title: 多窗口与关窗守卫
+behavior: |
+  活动栏可新建窗口并携带当前库根；每个窗口拥有自己的工作区状态。有关未保存内容时，红点、Cmd+Q 或窗口关闭会先取消原生动作，聚合守卫逐项确认后才销毁窗口或退出应用。
+
+modules: [src/plugins/app-windows/index.ts, src/host/windows.ts, src-tauri/src/windows.rs, src-tauri/src/native_close.rs, src-tauri/src/lib.rs, src/host/workspace.ts]
+steps:
+  - ref:
+      file: src/plugins/app-windows/index.ts
+      snippet: |
+        export function apply(ctx: Context): () => void {
+
+    note: |
+        新窗口按钮只携带当前根；欢迎态传 undefined，让新窗口也进入自己的欢迎流程。
+
+  - ref:
+      file: src-tauri/src/windows.rs
+      snippet: |
+        ) -> Result<String, String> {
+            let label = state.lock().unwrap().register(root.clone());
+            if let Some(root) = &root {
+                if let Err(e) = app.asset_protocol_scope().allow_directory(root, true) {
+                    state.lock().unwrap().remove(&label);
+                    return Err(format!("授权 asset 访问 {root} 失败：{e}"));
+                }
+
+    note: |
+        Rust 先登记 label→root 并授予该目录 asset scope；授权失败回滚登记，不留下不可用窗口。
+
+  - ref:
+      file: src/host/windows.ts
+      snippet: |
+        export class WindowsService {
+          readonly #deps: WindowsDeps;
+          #workspace: WorkspaceService | null = null;
+          #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+
+    note: |
+        换根单路先过工作区守卫，再让 Rust 授权登记成功，最后才切换前端状态；顺序是结构约束。
+
+  - ref:
+      file: src/host/windows.ts
+      snippet: |
+        export class WindowsService {
+          readonly #deps: WindowsDeps;
+          #workspace: WorkspaceService | null = null;
+          #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+          #nextGuardId = 0;
+
+    note: |
+        文档插件把自己的脏判断与确认框注册进窗口服务；首个守卫同时安装原生关闭监听。
+
+  - ref:
+      file: src/host/windows.ts
+      snippet: |
+        export class WindowsService {
+          readonly #deps: WindowsDeps;
+          #workspace: WorkspaceService | null = null;
+          #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+          #nextGuardId = 0;
+          #offNativeClose: (() => void | Promise<void>) | null = null;
+
+    note: |
+        所有守卫确认后才取消原生 ready 并 destroy；任一拒绝都会保留窗口和未保存内容。
+
+  - ref:
+      file: src-tauri/src/native_close.rs
+      snippet: |
+        ) {
+            let requests: Vec<Arc<dyn Fn() + Send + Sync>> = CLOSE_GUARDS
+                .lock()
+
+    note: |
+        Cmd+Q 的 AppKit terminate hook 不直接退出，而是触发每个已武装窗口的前端守卫请求。
+
+related:
+  notes:
+    - 参见 [原生关窗守卫](../../.agents/notes/implemented/architecture/2026-09-29-native-close-guard.md)
+    - 参见 [Tauri 壳](../../.agents/notes/implemented/architecture/2026-09-06-tauri-2-shell.md)

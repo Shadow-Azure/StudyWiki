@@ -1,1 +1,1 @@
-{"bootstrap": true, "lineCoverage": {"threshold": 0.6, "exemptions": {}}}
+{"lineCoverage":{"threshold":0.9,"exemptions":{}},"reviewCoverage":0.9}

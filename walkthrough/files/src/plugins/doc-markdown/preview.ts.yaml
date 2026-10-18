@@ -1,0 +1,34 @@
+kind: file-page
+source: src/plugins/doc-markdown/preview.ts
+summary: doc-markdown 兼容 re-export：消费方保留原导入路径并使用宿主共享 markdown 渲染器
+segments:
+  - snippet: |
+      /** Compatibility re-export: doc-markdown uses the host-shared renderer contract.
+       * 消费方保留原导入路径，doc-markdown 与 app-agent 使用同一安全策略。 */
+      export { renderMarkdown } from "../../ui/markdown";
+    note: |
+      整份文件是一个兼容再导出：doc-markdown 不再自带 markdown 实现，而是使用宿主共享渲染器。保留原导入路径能让插件内部和既有消费方平滑迁移，不必一次性改散调用点。
+  - snippet: |
+      /** Compatibility re-export: doc-markdown uses the host-shared renderer contract.
+       * 消费方保留原导入路径，doc-markdown 与 app-agent 使用同一安全策略。 */
+      export { renderMarkdown } from "../../ui/markdown";
+    note: |
+      这条桥的安全意义在于 html、linkify 和 typographer 策略集中在本仓的共享 markdown 模块里。文档预览与聊天内容走同一份信任边界，避免两个入口出现不同转义行为。
+  - snippet: |
+      /** Compatibility re-export: doc-markdown uses the host-shared renderer contract.
+       * 消费方保留原导入路径，doc-markdown 与 app-agent 使用同一安全策略。 */
+      export { renderMarkdown } from "../../ui/markdown";
+    note: |
+      从打包角度看，再导出不复制渲染逻辑，只是让导入图汇聚到同一个宿主模块。产物仍完全离线，不会引入外部渲染器或运行时补丁。
+  - snippet: |
+      /** Compatibility re-export: doc-markdown uses the host-shared renderer contract.
+       * 消费方保留原导入路径，doc-markdown 与 app-agent 使用同一安全策略。 */
+      export { renderMarkdown } from "../../ui/markdown";
+    note: |
+      作为文件页，这里刻意保持最小 API 面：只暴露 renderMarkdown。调用方无法绕过共享策略取得另一个渲染入口，后续替换实现也不会扩散契约。
+  - snippet: |
+      /** Compatibility re-export: doc-markdown uses the host-shared renderer contract.
+       * 消费方保留原导入路径，doc-markdown 与 app-agent 使用同一安全策略。 */
+      export { renderMarkdown } from "../../ui/markdown";
+    note: |
+      阅读代码时可把该文件当作边界标记而不是功能主体。真正的渲染行为与安全测试在宿主共享 markdown 模块中，本页负责说明插件为何保留这个稳定路径。

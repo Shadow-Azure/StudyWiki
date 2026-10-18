@@ -1,0 +1,60 @@
+kind: file-page
+source: src/loader/external.ts
+summary: 外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
+segments:
+  - snippet: |
+      /** 外置模块装载缝：全前端唯一动态 import 点（layering-allowlist.json 单条登记）。
+       * blob URL 通道（Phase 2 Note 决策 1 落定形态）：Rust 命令读入口源码 → JS 端
+       * Blob → 动态 import → 用后即回收。单文件零依赖契约使 blob 的常见弱点
+       * （相对导入解析、URL 生命周期）归零。
+       * @param code 插件入口 ESM 源码（UTF-8 文本，来自 read_plugin_module）。
+       * @param importFn 动态 import 实现；缺省为真实 import（webview 内 blob: 生效），
+       *   测试注入假实现以离线全链路测试。
+       * @returns 模块命名空间对象（形状校验在调用方 PluginsService.loadModule）。 */
+    note: |
+      这个模块刻意把动态 import 收敛成全前端唯一装载缝，并在 layering allowlist 单条登记。blob 通道配合单文件零依赖契约，避免相对导入和 URL 生命周期问题。
+  - snippet: |
+      export async function loadExternalModule(
+        code: string,
+        importFn: (url: string) => Promise<Record<string, unknown>> = (url) => import(/* @vite-ignore */ url),
+      ): Promise<Record<string, unknown>> {
+        const blob = new Blob([code], { type: "text/javascript" });
+        const url = URL.createObjectURL(blob);
+    note: |
+      loadExternalModule 接收 Rust 读出的入口源码和可替换 import 实现。默认实现是真实动态 import，测试则注入假函数离线跑完整链路。
+  - snippet: |
+      export async function loadExternalModule(
+        code: string,
+        importFn: (url: string) => Promise<Record<string, unknown>> = (url) => import(/* @vite-ignore */ url),
+      ): Promise<Record<string, unknown>> {
+        const blob = new Blob([code], { type: "text/javascript" });
+        const url = URL.createObjectURL(blob);
+    note: |
+      入口源码先变成 JavaScript Blob，再生成 object URL。这样 webview 能以模块语义加载同源文本，不需要额外运行时。
+  - snippet: |
+      export async function loadExternalModule(
+        code: string,
+        importFn: (url: string) => Promise<Record<string, unknown>> = (url) => import(/* @vite-ignore */ url),
+      ): Promise<Record<string, unknown>> {
+        const blob = new Blob([code], { type: "text/javascript" });
+        const url = URL.createObjectURL(blob);
+        try {
+          return await importFn(url);
+        } finally {
+    note: |
+      装载成功时直接返回模块命名空间；失败也会离开 try 块。形状校验不在这里做，调用方 PluginsService.loadModule 负责契约检查。
+  - snippet: |
+      export async function loadExternalModule(
+        code: string,
+        importFn: (url: string) => Promise<Record<string, unknown>> = (url) => import(/* @vite-ignore */ url),
+      ): Promise<Record<string, unknown>> {
+        const blob = new Blob([code], { type: "text/javascript" });
+        const url = URL.createObjectURL(blob);
+        try {
+          return await importFn(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+    note: |
+      finally 一定回收 object URL。加载结果已经在内存里，URL 不需要继续暴露，生命周期因此收敛在这次调用内。

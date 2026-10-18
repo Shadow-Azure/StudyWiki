@@ -1,0 +1,529 @@
+kind: file-page
+source: src/host/windows.ts
+summary: 窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）
+segments:
+  - snippet: |
+      /** Tauri bindings this service wraps; injectable for tests. */
+      export interface WindowsDeps {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        currentLabel: () => string;
+        onCloseRequested: (cb: (e: { preventDefault(): void }) => void | Promise<void>) => Promise<() => void>;
+        confirmDialog: (message: string) => Promise<boolean>;
+        destroy: () => Promise<void>;
+      }
+    note: WindowsDeps 概括当前 label、close 请求、确认框和 destroy 等原生缝。测试可以替换全部窗口行为，而不启动真实 webview。
+  - snippet: |
+      /** Real Tauri bindings. */
+      export const defaultWindowsDeps: WindowsDeps = {
+        invoke,
+        currentLabel: () => getCurrentWebviewWindow().label,
+        onCloseRequested: (cb) => getCurrentWebviewWindow().onCloseRequested(cb),
+        confirmDialog: (message) => confirm(message, { title: "StudyWiki" }),
+        destroy: () => getCurrentWebviewWindow().destroy(),
+      };
+    note: defaultWindowsDeps 是真实 Tauri 绑定的默认装配点。当前 label、onCloseRequested、StudyWiki 确认框和 destroy 都集中在这里，服务逻辑本身不直接 import SDK。
+  - snippet: |
+      /** Window-scoped service: window identity, creation, close guarding. */
+      export class WindowsService {
+        readonly #deps: WindowsDeps;
+        #workspace: WorkspaceService | null = null;
+        #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+        #nextGuardId = 0;
+        #offNativeClose: (() => void | Promise<void>) | null = null;
+        #closing = false;
+
+        constructor(deps: WindowsDeps = defaultWindowsDeps) {
+          this.#deps = deps;
+        }
+
+        /** This window's Tauri label. */
+        currentLabel(): string {
+          return this.#deps.currentLabel();
+        }
+
+        /** Create a new window, optionally opening `root`; returns the new label. */
+        async create(root?: string): Promise<string> {
+          return this.#deps.invoke("create_window", { root }) as Promise<string>;
+        }
+
+        /** Fetch this window's registered workspace root (null = welcome state). */
+        async fetchRoot(label: string): Promise<string | null> {
+          const state = await this.#deps.invoke("get_window_state", { label });
+          return (state as string | null) ?? null;
+        }
+
+        /** Persist this window's workspace root Rust-side (registry upsert + asset
+         * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+        async setRoot(label: string, root: string | null): Promise<void> {
+          await this.#deps.invoke("set_window_root", { label, root });
+        }
+
+        /** Bind this window-scoped service to its private workspace controller.
+         * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+        bindWorkspace(workspace: WorkspaceService): void {
+          this.#workspace = workspace;
+        }
+
+        /** Full root change in one call: Rust-side grant + registry upsert first
+         * (fail-closed), then the workspace switch. Every root change goes through
+         * here — Activity Rail button, welcome-state button, boot re-grant — so the
+         * grant-before-switch ordering is structural, not conventional. Passing
+         * null clears the frontend only (no Rust call).
+         * @returns True when the root changed; false when a workspace switch guard rejected it. */
+        async changeRoot(root: string | null): Promise<boolean> {
+          if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+          const workspace = this.#workspace;
+          if (!(await workspace.confirmSwitch())) return false;
+          if (root !== null) await this.setRoot(this.currentLabel(), root);
+          workspace.forceSetRoot(root);
+          return true;
+        }
+    note: WindowsService 保存私有 workspace、守卫集合和 native close 状态，并暴露 label、建窗、root 查询与持久化。changeRoot 是唯一换根路径：先询问 workspace 守卫，再在 Rust 侧授权和登记，最后 forceSetRoot。
+  - snippet: |
+      /** Window-scoped service: window identity, creation, close guarding. */
+      export class WindowsService {
+        readonly #deps: WindowsDeps;
+        #workspace: WorkspaceService | null = null;
+        #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+        #nextGuardId = 0;
+        #offNativeClose: (() => void | Promise<void>) | null = null;
+        #closing = false;
+
+        constructor(deps: WindowsDeps = defaultWindowsDeps) {
+          this.#deps = deps;
+        }
+
+        /** This window's Tauri label. */
+        currentLabel(): string {
+          return this.#deps.currentLabel();
+        }
+
+        /** Create a new window, optionally opening `root`; returns the new label. */
+        async create(root?: string): Promise<string> {
+          return this.#deps.invoke("create_window", { root }) as Promise<string>;
+        }
+
+        /** Fetch this window's registered workspace root (null = welcome state). */
+        async fetchRoot(label: string): Promise<string | null> {
+          const state = await this.#deps.invoke("get_window_state", { label });
+          return (state as string | null) ?? null;
+        }
+
+        /** Persist this window's workspace root Rust-side (registry upsert + asset
+         * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+        async setRoot(label: string, root: string | null): Promise<void> {
+          await this.#deps.invoke("set_window_root", { label, root });
+        }
+
+        /** Bind this window-scoped service to its private workspace controller.
+         * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+        bindWorkspace(workspace: WorkspaceService): void {
+          this.#workspace = workspace;
+        }
+
+        /** Full root change in one call: Rust-side grant + registry upsert first
+         * (fail-closed), then the workspace switch. Every root change goes through
+         * here — Activity Rail button, welcome-state button, boot re-grant — so the
+         * grant-before-switch ordering is structural, not conventional. Passing
+         * null clears the frontend only (no Rust call).
+         * @returns True when the root changed; false when a workspace switch guard rejected it. */
+        async changeRoot(root: string | null): Promise<boolean> {
+          if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+          const workspace = this.#workspace;
+          if (!(await workspace.confirmSwitch())) return false;
+          if (root !== null) await this.setRoot(this.currentLabel(), root);
+          workspace.forceSetRoot(root);
+          return true;
+        }
+
+        /** Native confirm dialog (close-guard prompt); true = proceed. */
+        confirmDialog(message: string): Promise<boolean> {
+          return this.#deps.confirmDialog(message);
+        }
+
+        /** Mark this window's close listener as ready; the native shell can now
+         * synchronously cancel native close requests before asking the webview. */
+        async markCloseGuardReady(): Promise<void> {
+          await this.#syncNativeReady();
+        }
+
+        /** Force this window's native close-guard flag, bypassing live state. */
+        async #setNativeReady(ready: boolean): Promise<void> {
+          await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+        }
+
+        /** Arm the native shell only while the aggregated listener is installed, so
+         * startup, guard-less and already-confirmed windows keep native direct close. */
+        async #syncNativeReady(): Promise<void> {
+          await this.#setNativeReady(this.#offNativeClose !== null);
+        }
+    note: 类视窗到 native ready 维护：确认框供关窗提示复用；markCloseGuardReady 和两个私有方法只在聚合监听存在时武装 native close-ready，让启动和无守卫窗口保持原生直关。
+  - snippet: |
+      /** Window-scoped service: window identity, creation, close guarding. */
+      export class WindowsService {
+        readonly #deps: WindowsDeps;
+        #workspace: WorkspaceService | null = null;
+        #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+        #nextGuardId = 0;
+        #offNativeClose: (() => void | Promise<void>) | null = null;
+        #closing = false;
+
+        constructor(deps: WindowsDeps = defaultWindowsDeps) {
+          this.#deps = deps;
+        }
+
+        /** This window's Tauri label. */
+        currentLabel(): string {
+          return this.#deps.currentLabel();
+        }
+
+        /** Create a new window, optionally opening `root`; returns the new label. */
+        async create(root?: string): Promise<string> {
+          return this.#deps.invoke("create_window", { root }) as Promise<string>;
+        }
+
+        /** Fetch this window's registered workspace root (null = welcome state). */
+        async fetchRoot(label: string): Promise<string | null> {
+          const state = await this.#deps.invoke("get_window_state", { label });
+          return (state as string | null) ?? null;
+        }
+
+        /** Persist this window's workspace root Rust-side (registry upsert + asset
+         * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+        async setRoot(label: string, root: string | null): Promise<void> {
+          await this.#deps.invoke("set_window_root", { label, root });
+        }
+
+        /** Bind this window-scoped service to its private workspace controller.
+         * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+        bindWorkspace(workspace: WorkspaceService): void {
+          this.#workspace = workspace;
+        }
+
+        /** Full root change in one call: Rust-side grant + registry upsert first
+         * (fail-closed), then the workspace switch. Every root change goes through
+         * here — Activity Rail button, welcome-state button, boot re-grant — so the
+         * grant-before-switch ordering is structural, not conventional. Passing
+         * null clears the frontend only (no Rust call).
+         * @returns True when the root changed; false when a workspace switch guard rejected it. */
+        async changeRoot(root: string | null): Promise<boolean> {
+          if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+          const workspace = this.#workspace;
+          if (!(await workspace.confirmSwitch())) return false;
+          if (root !== null) await this.setRoot(this.currentLabel(), root);
+          workspace.forceSetRoot(root);
+          return true;
+        }
+
+        /** Native confirm dialog (close-guard prompt); true = proceed. */
+        confirmDialog(message: string): Promise<boolean> {
+          return this.#deps.confirmDialog(message);
+        }
+
+        /** Mark this window's close listener as ready; the native shell can now
+         * synchronously cancel native close requests before asking the webview. */
+        async markCloseGuardReady(): Promise<void> {
+          await this.#syncNativeReady();
+        }
+
+        /** Force this window's native close-guard flag, bypassing live state. */
+        async #setNativeReady(ready: boolean): Promise<void> {
+          await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+        }
+
+        /** Arm the native shell only while the aggregated listener is installed, so
+         * startup, guard-less and already-confirmed windows keep native direct close. */
+        async #syncNativeReady(): Promise<void> {
+          await this.#setNativeReady(this.#offNativeClose !== null);
+        }
+
+        /** Aggregate document guards into one close decision. Every native request
+         * is synchronously cancelled first; only when every dirty guard confirms the
+         * discard does this method close through the destroy seam. */
+        async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
+          const id = this.#nextGuardId++;
+          this.#guards.set(id, { isDirty, confirmDiscard });
+          if (!this.#offNativeClose) {
+            this.#offNativeClose = await this.#deps.onCloseRequested((e) => void this.#handleClose(e));
+            (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose = () => {
+              void this.#handleClose({ preventDefault: () => {} });
+            };
+            await this.#syncNativeReady();
+          }
+          return async () => {
+            this.#guards.delete(id);
+            if (this.#guards.size === 0 && this.#offNativeClose) {
+              const off = this.#offNativeClose;
+              this.#offNativeClose = null;
+              await off();
+              delete (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose;
+              await this.#syncNativeReady();
+            }
+          };
+        }
+    note: guardClose 在完整类视窗中注册文档守卫，并在第一个守卫出现时安装 webview close listener 和全局 native hook。反订阅删除守卫，最后一个移除时卸载 hook、解除监听并同步 native ready。
+  - snippet: |
+      /** Window-scoped service: window identity, creation, close guarding. */
+      export class WindowsService {
+        readonly #deps: WindowsDeps;
+        #workspace: WorkspaceService | null = null;
+        #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+        #nextGuardId = 0;
+        #offNativeClose: (() => void | Promise<void>) | null = null;
+        #closing = false;
+
+        constructor(deps: WindowsDeps = defaultWindowsDeps) {
+          this.#deps = deps;
+        }
+
+        /** This window's Tauri label. */
+        currentLabel(): string {
+          return this.#deps.currentLabel();
+        }
+
+        /** Create a new window, optionally opening `root`; returns the new label. */
+        async create(root?: string): Promise<string> {
+          return this.#deps.invoke("create_window", { root }) as Promise<string>;
+        }
+
+        /** Fetch this window's registered workspace root (null = welcome state). */
+        async fetchRoot(label: string): Promise<string | null> {
+          const state = await this.#deps.invoke("get_window_state", { label });
+          return (state as string | null) ?? null;
+        }
+
+        /** Persist this window's workspace root Rust-side (registry upsert + asset
+         * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+        async setRoot(label: string, root: string | null): Promise<void> {
+          await this.#deps.invoke("set_window_root", { label, root });
+        }
+
+        /** Bind this window-scoped service to its private workspace controller.
+         * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+        bindWorkspace(workspace: WorkspaceService): void {
+          this.#workspace = workspace;
+        }
+
+        /** Full root change in one call: Rust-side grant + registry upsert first
+         * (fail-closed), then the workspace switch. Every root change goes through
+         * here — Activity Rail button, welcome-state button, boot re-grant — so the
+         * grant-before-switch ordering is structural, not conventional. Passing
+         * null clears the frontend only (no Rust call).
+         * @returns True when the root changed; false when a workspace switch guard rejected it. */
+        async changeRoot(root: string | null): Promise<boolean> {
+          if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+          const workspace = this.#workspace;
+          if (!(await workspace.confirmSwitch())) return false;
+          if (root !== null) await this.setRoot(this.currentLabel(), root);
+          workspace.forceSetRoot(root);
+          return true;
+        }
+
+        /** Native confirm dialog (close-guard prompt); true = proceed. */
+        confirmDialog(message: string): Promise<boolean> {
+          return this.#deps.confirmDialog(message);
+        }
+
+        /** Mark this window's close listener as ready; the native shell can now
+         * synchronously cancel native close requests before asking the webview. */
+        async markCloseGuardReady(): Promise<void> {
+          await this.#syncNativeReady();
+        }
+
+        /** Force this window's native close-guard flag, bypassing live state. */
+        async #setNativeReady(ready: boolean): Promise<void> {
+          await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+        }
+
+        /** Arm the native shell only while the aggregated listener is installed, so
+         * startup, guard-less and already-confirmed windows keep native direct close. */
+        async #syncNativeReady(): Promise<void> {
+          await this.#setNativeReady(this.#offNativeClose !== null);
+        }
+
+        /** Aggregate document guards into one close decision. Every native request
+         * is synchronously cancelled first; only when every dirty guard confirms the
+         * discard does this method close through the destroy seam. */
+        async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
+          const id = this.#nextGuardId++;
+          this.#guards.set(id, { isDirty, confirmDiscard });
+          if (!this.#offNativeClose) {
+            this.#offNativeClose = await this.#deps.onCloseRequested((e) => void this.#handleClose(e));
+            (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose = () => {
+              void this.#handleClose({ preventDefault: () => {} });
+            };
+            await this.#syncNativeReady();
+          }
+          return async () => {
+            this.#guards.delete(id);
+            if (this.#guards.size === 0 && this.#offNativeClose) {
+              const off = this.#offNativeClose;
+              this.#offNativeClose = null;
+              await off();
+              delete (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose;
+              await this.#syncNativeReady();
+            }
+          };
+        }
+
+        async #handleClose(e: { preventDefault(): void }): Promise<void> {
+          e.preventDefault();
+          if (this.#closing) return;
+          this.#closing = true;
+          try {
+            for (const guard of this.#guards.values()) {
+              if (!guard.isDirty()) continue;
+              if (!(await guard.confirmDiscard())) return;
+            }
+            await this.#setNativeReady(false);
+            await this.#deps.destroy();
+          } finally {
+            this.#closing = false;
+          }
+        }
+      }
+    note: 完整 WindowsService 聚合所有文档守卫后显式销毁窗口：#handleClose 先 preventDefault，再用 closing 防止重入；dirty 守卫逐个确认，全部同意才关闭 native ready 并 destroy。
+  - snippet: |
+      import { invoke } from "@tauri-apps/api/core";
+      import { confirm } from "@tauri-apps/plugin-dialog";
+      import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+      import type { WorkspaceService } from "./workspace";
+
+      /** Tauri bindings this service wraps; injectable for tests. */
+      export interface WindowsDeps {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        currentLabel: () => string;
+        onCloseRequested: (cb: (e: { preventDefault(): void }) => void | Promise<void>) => Promise<() => void>;
+        confirmDialog: (message: string) => Promise<boolean>;
+        destroy: () => Promise<void>;
+      }
+
+      /** Real Tauri bindings. */
+      export const defaultWindowsDeps: WindowsDeps = {
+        invoke,
+        currentLabel: () => getCurrentWebviewWindow().label,
+        onCloseRequested: (cb) => getCurrentWebviewWindow().onCloseRequested(cb),
+        confirmDialog: (message) => confirm(message, { title: "StudyWiki" }),
+        destroy: () => getCurrentWebviewWindow().destroy(),
+      };
+
+      /** Window-scoped service: window identity, creation, close guarding. */
+      export class WindowsService {
+        readonly #deps: WindowsDeps;
+        #workspace: WorkspaceService | null = null;
+        #guards = new Map<number, { isDirty: () => boolean; confirmDiscard: () => Promise<boolean> }>();
+        #nextGuardId = 0;
+        #offNativeClose: (() => void | Promise<void>) | null = null;
+        #closing = false;
+
+        constructor(deps: WindowsDeps = defaultWindowsDeps) {
+          this.#deps = deps;
+        }
+
+        /** This window's Tauri label. */
+        currentLabel(): string {
+          return this.#deps.currentLabel();
+        }
+
+        /** Create a new window, optionally opening `root`; returns the new label. */
+        async create(root?: string): Promise<string> {
+          return this.#deps.invoke("create_window", { root }) as Promise<string>;
+        }
+
+        /** Fetch this window's registered workspace root (null = welcome state). */
+        async fetchRoot(label: string): Promise<string | null> {
+          const state = await this.#deps.invoke("get_window_state", { label });
+          return (state as string | null) ?? null;
+        }
+
+        /** Persist this window's workspace root Rust-side (registry upsert + asset
+         * scope grant, recursive). Idempotent; also called at boot to re-grant. */
+        async setRoot(label: string, root: string | null): Promise<void> {
+          await this.#deps.invoke("set_window_root", { label, root });
+        }
+
+        /** Bind this window-scoped service to its private workspace controller.
+         * @param workspace Host-owned WorkspaceService; never the plugin-facing facade. */
+        bindWorkspace(workspace: WorkspaceService): void {
+          this.#workspace = workspace;
+        }
+
+        /** Full root change in one call: Rust-side grant + registry upsert first
+         * (fail-closed), then the workspace switch. Every root change goes through
+         * here — Activity Rail button, welcome-state button, boot re-grant — so the
+         * grant-before-switch ordering is structural, not conventional. Passing
+         * null clears the frontend only (no Rust call).
+         * @returns True when the root changed; false when a workspace switch guard rejected it. */
+        async changeRoot(root: string | null): Promise<boolean> {
+          if (!this.#workspace) throw new Error("windows service is not bound to a workspace controller");
+          const workspace = this.#workspace;
+          if (!(await workspace.confirmSwitch())) return false;
+          if (root !== null) await this.setRoot(this.currentLabel(), root);
+          workspace.forceSetRoot(root);
+          return true;
+        }
+
+        /** Native confirm dialog (close-guard prompt); true = proceed. */
+        confirmDialog(message: string): Promise<boolean> {
+          return this.#deps.confirmDialog(message);
+        }
+
+        /** Mark this window's close listener as ready; the native shell can now
+         * synchronously cancel native close requests before asking the webview. */
+        async markCloseGuardReady(): Promise<void> {
+          await this.#syncNativeReady();
+        }
+
+        /** Force this window's native close-guard flag, bypassing live state. */
+        async #setNativeReady(ready: boolean): Promise<void> {
+          await this.#deps.invoke("set_close_guard_ready", { label: this.currentLabel(), ready });
+        }
+
+        /** Arm the native shell only while the aggregated listener is installed, so
+         * startup, guard-less and already-confirmed windows keep native direct close. */
+        async #syncNativeReady(): Promise<void> {
+          await this.#setNativeReady(this.#offNativeClose !== null);
+        }
+
+        /** Aggregate document guards into one close decision. Every native request
+         * is synchronously cancelled first; only when every dirty guard confirms the
+         * discard does this method close through the destroy seam. */
+        async guardClose(isDirty: () => boolean, confirmDiscard: () => Promise<boolean>): Promise<() => void> {
+          const id = this.#nextGuardId++;
+          this.#guards.set(id, { isDirty, confirmDiscard });
+          if (!this.#offNativeClose) {
+            this.#offNativeClose = await this.#deps.onCloseRequested((e) => void this.#handleClose(e));
+            (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose = () => {
+              void this.#handleClose({ preventDefault: () => {} });
+            };
+            await this.#syncNativeReady();
+          }
+          return async () => {
+            this.#guards.delete(id);
+            if (this.#guards.size === 0 && this.#offNativeClose) {
+              const off = this.#offNativeClose;
+              this.#offNativeClose = null;
+              await off();
+              delete (globalThis as typeof globalThis & { __studywikiNativeClose?: () => void }).__studywikiNativeClose;
+              await this.#syncNativeReady();
+            }
+          };
+        }
+
+        async #handleClose(e: { preventDefault(): void }): Promise<void> {
+          e.preventDefault();
+          if (this.#closing) return;
+          this.#closing = true;
+          try {
+            for (const guard of this.#guards.values()) {
+              if (!guard.isDirty()) continue;
+              if (!(await guard.confirmDiscard())) return;
+            }
+            await this.#setNativeReady(false);
+            await this.#deps.destroy();
+          } finally {
+            this.#closing = false;
+          }
+        }
+      }
+    note: 完整文件把可注入原生缝与窗口身份、换根、守卫逻辑分开。这样授权先行换根和关窗聚合都留在宿主，插件只能通过 workspace facade 或受控窗口命令触发。

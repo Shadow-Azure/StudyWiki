@@ -32,7 +32,8 @@
     "install:hooks": "node scripts/install-git-hooks.mjs",
     "route:gates": "node scripts/route-gates.mjs",
     "archive:note": "node scripts/archive-agent-note.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "walkthrough:review": "node scripts/build-walkthrough.mjs --review origin/main"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -52,6 +53,7 @@
     "@standard-schema/spec": "^1.1.0",
     "@tauri-apps/cli": "^2.9.0",
     "@types/markdown-it": "^14.1.2",
+    "dagre": "^0.8.5",
     "jsdom": "^30.0.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.0",

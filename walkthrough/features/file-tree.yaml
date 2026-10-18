@@ -1,0 +1,79 @@
+kind: feature
+slug: file-tree
+title: 文件树浏览
+behavior: |
+  打开学习库后，侧栏按目录展示文件树；用户可折叠或展开目录、手动刷新，并点击 Markdown、Excel 或视频文件打开对应阅读面。当前文件会持续高亮，文件系统变化时树自动重读。
+
+modules: [src/host/files.ts, src/host/workspace.ts, src/plugins/view-filetree/index.ts, src/plugins/view-filetree/tree.ts, src/types.ts]
+steps:
+  - ref:
+      file: src/host/files.ts
+      snippet: |
+        export class FilesService {
+          readonly #deps: FilesDeps;
+          readonly #events = createEmitter<{ "fs-changed": string }>();
+          #unlisten: (() => void) | null = null;
+
+    note: |
+        文件树的数据入口收敛在宿主文件服务；Rust 返回前后端共享的 FileNode 树，UI 不直接触达文件命令。
+
+  - ref:
+      file: src/plugins/view-filetree/index.ts
+      snippet: |
+        export function apply(ctx: Context, config: TreeConfig): () => void {
+          let nodes: FileNode[] = [];
+          const expanded = new Set<string>();
+          let host: HTMLElement | null = null;
+
+          const render = (): void => {
+
+    note: |
+        插件从工作区读取当前根，再请求数据并重绘。空根保持欢迎态，不发起多余装载。
+
+  - ref:
+      file: src/plugins/view-filetree/tree.ts
+      snippet: |
+        export function visibleRows(nodes: FileNode[], expanded: ReadonlySet<string>): Array<{ node: FileNode; depth: number }> {
+          const out: Array<{ node: FileNode; depth: number }> = [];
+          const walk = (list: FileNode[], depth: number): void => {
+            for (const node of list) {
+              out.push({ node, depth });
+              if (node.children && expanded.has(node.path)) walk(node.children, depth + 1);
+            }
+          };
+          walk(nodes, 0);
+          return out;
+        }
+
+    note: |
+        纯函数按深度优先顺序把“已过滤树 + 展开集合”投影成可见行；缩进由 depth 推导，DOM 不自建遍历规则。
+
+  - ref:
+      file: src/plugins/view-filetree/index.ts
+      snippet: |
+        export function apply(ctx: Context, config: TreeConfig): () => void {
+          let nodes: FileNode[] = [];
+          const expanded = new Set<string>();
+          let host: HTMLElement | null = null;
+
+          const render = (): void => {
+            if (!host) return;
+            host.replaceChildren();
+            const root = ctx.workspace.root;
+
+    note: |
+        目录点击只改变展开意图；文件点击交给工作区守卫路径，因此未保存草稿有机会先确认。
+
+  - ref:
+      file: src/host/workspace.ts
+      snippet: |
+        export class WorkspaceService {
+          readonly facade: WorkspaceFacade;
+          #root: string | null = null;
+
+    note: |
+        打开成功后由 file-opened 事件驱动树高亮和各文档查看器，文件树不直接控制阅读面。
+
+related:
+  notes:
+    - 参见 [Excel 查看器决策](../../.agents/notes/implemented/feature/2026-09-20-excel-viewer.md)

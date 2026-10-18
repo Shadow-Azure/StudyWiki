@@ -1,0 +1,1882 @@
+kind: change
+issue: m2-03-basic-agent
+skill_gen_commit_id: b6bb224
+title: #51 基础 agent 插件
+scale:
+  files: 99
+  additions: 10236
+  deletions: 1274
+feature: |
+  用户在右栏与 agent 多轮对话；agent 能读取活动库内文件、用打包 ripgrep 检索、写新笔记或按 old/new 编辑文件。写操作与越权读取按 ask/auto 审批，人或 Guardian 给出决定；历史会话保存为 JSONL，重开后可恢复继续。
+userFlow:
+  - 打开右栏 agent，选择带 tools 能力的模型。
+  - 让 agent 读取或检索活动库内文件；越授权集合的读取会进入审批。
+  - 让 agent 写新笔记或按 old/new 编辑文件；在请求批准或帮我批准模式中给出决定。
+  - 关闭后重开会话，恢复 JSONL 历史并继续追问。
+architectural: |
+  Agent 拆成无 UI 的 `agent-core` 服务插件与右栏 `app-agent` UI 插件：core 提供 `ctx.agent` 的回合状态机、四工具、审批、会话持久化和 compaction，UI 只消费快照与审批接管。工具协议使用 OpenAI 原生 function calling，`app-chat` 被统一取代。
+codeMap:
+  - group: 回合与持久化状态机
+    attention: must-read
+    why: 串行 tool loop、历史模型、JSONL 恢复和 compaction 决定 agent 是否可信。
+    files:
+      - path: src/plugins/agent-core/loop.ts
+        note: 组装 system prompt、工具声明和历史，串行执行 tool calls，只有完整回答入账。
+        changes:
+          - snippet: |
+              export async function runTurn(
+                history: AgentMessage[],
+                deps: LoopDeps,
+                signal: AbortSignal,
+              ): Promise<AgentMessage[]> {
+                const appended: AgentMessage[] = [];
+                let completedAssistant: AgentMessage | undefined;
+                deps.emit({ type: "turn-start" });
+
+                const stop = (): AgentMessage[] => {
+                  if (completedAssistant?.role === "assistant") {
+                    const completedCalls = new Set(
+                      appended
+                        .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+                        .map((message) => message.callId),
+                    );
+                    for (const call of completedAssistant.toolCalls) {
+                      if (completedCalls.has(call.id)) continue;
+                      const tool: AgentMessage = {
+                        role: "tool",
+                        callId: call.id,
+                        name: call.name,
+                        content: "已取消",
+                        isError: true,
+                      };
+                      deps.persist({ type: "message", message: tool });
+                      appended.push(tool);
+                    }
+                  }
+                  deps.emit({ type: "aborted" });
+                  return appended;
+                };
+                const fail = (e: unknown): AgentMessage[] => {
+                  deps.emit({ type: "error", message: errorMessage(e) });
+                  return appended;
+                };
+
+                for (;;) {
+                  if (signal.aborted) return stop();
+
+                  let handle: ChatStreamHandle;
+                  try {
+                    handle = await deps.chatStream({
+                      model: deps.model,
+                      messages: [
+                        { role: "system", content: deps.systemPrompt() },
+                        ...toChatMessages([...history, ...appended]),
+                      ],
+                      tools: deps.tools,
+                    });
+                  } catch (e) {
+                    return fail(e);
+                  }
+                  let snapshot: PartialAssistant;
+                  let cancelRequested = false;
+                  const cancel = async (): Promise<void> => {
+                    if (cancelRequested) return;
+                    cancelRequested = true;
+                    try {
+                      await handle.abort();
+                    } catch {
+                      // Abort delivery is best-effort; the loop still ends as aborted.
+                    }
+                  };
+                  if (signal.aborted) {
+                    await cancel();
+                    return stop();
+                  }
+                  const onAbort = () => void cancel();
+                  signal.addEventListener("abort", onAbort, { once: true });
+                  try {
+                    for await (const _chunk of handle.events) {
+                      snapshot = handle.snapshot();
+                      deps.emit({ type: "snapshot", snapshot });
+                      if (signal.aborted) {
+                        await cancel();
+                        return stop();
+                      }
+                    }
+                    if (signal.aborted) {
+                      await cancel();
+                      return stop();
+                    }
+                    await handle.settled;
+                    snapshot = handle.snapshot();
+                    if (signal.aborted || cancelRequested) return stop();
+                  } catch (e) {
+                    return fail(e);
+                  } finally {
+                    signal.removeEventListener("abort", onAbort);
+                  }
+
+                  if (!snapshot.finishReason) return stop();
+
+            note: |
+                本次变更加入了回合主循环：每轮重组 system、完整有效历史和新增消息，监听协作中止；chunk 只广播快照，半截内容不进入 appended。
+
+          - snippet: |
+              export async function runTurn(
+                history: AgentMessage[],
+                deps: LoopDeps,
+                signal: AbortSignal,
+              ): Promise<AgentMessage[]> {
+                const appended: AgentMessage[] = [];
+                let completedAssistant: AgentMessage | undefined;
+                deps.emit({ type: "turn-start" });
+
+                const stop = (): AgentMessage[] => {
+                  if (completedAssistant?.role === "assistant") {
+                    const completedCalls = new Set(
+                      appended
+                        .filter((message): message is Extract<AgentMessage, { role: "tool" }> => message.role === "tool")
+                        .map((message) => message.callId),
+                    );
+                    for (const call of completedAssistant.toolCalls) {
+                      if (completedCalls.has(call.id)) continue;
+                      const tool: AgentMessage = {
+                        role: "tool",
+                        callId: call.id,
+                        name: call.name,
+                        content: "已取消",
+                        isError: true,
+                      };
+                      deps.persist({ type: "message", message: tool });
+                      appended.push(tool);
+                    }
+                  }
+                  deps.emit({ type: "aborted" });
+                  return appended;
+                };
+                const fail = (e: unknown): AgentMessage[] => {
+                  deps.emit({ type: "error", message: errorMessage(e) });
+                  return appended;
+                };
+
+                for (;;) {
+                  if (signal.aborted) return stop();
+
+                  let handle: ChatStreamHandle;
+                  try {
+                    handle = await deps.chatStream({
+                      model: deps.model,
+                      messages: [
+                        { role: "system", content: deps.systemPrompt() },
+                        ...toChatMessages([...history, ...appended]),
+                      ],
+                      tools: deps.tools,
+                    });
+                  } catch (e) {
+                    return fail(e);
+                  }
+                  let snapshot: PartialAssistant;
+                  let cancelRequested = false;
+                  const cancel = async (): Promise<void> => {
+                    if (cancelRequested) return;
+                    cancelRequested = true;
+                    try {
+                      await handle.abort();
+                    } catch {
+                      // Abort delivery is best-effort; the loop still ends as aborted.
+                    }
+                  };
+                  if (signal.aborted) {
+                    await cancel();
+                    return stop();
+                  }
+                  const onAbort = () => void cancel();
+                  signal.addEventListener("abort", onAbort, { once: true });
+                  try {
+                    for await (const _chunk of handle.events) {
+                      snapshot = handle.snapshot();
+                      deps.emit({ type: "snapshot", snapshot });
+                      if (signal.aborted) {
+                        await cancel();
+                        return stop();
+                      }
+                    }
+                    if (signal.aborted) {
+                      await cancel();
+                      return stop();
+                    }
+                    await handle.settled;
+                    snapshot = handle.snapshot();
+                    if (signal.aborted || cancelRequested) return stop();
+                  } catch (e) {
+                    return fail(e);
+                  } finally {
+                    signal.removeEventListener("abort", onAbort);
+                  }
+
+                  if (!snapshot.finishReason) return stop();
+                  const assistant: AgentMessage = {
+                    role: "assistant",
+                    reasoning: snapshot.reasoning,
+                    text: snapshot.text,
+                    toolCalls: snapshot.toolCalls.map(({ id, name, argumentsText }) => ({
+                      id,
+                      name,
+                      argumentsText,
+                    })),
+                    usage: snapshot.usage,
+                    finishReason: snapshot.finishReason,
+                  };
+                  completedAssistant = assistant;
+                  deps.persist({ type: "message", message: assistant });
+                  appended.push(assistant);
+                  deps.emit({ type: "message", message: assistant });
+
+                  if (assistant.toolCalls.length === 0) {
+                    deps.emit({ type: "turn-end" });
+                    return appended;
+                  }
+
+
+            note: |
+                本次变更规定只有带 finishReason 的快照才能构造完整助手消息并先落账再广播，防止停止、错误或 EOF 半截污染下一轮 wire。
+
+      - path: src/plugins/agent-core/service.ts
+        note: 暴露 ctx.agent 服务，管理会话、审批模式、停止和热重载清理。
+        changes:
+          - snippet: |
+              export function createAgentService(deps: AgentServiceDeps): AgentService {
+                const threshold = deps.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
+                const sessions = new Map<string, { internal: InternalSession; session: AgentSession }>();
+                let disposed = false;
+
+                const requireRoot = (): string => {
+                  const root = deps.workspace.root;
+                  if (!root) throw new Error("尚未打开学习库");
+                  return root;
+                };
+
+                function readHeader(text: string): SessionHeader | null {
+                  try {
+                    const firstLine = text.split("\n", 1)[0] ?? "";
+                    const value: unknown = JSON.parse(firstLine);
+                    if (typeof value !== "object" || value === null) return null;
+                    const record = value as { type?: unknown; header?: unknown };
+                    const header = record.header as Partial<SessionHeader> | undefined;
+                    if (record.type !== "header" || !header) return null;
+                    if (
+                      header.v !== 1 ||
+                      typeof header.id !== "string" ||
+                      typeof header.rootPath !== "string" ||
+                      typeof header.title !== "string" ||
+                      typeof header.createdAt !== "string"
+                    ) return null;
+                    return header as SessionHeader;
+                  } catch {
+                    return null;
+                  }
+                }
+
+                function enqueue(session: InternalSession, write: () => Promise<void>): Promise<void> {
+                  session.persisting = true;
+                  const task = session.persistQueue.then(write).then(() => undefined, (error: unknown) => {
+                    console.error("agent 会话落盘失败", error);
+                    session.events.emit("agent", { type: "error", message: `会话落盘失败：${describeError(error)}` });
+                  }).finally(() => {
+                    session.persisting = false;
+                  });
+                  session.persistQueue = task;
+                  return task;
+                }
+
+                function persist(session: InternalSession, line: SessionLine): Promise<void> {
+                  session.lines.push(line);
+                  return enqueue(session, () =>
+                    deps.files.appendSessionEvent(session.path, encodeLine(line)),
+                  );
+                }
+
+                function emit(session: InternalSession, event: AgentEvent): void {
+                  session.events.emit("agent", event);
+                }
+
+                function createSession(
+                  header: SessionHeader,
+                  currentRoot: string,
+                  lines: SessionLine[],
+                  path: string,
+                  rootMismatch: string | null,
+                  isNew: boolean,
+                  mode: ApprovalMode = "ask",
+                ): { internal: InternalSession; session: AgentSession } {
+                  const controller = new AbortController();
+                  const pendingApprovals = new Map<string, (outcome: ApprovalOutcome) => void>();
+                  const pendingApprovalRequests = new Map<string, ApprovalRequest>();
+                  const internal: InternalSession = {
+                    id: header.id,
+                    path,
+                    header,
+                    currentRoot,
+                    lines,
+                    rootMismatch,
+                    mode,
+                    model: null,
+                    running: false,
+                    controller,
+                    events: createPluginEmitter<AgentEvent>(),
+                    approvals: createPluginEmitter<ApprovalRequest>(),
+                    pendingApprovals,
+                    pendingApprovalRequests,
+                    gate: undefined as unknown as ApprovalGate,
+                    isNew,
+                    persistQueue: Promise.resolve(),
+                    persisting: false,
+                    compactedUpTo: lines.reduce(
+                      (next, line, index) => line.type === "compaction" ? index + 1 : next,
+                      0,
+                    ),
+                  };
+
+                  internal.gate = createApprovalGate({
+                    mode: () => internal.mode,
+                    askHuman: (request) => new Promise<ApprovalOutcome>((resolve) => {
+                      const settle = (outcome: ApprovalOutcome): void => {
+                        pendingApprovals.delete(request.id);
+                        pendingApprovalRequests.delete(request.id);
+                        resolve(outcome);
+                      };
+                      pendingApprovals.set(request.id, settle);
+                      pendingApprovalRequests.set(request.id, request);
+                      internal.approvals.emit("approval", request);
+                    }),
+                    chat: async (request, signal) => ({
+                      content: (await deps.llm.chat({ ...request, signal })).content,
+                    }),
+                    log: (line) => void persist(internal, line),
+                  });
+
+            note: |
+                本次变更加入了会话创建装配：运行控制器、事件、审批订阅、持久化队列和压缩游标一起建立，审批门读取当前模式并广播 pending 请求。
+
+      - path: src/plugins/agent-core/session.ts
+        note: 校验并编解码 JSONL，容忍崩溃尾部损坏，恢复消息与 log-only 事件。
+        changes:
+          - snippet: |
+              /** Encode one SessionLine as a compact JSONL record.
+               * @param line Complete log event to serialize.
+               * @returns Single-line JSON text with no trailing newline. */
+              export function encodeLine(line: SessionLine): string {
+                return JSON.stringify(line);
+              }
+
+              /**
+               * Parse the append-only JSONL log. Blank lines are ignored, the first record
+               * must be a complete v1 header, and every newline-terminated record must have
+               * a complete shape. An unterminated final record is treated as a crash tail
+               * and dropped without mutating the input.
+               * @param text Full JSONL session text.
+               * @returns Header, complete pre-header-following records including the header, and tail state.
+               * @throws When the log is empty, its first record is missing or invalid, a header repeats later, or any newline-terminated record is invalid.
+               */
+              export function parseSession(text: string): {
+                header: SessionHeader;
+                lines: SessionLine[];
+                tailTruncated: boolean;
+              } {
+                const chunks = text.split("\n");
+                const tailTruncated = chunks[chunks.length - 1] !== "";
+                const completeChunks = tailTruncated ? chunks.slice(0, -1) : chunks;
+                const lines: SessionLine[] = [];
+                let header: SessionHeader | undefined;
+
+                for (const chunk of completeChunks) {
+                  if (chunk === "") continue;
+
+                  let value: unknown;
+                  try {
+                    value = JSON.parse(chunk);
+                  } catch {
+                    throw new Error("会话日志包含无效 JSON 行");
+                  }
+                  if (!isSessionLine(value)) {
+                    throw new Error("会话日志包含不完整或未知类型的行");
+                  }
+                  if (!header) {
+                    if (value.type !== "header") throw new Error("会话日志缺少 v1 header");
+                    header = value.header;
+                  } else if (value.type === "header") {
+                    throw new Error("header 必须是会话首行");
+                  }
+                  lines.push(value);
+                }
+
+                if (!header) throw new Error("会话日志缺少 v1 header");
+                return { header, lines, tailTruncated };
+
+            note: |
+                本次变更加入了 JSONL 编解码契约：只接受换行终止的完整记录，首行必须是 header，崩溃尾巴安全丢弃以恢复可用历史。
+
+  - group: 工具与审批边界
+    attention: must-read
+    why: 四工具、越权读取升级和写路径授权是安全核心。
+    files:
+      - path: src/plugins/agent-core/tools.ts
+        note: 实现 read/grep/write/edit，生成有界预览，并把越界读取升级为审批。
+        changes:
+          - snippet: |
+              async function executeWrite(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
+                const path = requiredString(args, "path");
+                if (typeof path !== "string") return path;
+                const content = requiredString(args, "content");
+                if (typeof content !== "string") return content;
+                if (!isWithinRoot(path, ctx.root)) return { content: "write 拒绝：目标路径不在库根内；写入永远不会越界。", isError: true };
+                const approval = await askApproval(ctx, {
+                  id: call.id,
+                  kind: "write",
+                  tool: "write",
+                  path,
+                  summary: `写入 ${content.length} 字符`,
+                  preview: createTextPreview(content, content.length, countContentLines(content)),
+                });
+                if (!approval.ok) return approval.result;
+                if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝写入");
+
+                await ctx.host.writeText(path, content);
+                return { content: `已写入 ${path}` };
+              }
+
+              /** Bound one approval payload while preserving head and tail context. */
+              function createTextPreview(
+                text: string,
+                totalCharacters: number,
+                totalLines: number,
+                omitted = text.length > MAX_APPROVAL_PREVIEW_CHARACTERS,
+              ): ApprovalPreview {
+                if (!omitted && text.length <= MAX_APPROVAL_PREVIEW_CHARACTERS) {
+                  return { text, omitted: false, totalCharacters, totalLines };
+                }
+                const omittedCount = Math.max(0, text.length - MAX_APPROVAL_PREVIEW_CHARACTERS);
+                const marker = `…（已省略 ${omittedCount} 字符）…`;
+                const sideLength = Math.max(
+                  0,
+                  Math.floor((MAX_APPROVAL_PREVIEW_CHARACTERS - marker.length - 2) / 2),
+                );
+                const bounded = text.length <= MAX_APPROVAL_PREVIEW_CHARACTERS
+                  ? text
+                  : `${text.slice(0, sideLength)}\n${marker}\n${text.slice(-sideLength)}`;
+                return { text: bounded, omitted: true, totalCharacters, totalLines };
+              }
+
+            note: |
+                本次变更加入了 write 工具的库根检查和磁盘变化前审批：带长度受限的完整文本预览，只有明确允许后才写盘。
+
+          - snippet: |
+              async function executeEdit(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
+                const path = requiredString(args, "path");
+                if (typeof path !== "string") return path;
+                const oldString = requiredString(args, "old_string");
+                if (typeof oldString !== "string") return oldString;
+                const newString = requiredString(args, "new_string");
+                if (typeof newString !== "string") return newString;
+                const replaceAll = optionalBoolean(args, "replace_all");
+                if (oldString === "") return { content: "old_string 不能是空字符串。", isError: true };
+                if (!isWithinRoot(path, ctx.root)) return { content: "edit 拒绝：目标路径不在库根内；写入永远不会越界。", isError: true };
+
+                let currentForPreview: string | null = null;
+                try {
+                  currentForPreview = await ctx.host.readText(path);
+                } catch {
+                  // Preserve approval-then-read behavior: preview failures do not leak
+                  // authorization errors or turn into execution results before approval.
+                }
+                const approval = await askApproval(ctx, {
+                  id: call.id,
+                  kind: "edit",
+                  tool: "edit",
+                  path,
+                  summary: `文本替换（旧 ${oldString.length} 字符 · 新 ${newString.length} 字符）`,
+                  preview: buildEditPreview(currentForPreview, oldString, newString),
+                });
+                if (!approval.ok) return approval.result;
+                if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝编辑");
+
+                const current = await ctx.host.readText(path);
+                const count = countOccurrences(current, oldString);
+                if (count === 0) return { content: `未找到 old_string：${oldString}`, isError: true };
+                if (count > 1 && replaceAll !== true) {
+                  return { content: `old_string 匹配 ${count} 处；未设置 replace_all 时必须唯一。`, isError: true };
+                }
+                const next = replaceAll === true
+                  ? current.split(oldString).join(newString)
+                  : current.slice(0, current.indexOf(oldString)) + newString +
+                    current.slice(current.indexOf(oldString) + oldString.length);
+
+                await ctx.host.writeText(path, next);
+                return { content: `已编辑 ${path}（替换 ${count} 处）` };
+              }
+
+            note: |
+                本次变更加入了 edit 工具的审批与重读流程：预览失败不提前泄露授权错误，批准后重新读原文并按唯一或全部匹配写回。
+
+      - path: src/plugins/agent-core/approval.ts
+        note: 按 ask/auto 路由，处理 Guardian 超时、审查、取消与切回恢复。
+        changes:
+          - snippet: |
+              /**
+               * Create a pure approval gate that routes requests by the current mode.
+               * @param deps Injected mode source, human approver, guardian chat client, and session logger.
+               * @param guardianTimeoutMs Shared guardian review deadline in milliseconds; defaults to 90 seconds.
+               * @param retry Parse failures and transient transport failures get bounded retries within the shared deadline; valid denials do not.
+               * @returns A gate whose canceled approvals resolve fail-closed exactly once.
+               */
+              export function createApprovalGate(
+                deps: {
+                  mode: () => ApprovalMode;
+                  askHuman: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+                  chat: ApprovalChat;
+                  log: (line: SessionLine) => void;
+                },
+                guardianTimeoutMs = GUARDIAN_REVIEW_TIMEOUT_MS,
+                retry: {
+                  maxRetries?: number;
+                  sleep?: (ms: number) => Promise<void>;
+                  interruptDrainMs?: number;
+                } = {},
+              ): ApprovalGate {
+                const maxRetries = retry.maxRetries ?? GUARDIAN_MAX_REVIEW_ATTEMPTS - 1;
+                const sleep = retry.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+                const pending = new Set<PendingApproval>();
+                const interruptDrainMs = retry.interruptDrainMs ?? GUARDIAN_INTERRUPT_DRAIN_MS;
+
+                function recordAndResolve(
+                  entry: PendingApproval,
+                  decision: "allow" | "deny" | "unavailable",
+                  outcome: ApprovalOutcome,
+                ): void {
+                  if (entry.settled) return;
+                  entry.settled = true;
+                  pending.delete(entry);
+
+                  const line: SessionLine = {
+                    type: "approval",
+                    id: entry.request.id,
+                    kind: entry.request.kind,
+                    tool: entry.request.tool,
+                    path: entry.request.path,
+                    decider: entry.decider,
+                    decision,
+                  };
+                  if (outcome.reason !== undefined) line.reason = outcome.reason;
+                  deps.log(line);
+                  entry.resolve(outcome);
+                }
+
+                function track(
+                  req: ApprovalRequest,
+                  decider: ApprovalDecider,
+                  source: Promise<ApprovalOutcome>,
+                  abort?: () => void,
+                ): Promise<ApprovalOutcome> {
+                  return new Promise<ApprovalOutcome>((resolve) => {
+                    const entry: PendingApproval = {
+                      request: req,
+                      decider,
+                      resolve,
+                      settled: false,
+                      abort,
+                    };
+                    pending.add(entry);
+                    void source.then(
+                      (outcome) => recordAndResolve(entry, outcome.decision, outcome),
+                      (cause: unknown) => recordAndResolve(entry, "deny", {
+                        decision: "deny",
+                        reason: describeError("审批失败：", cause),
+                      }),
+                    );
+                  });
+                }
+
+                async function askHuman(req: ApprovalRequest): Promise<ApprovalOutcome> {
+                  try {
+                    return await deps.askHuman(req);
+                  } catch (cause) {
+                    return { decision: "deny", reason: describeError("人工审批失败：", cause) };
+                  }
+                }
+
+                async function askGuardian(
+                  req: ApprovalRequest,
+                  controller: AbortController,
+                ): Promise<ApprovalOutcome> {
+                  const prompt = {
+                    messages: [
+                      { role: "system", content: GUARDIAN_SYSTEM_PROMPT },
+                      {
+                        role: "user",
+                        content: guardianPayload(req),
+                      },
+                    ],
+                  };
+                  const startedAt = Date.now();
+                  for (let attempt = 0; ; attempt += 1) {
+                    const remaining = Math.max(0, guardianTimeoutMs - (Date.now() - startedAt));
+                    let response: { content: string };
+                    try {
+                      response = await withGuardianDeadline(
+                        deps.chat(prompt, controller.signal),
+                        controller,
+                        remaining,
+                        interruptDrainMs,
+                      );
+                    } catch (cause) {
+                      if (cause instanceof GuardianDeadlineError || attempt >= maxRetries ||
+                        !isRetryableGuardianTransport(cause)) {
+                        return { decision: "deny", reason: describeError("Guardian 审查失败：", cause) };
+                      }
+                      await sleep(Math.min(200 * 2 ** attempt, Math.max(0, remaining)));
+                      continue;
+                    }
+                    const parsed = parseGuardianResponseWithStatus(response.content);
+                    if (parsed.valid || attempt >= maxRetries) {
+                      return parsed.outcome;
+                    }
+                    await sleep(Math.min(200 * 2 ** attempt, Math.max(0, remaining)));
+                  }
+                }
+
+                return {
+                  ask(req: ApprovalRequest): Promise<ApprovalOutcome> {
+                    const guardianAllowed = deps.mode() === "auto" &&
+                      guardianPayloadBytes(req) <= GUARDIAN_PAYLOAD_BUDGET_BYTES;
+                    const decider: ApprovalDecider = guardianAllowed ? "guardian" : "human";
+                    const controller = new AbortController();
+                    const source = decider === "guardian"
+                      ? askGuardian(req, controller)
+                      : askHuman(req);
+                    return track(req, decider, source, () => controller.abort(new Error("审批已取消")));
+                  },
+                  cancelAll(reason: string): void {
+                    for (const entry of [...pending]) {
+                      entry.abort?.();
+                      recordAndResolve(entry, "unavailable", { decision: "deny", reason });
+                    }
+                  },
+                };
+
+            note: |
+                本次变更加入了守门审查路由：每个请求包成悬挂记录，recordAndResolve 唯一结算；人工失败转拒绝，自动审查共享截止时间并受限重试。
+
+      - path: src-tauri/src/grep.rs
+        note: 以 pinned ripgrep sidecar 执行 rg --json，套用 raw、超时和 limit 预算。
+        changes:
+          - snippet: |
+              /// 单次 grep 的硬预算：stdout 原始字节上限与相邻输出超时。
+              pub struct GrepBudget {
+                  pub raw_max_bytes: usize,
+                  pub timeout: Duration,
+              }
+
+              /// 发布默认 stdout 预算：20 MB。
+              pub const RAW_OUTPUT_MAX_BYTES: usize = 20_000_000;
+              /// 发布默认空闲超时：30 秒。
+              pub const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
+              /// 发布默认全量命中上限。
+              pub const DEFAULT_LIMIT: u32 = 100;
+
+            note: |
+                本次变更加入了 agent 搜索硬预算：20 MB stdout、30 秒超时和默认命中上限，防止 sidecar ripgrep 输出拖垮宿主。
+
+      - path: src/host/files.ts
+        note: 收窄 read、grep、session event 等命令的宿主面。
+        changes:
+          - snippet: |
+              /** Window-scoped service: the only file channel plugins may use. */
+              export class FilesService {
+                readonly #deps: FilesDeps;
+                readonly #events = createEmitter<{ "fs-changed": string }>();
+                #unlisten: (() => void) | null = null;
+
+                constructor(deps: FilesDeps = defaultFilesDeps) {
+                  this.#deps = deps;
+                }
+
+                /** Bridge Rust `fs://changed` broadcasts into this window. */
+                async start(): Promise<void> {
+                  this.#unlisten = await this.#deps.listen("fs://changed", (e) =>
+                    this.#events.emit("fs-changed", String(e.payload)));
+                }
+
+                /** Stop bridging (window teardown). */
+                stop(): void {
+                  this.#unlisten?.();
+                  this.#unlisten = null;
+                }
+
+                /** Full recursive tree of an opened root. */
+                readTree(root: string): Promise<FileNode[]> {
+                  return this.#deps.invoke("read_tree", { root }) as Promise<FileNode[]>;
+                }
+
+                /** Whole-file UTF-8 read — the document data source. */
+                readText(path: string): Promise<string> {
+                  return this.#deps.invoke("read_text_file", { path }) as Promise<string>;
+                }
+
+                /** Whole-file write; Rust broadcasts the change (including back to us). */
+                writeText(path: string, contents: string): Promise<void> {
+                  return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
+                }
+
+                /** Whole-file binary read — the Excel service's byte source. */
+                async readBinary(path: string): Promise<Uint8Array> {
+                  const bytes = await this.#deps.invoke("read_binary_file", new Uint8Array(0), {
+                    headers: { "x-studywiki-path": encodeURIComponent(path) },
+                  });
+                  return normalizeRawBytes(bytes);
+                }
+
+                /** Whole-file binary write; Rust writes atomically and broadcasts the change. */
+                writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+                  return this.#deps.invoke("write_binary_file", bytes, {
+                    headers: { "x-studywiki-path": encodeURIComponent(path) },
+                  }) as Promise<void>;
+                }
+
+                /** Run the agent grep tool over a read-authorized path; coded errors pass through unwrapped. */
+                grepFiles(req: GrepRequest): Promise<GrepResult> {
+                  return this.#deps.invoke("grep_files", { req }) as Promise<GrepResult>;
+                }
+
+                /** Add an existing path to this window's dynamic read-only grants; write access stays root-only. */
+                authorizeReadPath(path: string): Promise<void> {
+                  return this.#deps.invoke("authorize_read_path", { path }) as Promise<void>;
+                }
+
+                /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
+                agentSessionPaths(root: string): Promise<string[]> {
+                  return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;
+                }
+
+                /** Allocate the user-level per-root path for one new session. */
+                agentSessionPath(root: string, id: string): Promise<string> {
+                  return this.#deps.invoke("agent_session_path", { root, id }) as Promise<string>;
+                }
+
+                /** Read one agent session file from the user-level per-root session domain. */
+                readAgentSessionFile(path: string): Promise<string> {
+                  return this.#deps.invoke("read_agent_session_file", { path }) as Promise<string>;
+                }
+
+                /** Atomically rewrite one agent session file in the user-level per-root session domain. */
+                writeAgentSessionFile(path: string, contents: string): Promise<void> {
+                  return this.#deps.invoke("write_agent_session_file", { path, contents }) as Promise<void>;
+                }
+
+                /** Append one newline-free JSONL session event inside the original authorized root. */
+                appendSessionEvent(path: string, line: string): Promise<void> {
+                  return this.#deps.invoke("append_session_event", { path, line }) as Promise<void>;
+                }
+
+                /** Delete an agent session file confined to the user-level per-root session domain; success does not broadcast. */
+                deleteSessionFile(path: string): Promise<void> {
+                  return this.#deps.invoke("delete_session_file", { path }) as Promise<void>;
+                }
+
+            note: |
+                本次变更把 agent grep、动态只读授权、会话路径分配和 session event 读写并入文件服务宿主面，供核心插件经收窄缝消费。
+
+  - group: UI 插件与模块切换
+    attention: must-read
+    why: 新右栏入口只消费快照，接管旧 app-chat 的能力。
+    files:
+      - path: src/plugins/app-agent/index.ts
+        note: 注册 sidebar.right，管理会话、输入、审批接管和停止。
+        changes:
+          - snippet: |
+              export function apply(ctx: Context, _config: Record<string, unknown> = {}): () => void {
+                const workspace = ctx.workspace as unknown as AgentWorkspace;
+                const llm = (ctx as Context & { llm?: LlmService }).llm;
+                let disposed = false;
+                let session: AgentSession | null = null;
+                let offSession: (() => void) | null = null;
+                let offApprovals: (() => void) | null = null;
+                let offRootChanged: (() => void) | null = null;
+                let rootGeneration = 0;
+                let renderer: ReturnType<typeof createStreamRenderer> | null = null;
+                let activeStream: HTMLElement | null = null;
+                let activeWrapper: HTMLElement | null = null;
+                let activeTools = new Map<string, ActiveToolCard>();
+                let processGroup: ReturnType<typeof createProcessGroup> | null = null;
+                let turnStartedAt = 0;
+                let turnStepCount = 0;
+                let approvalQueue: ApprovalRequest[] = [];
+                let activeApproval: ApprovalRequest | null = null;
+                let savedDraft = "";
+                let approvalDetail: HTMLElement | null = null;
+                let approvalToggle: HTMLButtonElement | null = null;
+                let composerEl: HTMLElement | null = null;
+                let composerRow: HTMLElement | null = null;
+                let decideTimer: ReturnType<typeof setTimeout> | null = null;
+                let toastTimer: ReturnType<typeof setTimeout> | null = null;
+                let statusline: HTMLElement | null = null;
+                let turnRunning = false;
+                let selectedModel: string | null = null;
+                let endpointDefault: string | null = null;
+                let durableApprovalMode: "ask" | "auto" = "ask";
+                let attachments: PendingAttachment[] = [];
+                let sessionTitle = "新会话";
+                let sessions: SessionMeta[] = [];
+                let pendingSend = false;
+                let messageQueue: QueuedDraft[] = [];
+                let queueCollapsed = true;
+                let queueSequence = 0;
+
+                let panel: HTMLElement | null = null;
+                let titleEl: HTMLElement | null = null;
+                let defaultModeElement: HTMLSelectElement | null = null;
+                let statusDot: HTMLElement | null = null;
+                let historyPop: HTMLElement | null = null;
+                let historyList: HTMLElement | null = null;
+                let historySearch: HTMLInputElement | null = null;
+                let historyToggle: HTMLButtonElement | null = null;
+                let modelPop: HTMLElement | null = null;
+                let modelPill: HTMLElement | null = null;
+                let modelToggle: HTMLButtonElement | null = null;
+                let modePop: HTMLElement | null = null;
+                let modeGroup: HTMLElement | null = null;
+                let modeGroupAsk: HTMLButtonElement | null = null;
+                let modeGroupAuto: HTMLButtonElement | null = null;
+                let modeToggle: HTMLButtonElement | null = null;
+                let morePop: HTMLElement | null = null;
+                let endpointGroups: Array<{ name: string; models: ModelEntry[] }> = [];
+                let rootNotice: HTMLElement | null = null;
+                let contextRow: HTMLElement | null = null;
+                let transcript: HTMLElement | null = null;
+                let chips: HTMLElement | null = null;
+                let notice: HTMLElement | null = null;
+                let queueDock: HTMLElement | null = null;
+                let input: HTMLTextAreaElement | null = null;
+                let sendButton: HTMLButtonElement | null = null;
+                let stopButton: HTMLButtonElement | null = null;
+                let modeAsk: HTMLButtonElement | null = null;
+                let modeAuto: HTMLButtonElement | null = null;
+                let modeLayoutObserver: ResizeObserver | null = null;
+
+                const offWorkspace = workspace.events.on("file-opened", (file) => {
+                  if (contextRow) paintContext(contextRow, file === null || file === undefined ? null : file.name);
+                });
+                offRootChanged = workspace.events.on("root-changed", (root) => {
+                  void handleRootChanged(root);
+                });
+
+                const paintButtons = (): void => {
+                  const running = turnRunning || session?.running === true;
+                  if (statusline) {
+                    statusline.classList.toggle("run", running);
+                    const text = statusline.firstElementChild;
+                    if (text) text.textContent = running ? "回合运行中 · 可随时停止" : "Enter 发送 · Shift+Enter 换行";
+                  }
+                  const hasDraft = Boolean(input?.value.trim() || attachments.length > 0);
+                  const primaryStops = running && !hasDraft;
+                  if (sendButton) {
+                    sendButton.hidden = primaryStops;
+                    sendButton.disabled = !hasDraft;
+                  }
+                  if (stopButton) stopButton.hidden = !running;
+                };
+
+                /** Close every header popover; opening one closes the others. */
+                const closePops = (): void => {
+                  for (const pop of [historyPop, modelPop, modePop, morePop]) {
+                    pop?.classList.remove("open");
+                  }
+                  modeToggle?.setAttribute("aria-expanded", "false");
+                };
+                const togglePop = (pop: HTMLElement | null): void => {
+                  const willOpen = pop ? !pop.classList.contains("open") : false;
+                  closePops();
+                  pop?.classList.toggle("open", willOpen);
+                };
+
+                const paintModes = (mode: "ask" | "auto" = session?.mode ?? "ask"): void => {
+                  modeAsk?.classList.toggle("current", mode === "ask");
+                  modeAuto?.classList.toggle("current", mode === "auto");
+                  modeGroupAsk?.classList.toggle("active", mode === "ask");
+                  modeGroupAsk?.setAttribute("aria-pressed", String(mode === "ask"));
+                  modeGroupAuto?.classList.toggle("active", mode === "auto");
+                  modeGroupAuto?.setAttribute("aria-pressed", String(mode === "auto"));
+                  if (modeToggle) {
+                    modeToggle.textContent = mode === "ask" ? "🛡" : "⚡";
+                    modeToggle.setAttribute(
+                      "aria-label",
+                      mode === "ask" ? "写操作批准模式：请求批准" : "写操作批准模式：帮我批准",
+                    );
+                    modeToggle.setAttribute(
+                      "aria-expanded",
+                      String(modePop?.classList.contains("open") === true),
+                    );
+                  }
+                };
+
+                const paintModeLayout = (width: number): void => {
+                  if (!panel) return;
+                  const compact = width < 280;
+                  panel.dataset.modeLayout = compact ? "compact" : "wide";
+                  if (modeGroup) modeGroup.hidden = compact;
+                  if (modeToggle) modeToggle.hidden = !compact;
+                  if (!compact && modePop?.classList.contains("open")) closePops();
+                };
+
+                const paintTitle = (): void => {
+                  if (titleEl) titleEl.textContent = sessionTitle;
+                  if (statusDot) statusDot.classList.toggle("run", session?.running === true);
+                };
+
+                const paintModel = (): void => {
+                  if (modelPill) modelPill.textContent = selectedModel ?? "选择模型";
+                };
+
+                const paintSessionOptions = (): void => {
+                  const list = historyList;
+                  if (!list) return;
+                  list.replaceChildren();
+                  const filter = historySearch?.value.trim() ?? "";
+                  const matches = (title: string): boolean => title.includes(filter);
+                  const addItem = (id: string, title: string, current: boolean): void => {
+                    const item = document.createElement("button");
+                    item.type = "button";
+                    item.className = current ? "agent-pop-item current" : "agent-pop-item";
+                    item.dataset.sessionOption = "";
+                    item.dataset.sessionId = id;
+                    item.textContent = title;
+                    item.addEventListener("click", () => {
+                      closePops();
+                      void openSession(id);
+                    });
+                    list.append(item);
+                  };
+                  if (session && matches(sessionTitle)) addItem(session.id, sessionTitle, true);
+                  for (const meta of sessions) {
+                    if (meta.id !== session?.id && matches(meta.title)) addItem(meta.id, meta.title, false);
+                  }
+                  if (list.children.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.className = "agent-pop-empty";
+                    empty.textContent = "无匹配会话";
+                    list.append(empty);
+                  }
+                };
+              ;
+
+                const refreshSessions = async (): Promise<void> => {
+                  if (disposed) return;
+                  try {
+                    sessions = await ctx.agent.listSessions();
+                    paintSessionOptions();
+                  } catch {
+                    // Listing is auxiliary; the open session and composer remain usable.
+                  }
+                };
+
+                const addUserMessage = (content: string | ContentPart[]): void => {
+                  if (!transcript) return;
+                  const row = document.createElement("div");
+                  row.className = "chat-message chat-user";
+                  const bubble = document.createElement("div");
+                  bubble.className = "chat-bubble";
+                  bubble.textContent = typeof content === "string"
+                    ? content
+                    : content.map((part) => part.type === "text" ? part.text : `[${part.type === "image" ? "图片" : "音频"}]`).join(" ");
+                  row.append(bubble);
+                  transcript.append(row);
+                  transcript.scrollTop = transcript.scrollHeight;
+                };
+
+                const beginAssistant = (): void => {
+                  if (!transcript) return;
+                  const wrapper = document.createElement("div");
+                  wrapper.className = "chat-message chat-assistant";
+                  wrapper.dataset.model = session?.model ?? endpointDefault ?? selectedModel ?? "assistant";
+                  const stream = document.createElement("div");
+                  stream.className = "chat-stream";
+                  wrapper.append(stream);
+                  transcript.append(wrapper);
+                  transcript.scrollTop = transcript.scrollHeight;
+                  activeWrapper = wrapper;
+                  activeStream = stream;
+                  renderer = createStreamRenderer(stream);
+                };
+
+                const finishActive = (): void => {
+                  renderer?.finalize();
+                  renderer = null;
+                  activeStream = null;
+                  activeWrapper = null;
+                  activeTools = new Map();
+                };
+
+                const appendInterrupted = (): void => {
+                  if (!transcript) return;
+                  const marker = document.createElement("div");
+                  marker.className = "chat-interrupted";
+                  marker.textContent = "已中断 · 仅保留在界面";
+                  if (activeWrapper) activeWrapper.append(marker);
+                  else transcript.append(marker);
+                  transcript.scrollTop = transcript.scrollHeight;
+                };
+
+                /** Show a transient, closable error toast on the panel; auto-dismisses in 5s. */
+                const showError = (message: string): void => {
+                  if (!panel || disposed) return;
+                  panel.querySelector(".agent-toast")?.remove();
+                  if (toastTimer) clearTimeout(toastTimer);
+                  const toast = document.createElement("div");
+                  toast.className = "agent-toast";
+                  const text = document.createElement("div");
+                  text.textContent = message;
+                  const close = document.createElement("button");
+                  close.type = "button";
+                  close.className = "agent-toast-close";
+                  close.dataset.toastClose = "";
+                  close.textContent = "×";
+                  close.setAttribute("aria-label", "关闭错误提示");
+                  const dismiss = (): void => {
+                    toast.remove();
+                    if (toastTimer) {
+                      clearTimeout(toastTimer);
+                      toastTimer = null;
+                    }
+                  };
+                  close.addEventListener("click", dismiss);
+                  toastTimer = setTimeout(dismiss, 5000);
+                  toast.append(text, close);
+                  panel.append(toast);
+                };
+
+                /** Stream-level errors surface as toasts; the turn process group already
+                 * collapsed with an error label. */
+                const appendError = (message: string): void => {
+                  showError(message);
+                };
+
+
+                const renderHistory = (): void => {
+                  if (!transcript || !session) return;
+
+                  const appendMessage = (message: AgentMessage, target: HTMLElement[]): void => {
+                    if (message.role === "user") {
+                      const row = document.createElement("div");
+                      row.className = "chat-message chat-user";
+                      const bubble = document.createElement("div");
+                      bubble.className = "chat-bubble";
+                      bubble.textContent = typeof message.content === "string"
+                        ? message.content
+                        : message.content.map((part) =>
+                          part.type === "text" ? part.text : `[${part.type === "image" ? "图片" : "音频"}]`,
+                        ).join(" ");
+                      row.append(bubble);
+                      target.push(row);
+                      return;
+                    }
+                    if (message.role === "assistant") {
+                      if (message.toolCalls.length > 0) {
+                        const group = createProcessGroup();
+                        for (const call of message.toolCalls) {
+                          group.addStep(renderToolCard(
+                            call,
+                            { content: "历史记录未含结果内容", isError: false },
+                          ));
+                        }
+                        group.settle(`已执行 ${message.toolCalls.length} 个工具动作`, 0);
+                        target.push(group.root);
+                      }
+                      const wrapper = document.createElement("div");
+                      wrapper.className = "chat-message chat-assistant";
+                      const stream = document.createElement("div");
+                      stream.className = "chat-stream";
+                      wrapper.append(stream);
+                      target.push(wrapper);
+                      const historyRenderer = createStreamRenderer(stream);
+                      historyRenderer.update(assistantSnapshot(message));
+                      historyRenderer.finalize();
+                      return;
+                    }
+                  }
+
+                  const nodes: HTMLElement[] = [];
+                  let historyGroup: ReturnType<typeof createProcessGroup> | null = null;
+                  let historySteps = 0;
+                  const flushHistoryGroup = (): void => {
+                    if (!historyGroup) return;
+                    historyGroup.settle(`已执行 ${historySteps} 个工具动作`, 0);
+                    nodes.push(historyGroup.root);
+                    historyGroup = null;
+                    historySteps = 0;
+                  };
+                  for (const line of session.lines()) {
+                    if (line.type === "message") {
+                      flushHistoryGroup();
+                      appendMessage(line.message, nodes);
+                      continue;
+                    }
+                    if (line.type === "compaction") {
+                      flushHistoryGroup();
+                      nodes.length = 0;
+                      nodes.push(renderCompactionDivider(line.summary));
+                      continue;
+                    }
+                    if (line.type === "approval") {
+                      flushHistoryGroup();
+                      const decided = line.decision === "allow";
+                      nodes.push(renderDecisionLine(
+                        decided ? "allow" : "deny",
+                        `${decided ? "已批准" : "已拒绝"} ${line.tool} ${line.path}${line.reason ? ` · ${line.reason}` : ""}`,
+                        line.decider === "guardian" ? "审查模型" : "用户",
+                      ));
+                      continue;
+                    }
+                  }
+                  flushHistoryGroup();
+                  transcript.replaceChildren(...nodes);
+                  transcript.scrollTop = transcript.scrollHeight;
+                };
+
+                const handleEvent = (event: AgentEvent): void => {
+                  if (disposed || !transcript) return;
+                  paintButtons();
+                  switch (event.type) {
+                    case "turn-start":
+                      turnRunning = true;
+                      activeTools = new Map();
+                      if (transcript) {
+                        processGroup = createProcessGroup();
+                        transcript.append(processGroup.root);
+                      }
+                      turnStartedAt = Date.now();
+                      turnStepCount = 0;
+                      beginAssistant();
+                      paintButtons();
+                      break;
+                    case "snapshot":
+                      if (!renderer && !activeStream) beginAssistant();
+                      renderer?.update(event.snapshot);
+                      break;
+                    case "tool-start": {
+                      const card = renderToolCard(event.call);
+                      activeTools.set(event.call.id, { card, callId: event.call.id });
+                      turnStepCount += 1;
+                      processGroup?.addStep(card);
+                      processGroup?.setRunning(`正在执行 ${event.call.name}`);
+                      if (transcript) transcript.scrollTop = transcript.scrollHeight;
+                      break;
+                    }
+                    case "tool-end": {
+                      const pending = activeTools.get(event.call.id);
+                      const card = renderToolCard(event.call, { content: event.content, isError: event.isError });
+                      if (pending) pending.card.replaceWith(card);
+                      else processGroup?.addStep(card);
+                      activeTools.delete(event.call.id);
+                      processGroup?.setRunning(activeTools.size === 0 ? `已执行 ${turnStepCount} 个动作` : `正在执行下一动作`);
+                      break;
+                    }
+                    case "message":
+                      if (event.message.role === "assistant") renderer?.update(assistantSnapshot(event.message));
+                      break;
+                    case "turn-end":
+                      turnRunning = false;
+                      processGroup?.settle(`已完成 ${turnStepCount} 个动作`, Date.now() - turnStartedAt);
+                      processGroup = null;
+                      finishActive();
+                      paintButtons();
+                      break;
+                    case "aborted":
+                      turnRunning = false;
+                      approvalQueue = [];
+                      activeApproval = null;
+                      approvalDetail?.remove();
+                      approvalDetail = null;
+                      approvalToggle = null;
+                      if (decideTimer) {
+                        clearTimeout(decideTimer);
+                        decideTimer = null;
+                      }
+                      if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
+                      messageQueue = [];
+                      renderQueue();
+                      processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
+                      processGroup = null;
+                      appendInterrupted();
+                      finishActive();
+                      paintButtons();
+                      break;
+                    case "error":
+                      turnRunning = false;
+                      processGroup?.settle("回合出错", Date.now() - turnStartedAt);
+                      processGroup = null;
+                      appendError(event.message);
+                      finishActive();
+                      paintButtons();
+                      break;
+                  }
+                };
+
+                const detachSession = (abortOld: boolean): void => {
+                  offSession?.();
+                  offApprovals?.();
+                  offSession = null;
+                  offApprovals = null;
+                  processGroup = null;
+                  turnRunning = false;
+                  approvalQueue = [];
+                  activeApproval = null;
+                  approvalDetail?.remove();
+                  approvalDetail = null;
+                  approvalToggle = null;
+                  if (decideTimer) {
+                    clearTimeout(decideTimer);
+                    decideTimer = null;
+                  }
+                  if (toastTimer) {
+                    clearTimeout(toastTimer);
+                    toastTimer = null;
+                  }
+                  panel?.querySelector(".agent-toast")?.remove();
+                  if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
+                  finishActive();
+                  if (abortOld) void session?.abort().catch(() => {});
+                  session = null;
+                  sessionTitle = "新会话";
+                  sessions = [];
+                  pendingSend = false;
+                  if (transcript) transcript.replaceChildren();
+                  paintTitle();
+                  paintSessionOptions();
+                  paintButtons();
+                };
+
+                const handleRootChanged = async (root: string | null): Promise<void> => {
+                  if (disposed) return;
+                  const generation = ++rootGeneration;
+                  detachSession(true);
+                  if (rootNotice) {
+                    rootNotice.hidden = true;
+                    rootNotice.textContent = "";
+                  }
+                  if (notice) {
+                    notice.hidden = true;
+                    notice.textContent = "";
+                  }
+                  if (contextRow) paintContext(contextRow, null);
+                  if (root === null) {
+                    if (notice) {
+                      notice.textContent = "打开学习库后可使用 Agent";
+                      notice.hidden = false;
+                    }
+                    return;
+                  }
+                  await openSession(null);
+                  if (disposed || generation !== rootGeneration) return;
+                  await refreshSessions();
+                };
+
+                const attachSession = (next: AgentSession): void => {
+                  offSession?.();
+                  offApprovals?.();
+                  finishActive();
+                  session = next;
+                  sessionTitle = next.title;
+                  selectedModel = next.model ?? endpointDefault;
+                  paintTitle();
+                  paintModel();
+                  paintModes();
+                  paintButtons();
+                  paintSessionOptions();
+                  if (rootNotice) {
+                    rootNotice.hidden = next.rootMismatch === null;
+                    rootNotice.textContent = next.rootMismatch === null
+                      ? ""
+                      : `会话原库根不可用：${next.rootMismatch}（仅提示，不影响查看）`;
+                  }
+                  if (transcript) transcript.replaceChildren();
+                  renderHistory();
+                  offSession = next.on(handleEvent);
+                  const replayedApprovals = new Set(
+                    session.lines().filter((line) => line.type === "approval").map((line) => line.id),
+                  );
+                  offApprovals = next.onApproval((request) => {
+                    if (replayedApprovals.has(request.id)) return;
+                    replayedApprovals.add(request.id);
+                    showApproval(next, request);
+                  });
+                  for (const request of next.pendingApprovals()) {
+                    if (replayedApprovals.has(request.id)) continue;
+                    replayedApprovals.add(request.id);
+                    showApproval(next, request);
+                  }
+                  if (pendingSend) {
+                    pendingSend = false;
+                    sendDraft();
+                  }
+                };
+
+                /** Queue one approval and present it by taking over the composer. */
+                const showApproval = (_target: AgentSession, request: ApprovalRequest): void => {
+                  if (disposed) return;
+                  approvalQueue.push(request);
+                  presentNextApproval();
+                };
+
+                /** Present the next queued approval: save the draft, swap the composer into
+                 * approval state, and mount the detail popover on the panel. */
+                const presentNextApproval = (): void => {
+                  if (
+                    disposed || !composerEl || !panel ||
+                    composerEl.dataset.state !== "normal" || activeLayers.size > 0
+                  ) return;
+                  const next = approvalQueue.shift();
+                  if (!next || !input || !composerRow) return;
+                  activeApproval = next;
+                  savedDraft = input.value;
+                  input.value = "";
+                  if (approvalDetail) approvalDetail.remove();
+                  const prompt = renderApprovalPrompt(next, decideApproval);
+                  approvalDetail = prompt.detail;
+                  approvalToggle = prompt.toggle;
+                  panel.append(approvalDetail);
+                  composerEl.dataset.state = "approval";
+                  composerEl.dataset.approvalId = next.id;
+                  composerEl.replaceChildren(prompt.root);
+                  paintButtons();
+                };
+
+                /** Record the decision, collapse the composer to a one-line record, restore
+                 * the draft, then present the next queued approval. */
+                const decideApproval = (outcome: ApprovalOutcome): void => {
+                  const active = activeApproval;
+                  if (!active || !composerEl) return;
+                  session?.respond(active.id, outcome);
+                  if (transcript) {
+                    const label = outcome.decision === "allow"
+                      ? `已批准 ${active.tool} ${active.path}${outcome.grant === "dir" ? "（所在目录）" : outcome.grant === "file" ? "（仅此文件）" : ""}`
+                      : `已拒绝 ${active.tool} ${active.path}`;
+                    transcript.append(renderDecisionLine(outcome.decision, label, "用户"));
+                    transcript.scrollTop = transcript.scrollHeight;
+                  }
+                  approvalQueue = approvalQueue.filter((item) => item.id !== active.id);
+                  activeApproval = null;
+                  approvalDetail?.remove();
+                  approvalDetail = null;
+                  approvalToggle = null;
+                  composerEl.dataset.state = "decided";
+                  delete composerEl.dataset.approvalId;
+                  const decided = document.createElement("div");
+                  decided.className = "agent-approval-decided";
+                  decided.textContent = outcome.decision === "allow" ? "✓ 已批准，Agent 继续执行" : "✕ 已拒绝，Agent 可继续对话";
+                  composerEl.replaceChildren(decided);
+                  paintButtons();
+                  if (decideTimer) clearTimeout(decideTimer);
+                  decideTimer = setTimeout(() => {
+                    decideTimer = null;
+                    restoreComposer();
+                    presentNextApproval();
+                  }, 400);
+                };
+
+                /** Return the composer to normal input state and restore the saved draft. */
+                const restoreComposer = (): void => {
+                  if (!composerEl || !input || !composerRow) return;
+                  composerEl.dataset.state = "normal";
+                  delete composerEl.dataset.approvalId;
+                  composerEl.replaceChildren(input, composerRow);
+                  input.value = savedDraft;
+                  savedDraft = "";
+                  paintButtons();
+                };
+
+                /** Global shortcuts while an approval owns the composer: Esc closes the
+                 * detail popover first, otherwise denies; ⌘/Ctrl+Enter approves. Outside
+                 * clicks close an open popover without deciding. */
+                const onDocKeydown = (event: KeyboardEvent): void => {
+                  if (disposed) return;
+                  if (activeLayers.size > 0) return;
+                  if (event.key === "Escape" && [historyPop, modelPop, morePop].some((pop) => pop?.classList.contains("open"))) {
+                    closePops();
+                    return;
+                  }
+                  if (composerEl?.dataset.state !== "approval") return;
+                  if (event.key === "Escape") {
+                    if (approvalDetail?.classList.contains("open")) {
+                      approvalDetail.classList.remove("open");
+                      approvalToggle?.setAttribute("aria-expanded", "false");
+                    } else {
+                      event.preventDefault();
+                      decideApproval({ decision: "deny" });
+                    }
+                    return;
+                  }
+                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                    event.preventDefault();
+                    decideApproval({ decision: "allow" });
+                  }
+                };
+                const onDocClick = (event: MouseEvent): void => {
+                  if (disposed) return;
+                  const target = event.target as Node;
+                  const inPops = [historyPop, modelPop, modePop, morePop].some((pop) =>
+                    pop?.classList.contains("open") && (pop.contains(target) || pop === target),
+                  );
+                  const inTriggers = [historyToggle, modelToggle, modeToggle].some((trigger) => trigger?.contains(target));
+                  if (!inPops && !inTriggers) closePops();
+                  if (!approvalDetail?.classList.contains("open")) return;
+                  if (approvalDetail.contains(target) || approvalToggle?.contains(target)) return;
+                  approvalDetail.classList.remove("open");
+                  approvalToggle?.setAttribute("aria-expanded", "false");
+                };
+                document.addEventListener("keydown", onDocKeydown);
+                document.addEventListener("click", onDocClick);
+                const releaseLayerSubscription = activeLayers.subscribe(() => {
+                  if (!disposed && composerEl?.dataset.state === "normal") presentNextApproval();
+                });
+
+            note: |
+                本次变更加入了审批接管输入区：先保存草稿，再替换为摘要、详情和操作；决定后调用 respond 并恢复 composer，快捷键区分关闭、拒绝和批准。
+
+      - path: src/plugins/app-agent/render.ts
+        note: 渲染流式正文、工具结果和审批卡。
+        changes:
+          - snippet: |
+              /** One collapsible turn process group: live tool steps stay hidden until the
+               * user expands the summary; settling hides the body again unless focus is
+               * inside, so keyboard users never lose their place.
+               * @returns Group facade owned by the caller; steps appended via addStep. */
+              export function createProcessGroup(): {
+                root: HTMLElement;
+                body: HTMLElement;
+                addStep(step: HTMLElement): void;
+                settle(label: string, durationMs: number): void;
+                setRunning(text: string): void;
+              } {
+                const root = document.createElement("section");
+                root.className = "agent-process";
+                const summary = document.createElement("button");
+                summary.type = "button";
+                summary.className = "agent-process-summary";
+                summary.setAttribute("aria-expanded", "false");
+                const chev = document.createElement("span");
+                chev.className = "agent-process-chevron";
+                chev.textContent = "▸";
+                const state = document.createElement("span");
+                state.className = "agent-process-state";
+                state.textContent = "●";
+                const text = document.createElement("span");
+                text.className = "agent-process-text";
+                const time = document.createElement("span");
+                time.className = "agent-process-time";
+                summary.append(chev, state, text, time);
+                summary.addEventListener("click", () => {
+                  const open = root.classList.toggle("open");
+                  summary.setAttribute("aria-expanded", String(open));
+                });
+                const body = document.createElement("div");
+                body.className = "agent-process-body";
+                root.append(summary, body);
+                return {
+                  root,
+                  body,
+                  addStep(step: HTMLElement): void {
+                    body.append(step);
+                  },
+                  setRunning(value: string): void {
+                    text.textContent = value;
+                    root.classList.add("running");
+                  },
+                  settle(label: string, durationMs: number): void {
+                    text.textContent = label;
+                    time.textContent = `${(durationMs / 1000).toFixed(1)}s`;
+                    root.classList.remove("running");
+                    root.classList.add("done");
+                    if (!root.contains(document.activeElement)) root.classList.remove("open");
+                  },
+                };
+              }
+
+              /** Compact read-only record of one settled approval; replaces the legacy bulky
+               * decided card in the transcript.
+               * @param decision Final decision recorded for the request.
+               * @param label Human summary of the approved or denied action.
+               * @param decider Who decided: “用户” or “审查模型”.
+               * @returns Decision line root owned by the caller. */
+              export function renderDecisionLine(decision: "allow" | "deny", label: string, decider: string): HTMLElement {
+                const line = document.createElement("div");
+                line.className = "agent-decision-line";
+                line.dataset.decision = decision;
+                const dot = document.createElement("span");
+                dot.className = "agent-decision-line-dot";
+                dot.textContent = decision === "allow" ? "✓" : "✕";
+                const text = document.createElement("span");
+                text.textContent = label;
+                const source = document.createElement("span");
+                source.className = "agent-decision-line-source";
+                source.textContent = decider;
+                line.append(dot, text, source);
+                return line;
+              }
+
+            note: |
+                本次变更加入了回合过程组和压缩决定行：运行中步骤默认收起，完成后保留焦点；一次审批决定用点和来源标注。
+
+      - path: src/plugins/app-agent/attachments.ts
+        note: 处理多模态附件输入。
+        changes:
+          - snippet: |
+              /** Media source accepted by the chat wire contract; mirrors `host/llm.ts`. */
+              export type MediaSource =
+                | { kind: "path"; path: string }
+                | { kind: "inline"; data: string; mimeType: string }
+                | { kind: "url"; url: string };
+
+              /** A media item staged in the composer before a chat request is sent. */
+              export interface PendingAttachment {
+                /** Content part sent verbatim to `ctx.llm.chatStream`. */
+                part: { type: "image" | "audio"; source: MediaSource };
+                /** Short chip label shown to the user. */
+                label: string;
+              }
+
+              /** 单附件解码字节上限：与 Rust llm.rs `MAX_ATTACHMENT_BYTES` 同值同语义（硬上限 + 明确报错，
+               * 不做压缩/归一化——OpenAI 兼容图片 base64 上限 20 MB）。 */
+              export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+            note: |
+                本次变更加入了 agent 附件契约：path/inline/url 与宿主 LLM 服务同形，20 MB 在读字节前拒绝，不做压缩或格式转换。
+
+      - path: src/loader/table.ts
+        note: 模块表加入 app-agent 并移除 app-chat。
+        changes:
+          - snippet: |
+              Object.assign(MODULE_TABLE, {
+                "app-shell": { plugin: appShell as PluginModule, defaults: { title: "StudyWiki" } },
+                "view-filetree": { plugin: viewFiletree as PluginModule, defaults: { ignoreDotfiles: true } },
+                "doc-markdown": { plugin: docMarkdown as PluginModule, defaults: {} },
+                "doc-video": { plugin: docVideo as PluginModule, defaults: {} },
+                "doc-excel": { plugin: docExcel as PluginModule, defaults: {} },
+                "app-agent": { plugin: appAgent as PluginModule, defaults: {} },
+                "app-windows": { plugin: appWindows as PluginModule, defaults: {} },
+                "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
+                "llm-settings": { plugin: llmSettings as PluginModule, defaults: {} },
+                "agent-core": { plugin: agentCore as PluginModule, defaults: {} },
+
+            note: |
+                本次变更把 app-agent 加入静态模块表并移除 app-chat，让新旧右栏切换在构建期闭合，不引入运行时发现机制。
+
+  - group: ripgrep 供给
+    attention: must-read
+    why: 环境无关性要求 pinned sidecar 按 target 供给并进入产物。
+    files:
+      - path: scripts/provision-ripgrep.mjs
+        note: 按 Rust target 校验并复制 pinned ripgrep sidecar。
+        changes:
+          - snippet: |
+              async function provisionTarget(target, asset, options) {
+                const { outputDir, cacheDir, fetchImpl, extractArchive } = options;
+                const archivesDir = path.join(cacheDir, "archives");
+                const extractedRoot = path.join(cacheDir, "extracted");
+                mkdirSync(archivesDir, { recursive: true });
+                mkdirSync(extractedRoot, { recursive: true });
+                mkdirSync(outputDir, { recursive: true });
+
+                const archivePath = await fetchVerifiedArchive(asset, archivesDir, fetchImpl);
+                const cachedBinary = await extractVerifiedBinary(asset, archivePath, extractedRoot, extractArchive);
+                const paths = outputPaths(outputDir, target);
+                const sameBytes = existsSync(paths.binary) && Buffer.compare(readFileSync(paths.binary), readFileSync(cachedBinary)) === 0;
+                if (!sameBytes) {
+                  const tempOutput = `${paths.binary}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+                  copyFileSync(cachedBinary, tempOutput);
+                  if (!targetIncludesWindows(paths.binary)) chmodBinary(tempOutput);
+                  rmSync(paths.binary, { force: true });
+                  renameSync(tempOutput, paths.binary);
+                }
+                const binarySha256 = await sha256File(paths.binary);
+                writeFileSync(paths.metadata, `${binarySha256}\n`, { encoding: "utf8", mode: 0o644 });
+                return { target, binary: paths.binary, binarySha256, fromCache: existsSync(archivePath) };
+              }
+
+              /**
+               * Ensure one or more pinned ripgrep binaries exist for their Rust targets.
+               * Archive downloads are verified and cached; already-correct outputs are kept.
+               */
+              export async function provisionRipgrep(options = {}) {
+                const {
+                  targets = resolveTargets(options.targetValues),
+                  manifestPath = MANIFEST_PATH,
+                  outputDir = DEFAULT_OUTPUT_DIR,
+                  cacheDir = process.env.RIPGREP_CACHE_DIR ?? DEFAULT_CACHE_DIR,
+                  fetchImpl = fetch,
+                  extractArchive,
+                } = options;
+                const manifest = loadManifest(manifestPath);
+                const results = [];
+                for (const target of targets) {
+                  const asset = manifest.targets[target];
+                  if (!asset) throw new Error(`ripgrep manifest 不支持 Rust target：${target}`);
+                  results.push(await provisionTarget(target, asset, { outputDir, cacheDir, fetchImpl, extractArchive }));
+                }
+                return results;
+              }
+
+            note: |
+                本次变更加入了按 Rust target 供给 pinned ripgrep 的流程：校验 manifest、下载摘要、提取缓存、原子落位并写输出哈希。
+
+      - path: scripts/ripgrep-manifest.json
+        note: 记录版本与平台产物指纹。
+        changes:
+          - snippet: |
+              {
+                "version": "15.2.0",
+                "targets": {
+                  "aarch64-apple-darwin": {
+                    "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+                    "sha256": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+                    "format": "tar.gz",
+                    "archivePath": "ripgrep-15.2.0-aarch64-apple-darwin/rg"
+                  },
+                  "x86_64-apple-darwin": {
+                    "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
+                    "sha256": "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
+                    "format": "tar.gz",
+                    "archivePath": "ripgrep-15.2.0-x86_64-apple-darwin/rg"
+                  },
+                  "x86_64-unknown-linux-gnu": {
+                    "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+                    "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+                    "format": "tar.gz",
+                    "archivePath": "ripgrep-15.2.0-x86_64-unknown-linux-musl/rg"
+                  },
+                  "x86_64-pc-windows-msvc": {
+                    "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip",
+                    "sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+                    "format": "zip",
+                    "archivePath": "ripgrep-15.2.0-x86_64-pc-windows-msvc/rg.exe"
+                  }
+                }
+              }
+
+            note: |
+                本次变更加入了四个发布 target 的 ripgrep 版本、下载地址、SHA-256 和归档路径，构建期据此复现同一 sidecar。
+
+      - path: src-tauri/build.rs
+        note: 构建期供给 sidecar。
+        changes:
+          - snippet: |
+              /// 校验供给脚本已按 Rust TARGET 落位的 pinned ripgrep sidecar。
+              /// 二进制下载、SHA-256、缓存与跨 target 选择都在 `pnpm ripgrep:provision` 完成；
+              /// 构建期不联网，也不依赖包管理器的平台包布局。
+              fn main() {
+                  let target = env::var("TARGET").expect("TARGET 由 cargo 提供");
+                  let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+                  let binary = manifest.join("binaries").join(format!(
+                      "rg-{target}{}",
+                      if target.contains("windows") {
+                          ".exe"
+                      } else {
+                          ""
+                      }
+                  ));
+                  let metadata = PathBuf::from(format!("{}.sha256", binary.display()));
+                  if !binary.is_file() || !metadata.is_file() {
+                      panic!(
+                          "rg sidecar 未供给：{}（先运行 pnpm ripgrep:provision -- --target {target}）",
+                          binary.display()
+                      );
+                  }
+                  let expected = fs::read_to_string(&metadata)
+                      .unwrap_or_else(|e| {
+                          panic!(
+                              "读取 rg sidecar SHA-256 失败（{}）：{e}",
+                              metadata.display()
+                          )
+                      })
+                      .trim()
+                      .to_owned();
+                  let actual = sha256_file(&binary);
+                  if actual != expected {
+                      panic!(
+                          "rg sidecar SHA-256 mismatch（{}）：期望 {expected}，实际 {actual}（重跑 pnpm ripgrep:provision -- --target {target}）",
+                          binary.display()
+                      );
+                  }
+
+            note: |
+                本次变更加入了构建期 sidecar 校验：按 TARGET 检查二进制和哈希，缺失或不匹配立即失败，且构建期不联网。
+
+      - path: src-tauri/tauri.conf.json
+        note: 把 sidecar 纳入打包资源。
+        changes:
+          - snippet: |
+              {
+                "$schema": "https://schema.tauri.app/config/2",
+                "productName": "StudyWiki",
+                "version": "0.1.0",
+                "identifier": "dev.studywiki.desktop",
+                "build": {
+                  "beforeDevCommand": "pnpm dev",
+                  "devUrl": "http://localhost:1420",
+                  "beforeBuildCommand": "pnpm build",
+                  "frontendDist": "../dist"
+                },
+                "app": {
+                  "windows": [
+                    {
+                      "title": "StudyWiki",
+                      "width": 1180,
+                      "height": 760,
+                      "minWidth": 920,
+                      "minHeight": 480,
+                      "titleBarStyle": "Overlay",
+                      "hiddenTitle": true,
+                      "trafficLightPosition": { "x": 12, "y": 12 }
+                    }
+                  ],
+                  "security": {
+                    "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; script-src 'self' blob:",
+                    "assetProtocol": {
+                      "enable": true,
+                      "scope": []
+                    }
+                  }
+                },
+                "bundle": {
+                  "active": true,
+                  "targets": ["dmg", "nsis", "appimage"],
+                  "macOS": {
+                    "signingIdentity": "-"
+                  },
+                  "icon": [
+                    "icons/32x32.png",
+                    "icons/64x64.png",
+                    "icons/icon.png",
+                    "icons/icon.icns",
+                    "icons/icon.ico"
+                  ],
+                  "windows": {
+                    "webviewInstallMode": {
+                      "type": "offlineInstaller"
+                    }
+                  },
+                  "externalBin": ["binaries/rg"]
+                }
+              }
+
+            note: |
+                本次变更把 binaries/rg 登记为 Tauri externalBin，使 pinned ripgrep 随 DMG、NSIS 和 AppImage 分发，不依赖系统 rg。
+
+  - group: 测试
+    attention: skim
+    why: loop、工具、审批、会话和 UI 行为由测试钉住。
+    files:
+      - path: tests/agent-loop.test.ts
+        note: 多轮、tool call 与半截回答语义。
+      - path: tests/agent-tools.test.ts
+        note: read/grep/write/edit 与路径边界。
+      - path: tests/agent-approval.test.ts
+        note: ask/auto、Guardian 和超时取消。
+      - path: tests/agent-session.test.ts
+        note: JSONL 持久化与恢复。
+      - path: tests/app-agent.test.ts
+        note: 右栏交互与审批接管。
+      - path: src-tauri/tests/provisioned_sidecar.rs
+        note: sidecar 可执行与搜索集成。
+  - group: 文档与机械伴生
+    attention: skim
+    why: 插件用法、架构和生成区随 agent 面更新。
+    files:
+      - path: docs/plugins/agent.md
+        note: agent 插件能力与使用边界。
+      - path: docs/environment-independence.md
+        note: pinned ripgrep 供给约束。
+      - path: docs/commands.md
+        note: 命令目录生成区。
+      - path: pnpm-lock.yaml
+        note: 依赖锁文件。
+reviewGuide:
+  order:
+    - src/plugins/agent-core/loop.ts
+    - src/plugins/agent-core/tools.ts
+    - src/plugins/agent-core/approval.ts
+    - src/plugins/agent-core/session.ts
+    - src/plugins/app-agent/index.ts
+    - src-tauri/src/grep.rs
+  risks:
+    - Guardian 审查有 90 秒超时和最多 3 次尝试；取消或切回必须停止旧审查并清空中断期请求，避免决定错挂到新回合。
+    - auto 模式只放宽授权集合内的读取；write/edit 与越权读永远走审批，路径解析和回退不能绕过 workspace 根。
+    - ripgrep sidecar 必须按 Rust target 固定版本并随包分发；遗漏目标或改用系统 rg 会破坏环境无关性。
+  acceptance:
+    - item: 与 agent 多轮对话可用；read/grep 能检索库与 wiki，write/edit 能落笔记
+      evidence: tests/agent-loop.test.ts 与 tests/agent-tools.test.ts
+    - item: 会话落盘为 JSONL，历史会话可恢复加载，发送新消息后继续
+      evidence: tests/agent-session.test.ts
+    - item: 写操作有请求批准/帮我批准；越授权读取经会话级审批，写入任何模式不可越界
+      evidence: tests/agent-approval.test.ts 与 tests/agent-tools.test.ts
+    - item: pnpm test、cargo test 与分层、环境无关性门禁绿
+      evidence: 本仓门禁套件
+verification:
+  - pnpm test（vitest）
+  - cargo test
+  - pnpm verify:layering
+  - pnpm verify:env-independence
+  - pnpm verify:dep-audit
+  - pnpm verify:commands
+  - pnpm verify:flow
+  - pnpm lint:docs
+touches:
+  - feature:agent-chat
+  - feature:approval-gate
+  - feature:grep-search
+  - feature:attachments
+  - file:src/plugins/agent-core/loop.ts
+  - file:src/plugins/agent-core/tools.ts
+  - file:src/plugins/agent-core/approval.ts
+  - file:src/plugins/agent-core/service.ts
+  - file:src/plugins/agent-core/session.ts
+  - file:src/plugins/app-agent/index.ts
+  - file:src-tauri/src/grep.rs
+architecturalFlowchart:
+  title: agent 回合状态机与审批
+  explanation: 表达 agent 回合以状态机为中心：UI 消息进入 ctx.agent，工具调用遇到敏感操作先审批；批准后回到同一回合继续，无需审批或回合完成后才持久化并快照，避免 UI 绕过状态与审批。
+  nodes:
+    - id: message
+      label: 用户发送消息
+      shape: stadium
+    - id: ui
+      label: app-agent UI 插件
+    - id: core
+      label: agent-core ctx.agent 回合状态机
+    - id: tools
+      label: 四工具 function calling
+    - id: approval
+      label: 需要审批
+      shape: diamond
+    - id: persist
+      label: 会话持久化与 compaction
+    - id: snapshot
+      label: 快照回 UI 并渲染
+      shape: rounded
+  edges:
+    - from: message
+      to: ui
+    - from: ui
+      to: core
+    - from: core
+      to: tools
+    - from: tools
+      to: approval
+    - from: approval
+      to: core
+      label: 用户批准后继续
+    - from: approval
+      to: persist
+      label: 无需审批
+    - from: core
+      to: persist
+    - from: persist
+      to: snapshot

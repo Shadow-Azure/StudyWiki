@@ -3,7 +3,7 @@
 // 则退回文本合并、hash 行照常冲突——fail-closed 兜底，但便利机制应当装上）。
 // 安装器是顶层即动作的脚本：在临时 git 仓库里 chdir 后动态 import 即触发。
 
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -47,7 +47,45 @@ describe("install-git-hooks", () => {
     expect(hook).toContain("command -v cargo");
   });
 
-  it("顺带注册 studywiki-i18n merge driver（.git/config）", async () => {
+  it("pre-push 在 doc-quick 后执行检视元数据保鲜门禁", async () => {
+    const dir = await installOnce();
+    const hook = readFileSync(path.join(dir, ".git/hooks/pre-push"), "utf8");
+    const docEnd = hook.indexOf("doc-quick 未过");
+    const freshness = hook.indexOf('node scripts/check-review-freshness.mjs "$@" || exit 1');
+    const cargo = hook.indexOf("command -v cargo");
+    expect(docEnd).toBeGreaterThan(-1);
+    expect(freshness).toBeGreaterThan(docEnd);
+    expect(cargo).toBeGreaterThan(freshness);
+  });
+
+  it("commit-msg 行为：标题带 (#N) 或全宽括号放行，缺失拦截", async () => {
+    const dir = await installOnce();
+    const hook = path.join(dir, ".git/hooks/commit-msg");
+    const run = (title) => {
+      const msg = path.join(dir, "MSG");
+      writeFileSync(msg, `${title}\n\nbody\n`);
+      try {
+        execFileSync(hook, [msg]);
+        return "pass";
+      } catch {
+        return "block";
+      }
+    };
+    expect(run("功能：演示 (#59)")).toBe("pass");
+    expect(run("功能：演示（#59）")).toBe("pass");
+    expect(run("功能：演示")).toBe("block");
+  });
+
+    it("写入 post-commit：提交涉及 walkthrough 时刷新检视页（walkthrough:review）", async () => {
+    const dir = await installOnce();
+    const hook = readFileSync(path.join(dir, ".git/hooks/post-commit"), "utf8");
+    const mode = statSync(path.join(dir, ".git/hooks/post-commit")).mode;
+    expect(mode & 0o111).not.toBe(0);
+    expect(hook).toContain("walkthrough:review");
+    expect(hook).toContain("walkthrough/"); // 仅 walkthrough 相关提交触发
+  });
+
+    it("顺带注册 studywiki-i18n merge driver（.git/config）", async () => {
     const dir = await installOnce();
     const get = (key) =>
       execFileSync("git", ["config", "--get", key], { cwd: dir, encoding: "utf8" }).trim();

@@ -1,0 +1,284 @@
+kind: file-page
+source: src/host/llm-stream.ts
+summary: LLM 流式契约：chunk 词表、partial 快照组装器、FIFO 异步 chunk 队列与流句柄形状
+segments:
+  - snippet: |
+      /** 流式 chunk（与 Rust llm_stream.rs 同形：serde tag + kebab 变体名）。 */
+      export type StreamChunk =
+        | { type: "text-delta"; index: number; text: string }
+        | { type: "reasoning-delta"; index: number; text: string }
+        | { type: "tool-call-delta"; index: number; id: string; name?: string; argumentsDelta: string }
+        | { type: "usage"; usage: { promptTokens: number; completionTokens: number } }
+        | { type: "finish"; reason: string }
+        | { type: "error"; code: string; message: string };
+    note: StreamChunk 是前端与 Rust 共享的流事件词表，文本、推理、工具、usage、finish 和 error 各有明确类型。kebab 变体名与 Rust serde tag 对齐，跨语言形状不需要运行时翻译。
+  - snippet: |
+      /** 组装中的 assistant 快照（消费者只读快照，不碰裸 delta）。 */
+      export interface PartialAssistant {
+        reasoning: string;
+        text: string;
+        toolCalls: { index: number; id: string; name: string; argumentsText: string }[];
+        usage?: { promptTokens: number; completionTokens: number };
+        finishReason?: string;
+        error?: { code: string; message: string };
+      }
+    note: PartialAssistant 是消费者可见的组装快照。它保留 reasoning、text、按 index 关联的工具调用和元数据，调用方不需要接触裸 delta。
+  - snippet: |
+      /** chunk → 快照唯一组装点：index 关联交错块；error/usage/finish 落元数据。 */
+      export class StreamAssembler {
+        #reasoning = "";
+        #text = "";
+        #tools = new Map<number, { index: number; id: string; name: string; argumentsText: string }>();
+        #usage?: PartialAssistant["usage"];
+        #finish?: string;
+        #error?: PartialAssistant["error"];
+
+        /** 喂一个 chunk；error chunk 只记录不抛。 */
+        push(chunk: StreamChunk): void {
+          switch (chunk.type) {
+            case "text-delta":
+              this.#text += chunk.text;
+              break;
+            case "reasoning-delta":
+              this.#reasoning += chunk.text;
+              break;
+            case "tool-call-delta": {
+              const tool = this.#tools.get(chunk.index) ?? {
+                index: chunk.index,
+                id: "",
+                name: "",
+                argumentsText: "",
+              };
+              if (chunk.id) tool.id = chunk.id;
+              if (chunk.name) tool.name = chunk.name;
+              tool.argumentsText += chunk.argumentsDelta;
+              this.#tools.set(chunk.index, tool);
+              break;
+            }
+            case "usage":
+              this.#usage = chunk.usage;
+              break;
+            case "finish":
+              this.#finish = chunk.reason;
+              break;
+            case "error":
+              this.#error = { code: chunk.code, message: chunk.message };
+              break;
+          }
+        }
+
+        /** 当前快照（toolCalls 按 index 升序）。返回隔离副本（toolCalls 条目与
+         * usage 均浅拷贝），消费者突变快照不会污染组装器内部状态。 */
+        snapshot(): PartialAssistant {
+          return {
+            reasoning: this.#reasoning,
+            text: this.#text,
+            toolCalls: [...this.#tools.values()]
+              .sort((a, b) => a.index - b.index)
+              .map((t) => ({ ...t })),
+            ...(this.#usage ? { usage: { ...this.#usage } } : {}),
+            ...(this.#finish ? { finishReason: this.#finish } : {}),
+            ...(this.#error ? { error: { ...this.#error } } : {}),
+          };
+        }
+      }
+    note: StreamAssembler 把同一 index 的工具参数片段累积到一个对象，其他事件分别写入对应状态。error chunk 只记录为快照元数据而不抛出，snapshot 返回隔离副本并按 index 排序工具调用。
+  - snippet: |
+      /** FIFO 异步队列：close 正常终结；fail 使迭代与 settled 抛 LlmError。 */
+      export class ChunkQueue implements AsyncIterable<StreamChunk> {
+        #buf: StreamChunk[] = [];
+        #waiters: ((result: IteratorResult<StreamChunk>) => void)[] = [];
+        #done = false;
+        #failure: LlmError | null = null;
+
+        /** 投递一个 chunk（终结后忽略）。 */
+        push(chunk: StreamChunk): void {
+          if (this.#done) return;
+          const waiter = this.#waiters.shift();
+          if (waiter) waiter({ value: chunk, done: false });
+          else this.#buf.push(chunk);
+        }
+
+        /** 正常终结。 */
+        close(): void {
+          this.#done = true;
+          for (const waiter of this.#waiters.splice(0)) waiter({ value: undefined, done: true });
+        }
+
+        /** 失败终结：settled 与在途/后续迭代一并拒绝。 */
+        fail(error: LlmError): void {
+          this.#failure = error;
+          this.close();
+        }
+
+        async *[Symbol.asyncIterator](): AsyncIterator<StreamChunk> {
+          while (true) {
+            const chunk = this.#buf.shift();
+            if (chunk !== undefined) {
+              yield chunk;
+            } else if (this.#done) {
+              if (this.#failure) throw this.#failure;
+              return;
+            } else {
+              const result = await new Promise<IteratorResult<StreamChunk>>((resolve) => {
+                this.#waiters.push(resolve);
+              });
+              if (result.done) {
+                if (this.#failure) throw this.#failure;
+                return;
+              }
+              yield result.value;
+            }
+          }
+        }
+      }
+    note: ChunkQueue 同时缓冲 chunk 和等待者，push 有 waiter 就直接交付，否则入队。close 是正常终态；fail 记录 LlmError 后复用 close，使当前和后续迭代都能收到失败。
+  - snippet: |
+      /** 在途流句柄：events 逐 chunk；settled 在传输或 error chunk 后拒绝。 */
+      export interface ChatStreamHandle {
+        readonly events: AsyncIterable<StreamChunk>;
+        /** Current assembled view, owned by the stream service and advanced with chunks. */
+        readonly snapshot: () => PartialAssistant;
+        readonly settled: Promise<void>;
+        abort(): Promise<void>;
+      }
+    note: ChatStreamHandle 把 events、snapshot、settled 和 abort 组成一个流句柄。events 是异步迭代，snapshot 归服务持有，settled 表达传输或 error chunk 的最终结果，abort 交回宿主取消。
+  - snippet: |
+      import { LlmError } from "./llm";
+
+      /** 流式 chunk（与 Rust llm_stream.rs 同形：serde tag + kebab 变体名）。 */
+      export type StreamChunk =
+        | { type: "text-delta"; index: number; text: string }
+        | { type: "reasoning-delta"; index: number; text: string }
+        | { type: "tool-call-delta"; index: number; id: string; name?: string; argumentsDelta: string }
+        | { type: "usage"; usage: { promptTokens: number; completionTokens: number } }
+        | { type: "finish"; reason: string }
+        | { type: "error"; code: string; message: string };
+
+      /** 组装中的 assistant 快照（消费者只读快照，不碰裸 delta）。 */
+      export interface PartialAssistant {
+        reasoning: string;
+        text: string;
+        toolCalls: { index: number; id: string; name: string; argumentsText: string }[];
+        usage?: { promptTokens: number; completionTokens: number };
+        finishReason?: string;
+        error?: { code: string; message: string };
+      }
+
+      /** chunk → 快照唯一组装点：index 关联交错块；error/usage/finish 落元数据。 */
+      export class StreamAssembler {
+        #reasoning = "";
+        #text = "";
+        #tools = new Map<number, { index: number; id: string; name: string; argumentsText: string }>();
+        #usage?: PartialAssistant["usage"];
+        #finish?: string;
+        #error?: PartialAssistant["error"];
+
+        /** 喂一个 chunk；error chunk 只记录不抛。 */
+        push(chunk: StreamChunk): void {
+          switch (chunk.type) {
+            case "text-delta":
+              this.#text += chunk.text;
+              break;
+            case "reasoning-delta":
+              this.#reasoning += chunk.text;
+              break;
+            case "tool-call-delta": {
+              const tool = this.#tools.get(chunk.index) ?? {
+                index: chunk.index,
+                id: "",
+                name: "",
+                argumentsText: "",
+              };
+              if (chunk.id) tool.id = chunk.id;
+              if (chunk.name) tool.name = chunk.name;
+              tool.argumentsText += chunk.argumentsDelta;
+              this.#tools.set(chunk.index, tool);
+              break;
+            }
+            case "usage":
+              this.#usage = chunk.usage;
+              break;
+            case "finish":
+              this.#finish = chunk.reason;
+              break;
+            case "error":
+              this.#error = { code: chunk.code, message: chunk.message };
+              break;
+          }
+        }
+
+        /** 当前快照（toolCalls 按 index 升序）。返回隔离副本（toolCalls 条目与
+         * usage 均浅拷贝），消费者突变快照不会污染组装器内部状态。 */
+        snapshot(): PartialAssistant {
+          return {
+            reasoning: this.#reasoning,
+            text: this.#text,
+            toolCalls: [...this.#tools.values()]
+              .sort((a, b) => a.index - b.index)
+              .map((t) => ({ ...t })),
+            ...(this.#usage ? { usage: { ...this.#usage } } : {}),
+            ...(this.#finish ? { finishReason: this.#finish } : {}),
+            ...(this.#error ? { error: { ...this.#error } } : {}),
+          };
+        }
+      }
+
+      /** FIFO 异步队列：close 正常终结；fail 使迭代与 settled 抛 LlmError。 */
+      export class ChunkQueue implements AsyncIterable<StreamChunk> {
+        #buf: StreamChunk[] = [];
+        #waiters: ((result: IteratorResult<StreamChunk>) => void)[] = [];
+        #done = false;
+        #failure: LlmError | null = null;
+
+        /** 投递一个 chunk（终结后忽略）。 */
+        push(chunk: StreamChunk): void {
+          if (this.#done) return;
+          const waiter = this.#waiters.shift();
+          if (waiter) waiter({ value: chunk, done: false });
+          else this.#buf.push(chunk);
+        }
+
+        /** 正常终结。 */
+        close(): void {
+          this.#done = true;
+          for (const waiter of this.#waiters.splice(0)) waiter({ value: undefined, done: true });
+        }
+
+        /** 失败终结：settled 与在途/后续迭代一并拒绝。 */
+        fail(error: LlmError): void {
+          this.#failure = error;
+          this.close();
+        }
+
+        async *[Symbol.asyncIterator](): AsyncIterator<StreamChunk> {
+          while (true) {
+            const chunk = this.#buf.shift();
+            if (chunk !== undefined) {
+              yield chunk;
+            } else if (this.#done) {
+              if (this.#failure) throw this.#failure;
+              return;
+            } else {
+              const result = await new Promise<IteratorResult<StreamChunk>>((resolve) => {
+                this.#waiters.push(resolve);
+              });
+              if (result.done) {
+                if (this.#failure) throw this.#failure;
+                return;
+              }
+              yield result.value;
+            }
+          }
+        }
+      }
+
+      /** 在途流句柄：events 逐 chunk；settled 在传输或 error chunk 后拒绝。 */
+      export interface ChatStreamHandle {
+        readonly events: AsyncIterable<StreamChunk>;
+        /** Current assembled view, owned by the stream service and advanced with chunks. */
+        readonly snapshot: () => PartialAssistant;
+        readonly settled: Promise<void>;
+        abort(): Promise<void>;
+      }
+    note: 完整文件视窗显示流契约分层：词表与快照在前，组装器、FIFO 队列和句柄在后。LlmService 只依赖这些形状，不把 Rust SSE 或 Tauri channel 细节泄漏给 UI。

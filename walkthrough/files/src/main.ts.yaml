@@ -1,0 +1,28 @@
+kind: file-page
+source: src/main.ts
+summary: 入口：调用每窗口 bootstrap（三行）
+segments:
+  - snippet: |
+      import { bootstrap } from "./bootstrap";
+    note: |
+      启动入口只引 bootstrap，不在 main 里装配服务。这样窗口生命周期和宿主装配边界保持清晰。
+  - snippet: |
+      import { renderBootError } from "./boot-error";
+    note: |
+      单独引启动错误面板，使 bootstrap 的 Promise 拒绝有稳定的渲染出口。
+  - snippet: |
+      import "./styles.css";
+    note: |
+      样式模块在这里进入应用包，保证启动和错误兜底路径都使用同一套视觉基础。
+  - snippet: |
+      void bootstrap().catch(renderBootError);
+    note: |
+      真正的入口只有一行：启动成功返回 Context，失败交给 renderBootError。它不处理业务，也不吞掉异常。
+  - snippet: |
+      import { bootstrap } from "./bootstrap";
+      import { renderBootError } from "./boot-error";
+      import "./styles.css";
+
+      void bootstrap().catch(renderBootError);
+    note: |
+      整个文件把入口收缩成装配调用加错误兜底。任何具体宿主能力、插件逻辑或 UI 装配都留在更内层模块。

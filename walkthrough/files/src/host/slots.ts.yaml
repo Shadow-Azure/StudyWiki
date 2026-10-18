@@ -1,0 +1,172 @@
+kind: file-page
+source: src/host/slots.ts
+summary: 类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除 + API v1 topbar.left → activity.left 归一化（mount 归 shell 插件）
+segments:
+  - snippet: |
+      /** All current slot names the shell mounts. */
+      export type SlotName = "activity.left" | "sidebar.tree" | "main.viewer" | "sidebar.right";
+      /** API v1 plugins may register "topbar.left"; it is normalized to "activity.left". Only current SlotName values may be mounted. */
+      export type SlotRegistration = SlotName | "topbar.left";
+    note: SlotName 是 shell 当前实际挂载的槽位集合；SlotRegistration 额外允许 API v1 插件声明 topbar.left。类型差异本身就表达了新旧 API 的兼容边界。
+  - snippet: |
+      /** Renders into its own child element; decides its own visibility. */
+      export type SlotRenderer = (el: HTMLElement) => void;
+
+      const SLOT_ALIASES = new Map<string, SlotName>([["topbar.left", "activity.left"]]);
+    note: SlotRenderer 只拿自己的容器元素，可见性由渲染器决定。SLOT_ALIASES 记录 topbar.left 到 activity.left 的唯一归一化规则。
+  - snippet: |
+      /** Normalize an API v1 registration to its current slot; unknown preview slot
+       * names pass through unchanged.
+       * @param slot Declared registration slot, including the API v1 alias.
+       * @returns Current slot name for known registrations; otherwise the input. */
+      export function normalizeSlotRegistration<T extends string>(
+        slot: T,
+      ): T extends SlotRegistration ? SlotName : T {
+        return (SLOT_ALIASES.get(slot) ?? slot) as T extends SlotRegistration ? SlotName : T;
+      }
+    note: normalizeSlotRegistration 把已知 API v1 别名转换为当前槽位，未知名称原样穿过。返回类型用条件类型让已知注册获得当前槽位类型，同时不破坏未来扩展的类型推断。
+  - snippet: |
+      /** Typed vanilla-DOM slot registry: renderers run in registration order, each
+       * in its own element — no single-slot competition. */
+      export class SlotsService {
+        readonly #entries = new Map<SlotName, Array<{ el: HTMLElement; render: SlotRenderer }>>();
+        readonly #containers = new Map<SlotName, HTMLElement>();
+
+        /** Register a renderer into a slot; returns its disposer. */
+        register(slot: SlotRegistration, render: SlotRenderer): () => void {
+          const key = normalizeSlotRegistration(slot);
+          const list = this.#entries.get(key) ?? [];
+          const el = document.createElement("div");
+          el.className = `slot slot-${key.replace(".", "-")}`;
+          const entry = { el, render };
+          list.push(entry);
+          this.#entries.set(key, list);
+          const container = this.#containers.get(key);
+          if (container) {
+            container.appendChild(el);
+            this.#render(entry);
+          }
+          return () => {
+            const cur = this.#entries.get(key) ?? [];
+            const i = cur.indexOf(entry);
+            if (i >= 0) {
+              cur.splice(i, 1);
+              entry.el.remove();
+            }
+          };
+        }
+    note: SlotsService 为每个槽位保存注册项和容器；register 先归一化槽位，再为 renderer 建独立 DOM 容器并按注册顺序追加。若容器已挂载就立即渲染；反订阅只移除自己的 entry 和元素。
+  - snippet: |
+      /** Typed vanilla-DOM slot registry: renderers run in registration order, each
+       * in its own element — no single-slot competition. */
+      export class SlotsService {
+        readonly #entries = new Map<SlotName, Array<{ el: HTMLElement; render: SlotRenderer }>>();
+        readonly #containers = new Map<SlotName, HTMLElement>();
+
+        /** Register a renderer into a slot; returns its disposer. */
+        register(slot: SlotRegistration, render: SlotRenderer): () => void {
+          const key = normalizeSlotRegistration(slot);
+          const list = this.#entries.get(key) ?? [];
+          const el = document.createElement("div");
+          el.className = `slot slot-${key.replace(".", "-")}`;
+          const entry = { el, render };
+          list.push(entry);
+          this.#entries.set(key, list);
+          const container = this.#containers.get(key);
+          if (container) {
+            container.appendChild(el);
+            this.#render(entry);
+          }
+          return () => {
+            const cur = this.#entries.get(key) ?? [];
+            const i = cur.indexOf(entry);
+            if (i >= 0) {
+              cur.splice(i, 1);
+              entry.el.remove();
+            }
+          };
+        }
+
+        /** Bind (or rebind) a slot's container; owned by the shell plugin. */
+        mount(slot: SlotName, container: HTMLElement): void {
+          this.#containers.set(slot, container);
+          container.replaceChildren();
+          for (const entry of this.#entries.get(slot) ?? []) {
+            container.appendChild(entry.el);
+            this.#render(entry);
+          }
+        }
+
+        #render(entry: { el: HTMLElement; render: SlotRenderer }): void {
+          entry.el.replaceChildren();
+          entry.render(entry.el);
+        }
+      }
+    note: 完整 SlotsService 类显示注册序渲染没有槽位竞争：mount 由 shell 插件绑定或重绑容器，先清空再按注册顺序恢复 entry；#render 每次清空私有容器后重新调用 renderer。
+  - snippet: |
+      /** All current slot names the shell mounts. */
+      export type SlotName = "activity.left" | "sidebar.tree" | "main.viewer" | "sidebar.right";
+      /** API v1 plugins may register "topbar.left"; it is normalized to "activity.left". Only current SlotName values may be mounted. */
+      export type SlotRegistration = SlotName | "topbar.left";
+
+      /** Renders into its own child element; decides its own visibility. */
+      export type SlotRenderer = (el: HTMLElement) => void;
+
+      const SLOT_ALIASES = new Map<string, SlotName>([["topbar.left", "activity.left"]]);
+
+      /** Normalize an API v1 registration to its current slot; unknown preview slot
+       * names pass through unchanged.
+       * @param slot Declared registration slot, including the API v1 alias.
+       * @returns Current slot name for known registrations; otherwise the input. */
+      export function normalizeSlotRegistration<T extends string>(
+        slot: T,
+      ): T extends SlotRegistration ? SlotName : T {
+        return (SLOT_ALIASES.get(slot) ?? slot) as T extends SlotRegistration ? SlotName : T;
+      }
+
+      /** Typed vanilla-DOM slot registry: renderers run in registration order, each
+       * in its own element — no single-slot competition. */
+      export class SlotsService {
+        readonly #entries = new Map<SlotName, Array<{ el: HTMLElement; render: SlotRenderer }>>();
+        readonly #containers = new Map<SlotName, HTMLElement>();
+
+        /** Register a renderer into a slot; returns its disposer. */
+        register(slot: SlotRegistration, render: SlotRenderer): () => void {
+          const key = normalizeSlotRegistration(slot);
+          const list = this.#entries.get(key) ?? [];
+          const el = document.createElement("div");
+          el.className = `slot slot-${key.replace(".", "-")}`;
+          const entry = { el, render };
+          list.push(entry);
+          this.#entries.set(key, list);
+          const container = this.#containers.get(key);
+          if (container) {
+            container.appendChild(el);
+            this.#render(entry);
+          }
+          return () => {
+            const cur = this.#entries.get(key) ?? [];
+            const i = cur.indexOf(entry);
+            if (i >= 0) {
+              cur.splice(i, 1);
+              entry.el.remove();
+            }
+          };
+        }
+
+        /** Bind (or rebind) a slot's container; owned by the shell plugin. */
+        mount(slot: SlotName, container: HTMLElement): void {
+          this.#containers.set(slot, container);
+          container.replaceChildren();
+          for (const entry of this.#entries.get(slot) ?? []) {
+            container.appendChild(entry.el);
+            this.#render(entry);
+          }
+        }
+
+        #render(entry: { el: HTMLElement; render: SlotRenderer }): void {
+          entry.el.replaceChildren();
+          entry.render(entry.el);
+        }
+      }
+    note: 完整文件把 API v1 兼容、类型化槽位名和 vanilla-DOM 生命周期放在一个注册表里。外置插件只声明 slot 和 render，容器归属与渲染时机仍由 shell 和宿主控制。

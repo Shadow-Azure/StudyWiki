@@ -1,0 +1,42 @@
+kind: file-page
+source: src/ui/markdown.ts
+summary: 宿主共享 markdown-it 渲染器：html/linkify/typographer 全关，doc-markdown 与 chat 共用同一安全策略
+segments:
+  - snippet: |
+      import MarkdownIt from "markdown-it";
+
+      const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
+
+      /** Render markdown source to HTML (raw HTML disabled — escaped, not executed).
+       * 宿主共享渲染器：doc-markdown 与 app-agent 同一实例同一策略。
+       * @param src Markdown source text.
+       * @returns Rendered HTML. */
+      export function renderMarkdown(src: string): string {
+        return md.render(src);
+      }
+    note: |
+      完整文件视窗刻意很短：共享一个 MarkdownIt 实例，并在模块加载时固定关闭 HTML、linkify 和 typographer，所有调用方拿不到更宽松的旁路。
+  - snippet: |
+      import MarkdownIt from "markdown-it";
+    note: |
+      只导入 markdown-it 本体并进入 dependencies，构建器可把它打包进离线产物，不依赖 CDN 或运行时安装。
+  - snippet: |
+      const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
+    note: |
+      模块级实例是单一安全策略点。重复渲染不会重建解析器，也不会出现某个面板私自开启 raw HTML 的实例。
+  - snippet: |
+      /** Render markdown source to HTML (raw HTML disabled — escaped, not executed).
+       * 宿主共享渲染器：doc-markdown 与 app-agent 同一实例同一策略。
+       * @param src Markdown source text.
+       * @returns Rendered HTML. */
+      export function renderMarkdown(src: string): string {
+        return md.render(src);
+      }
+    note: |
+      renderMarkdown 的文档注释把“html 关闭意味着转义而不是执行”讲清；doc-markdown 与 chat 复用同一函数，视觉与安全行为一致。
+  - snippet: |
+      export function renderMarkdown(src: string): string {
+        return md.render(src);
+      }
+    note: |
+      函数体只委托 md.render，不在这里追加 sanitize 或链接重写。若未来需要新策略，应改共享实例契约并同步所有阅读面，而不是局部包装。

@@ -1,0 +1,569 @@
+kind: file-page
+source: src/plugins/doc-markdown/index.ts
+summary: doc-markdown 插件：活动文件 markdown 预览/编辑双模式 + 加载/错误态 + 乱序读取防护 + 脏标记/保存重试 + 全局 Mod-S + 关窗/切换守卫（file-opened 挂渲染，kind 不符清空）
+segments:
+  - snippet: |
+      import type { Context } from "cordis";
+      import type { FileNode } from "../../types";
+      import { labelButton } from "../../ui/dom";
+      import { bindSaveShortcut, confirmDiscardDialog, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+      import { renderMarkdown } from "./preview";
+      import { editText, isDirty, markSaved, openDoc, toggleMode, type DocState } from "./mode";
+      import { createCodeMirror, type EditorFactory, type EditorHandle } from "./editor";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "doc-markdown";
+      /** Service keys awaited before apply runs (windows added with the close guard). */
+      export const inject = ["files", "windows", "workspace", "slots"];
+
+      /** Markdown document: preview and edit of the active file, manual Ctrl+S save.
+       * @param ctx Host context (files/windows/workspace/slots injected).
+       * @param _config Unused; the plugin takes no options.
+       * @param editorFactory Editor seam, defaulting to the real CodeMirror factory; tests inject a stub.
+       * @returns Teardown removing the file-opened subscription, the slot renderer, the close guard and any live editor. */
+      export function apply(
+        ctx: Context,
+        _config: Record<string, never>,
+        editorFactory: EditorFactory = createCodeMirror,
+      ): () => void {
+        let host: HTMLElement | null = null;
+        let current: FileNode | null = null;
+        let state: DocState = openDoc("");
+        let editor: EditorHandle | null = null;
+        let offGuard: (() => void) | null = null;
+        let offSwitchGuard: (() => void) | null = null;
+        let offSave: (() => void) | null = null;
+        let error: string | null = null;
+        let loading = false;
+        let openSeq = 0;
+        let saving = false;
+
+        const save = async (): Promise<void> => {
+          if (saving || !current || !isDirty(state)) return;
+          saving = true;
+          const savedText = state.text;
+          try {
+            await ctx.files.writeText(current.path, savedText);
+            host?.querySelector(".doc-error")?.remove();
+            error = null;
+            if (state.text === savedText) state = markSaved(state);
+            paintChrome();
+          } catch (e) {
+            error = `保存失败：${(e as Error).message}`;
+            if (host) errorBanner(host, error, () => { error = null; });
+          } finally {
+            saving = false;
+          }
+        };
+
+        const paintChrome = (): void => {
+          const dirty = current?.kind === "markdown" && isDirty(state);
+          host?.querySelector(".save-btn")?.classList.toggle("dirty", dirty);
+          if (current?.kind === "markdown") paintTitle(current, dirty);
+        };
+
+        const render = (): void => {
+          if (!host) return;
+          host.replaceChildren();
+          editor?.destroy();
+          editor = null;
+          if (error) errorBanner(host, error, () => { error = null; });
+          if (!current || current.kind !== "markdown") {
+            host.hidden = true;
+            paintChrome();
+            return;
+          }
+          host.hidden = false;
+          if (loading) {
+            host.append(loadingHint());
+            paintChrome();
+            return;
+          }
+          const bar = document.createElement("div");
+          bar.className = "viewer-toolbar";
+          const modeGroup = document.createElement("div");
+          modeGroup.className = "mode-group";
+          modeGroup.setAttribute("role", "group");
+          modeGroup.setAttribute("aria-label", "文档模式");
+          const previewBtn = labelButton("eye", "预览", { className: "btn btn-ghost mode-btn" });
+          previewBtn.setAttribute("aria-pressed", String(state.mode === "preview"));
+          previewBtn.addEventListener("click", () => {
+            if (state.mode === "preview") return;
+            state = { ...state, mode: "preview" };
+            render();
+          });
+          const editBtn = labelButton("pencil", "编辑", { className: "btn btn-ghost mode-btn" });
+          editBtn.setAttribute("aria-pressed", String(state.mode === "edit"));
+          editBtn.addEventListener("click", () => {
+            if (state.mode === "edit") return;
+            state = { ...state, mode: toggleMode(state.mode) };
+            render();
+          });
+          modeGroup.append(previewBtn, editBtn);
+          const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
+          saveBtn.setAttribute("aria-keyshortcuts", "Control+S Meta+S");
+          saveBtn.addEventListener("click", () => void save());
+          bar.append(modeGroup, saveBtn);
+          const body = document.createElement("div");
+          body.className = "doc-body";
+          if (state.mode === "preview") {
+            const pv = document.createElement("div");
+            pv.className = "markdown-body";
+            pv.innerHTML = renderMarkdown(state.text);
+            body.append(pv);
+          } else {
+            editor = editorFactory(body, state.text, (text) => {
+              state = editText(state, text);
+              paintChrome();
+            }, () => void save());
+          }
+          host.append(bar, body);
+          paintChrome();
+        };
+
+        const open = async (file: FileNode | null): Promise<void> => {
+          const seq = ++openSeq;
+          if (file?.kind === "markdown") {
+            current = file;
+            state = openDoc("");
+            error = null;
+            loading = true;
+            render();
+            let text: string;
+            try {
+              text = await ctx.files.readText(file.path);
+            } catch (e) {
+              if (seq !== openSeq) return;
+              loading = false;
+              state = openDoc(""); // 清空正文：读失败不得停留在上一个文档的内容上
+              error = `读取失败：${(e as Error).message}`;
+              render();
+              return;
+            }
+            if (seq !== openSeq) return;
+            loading = false;
+            state = openDoc(text);
+            error = null;
+            render();
+            return;
+          }
+          current = file;
+          error = null;
+          loading = false;
+          render();
+        };
+
+        const ownsActiveMarkdown = (): boolean =>
+          ctx.workspace.activeFile?.path === current?.path && current?.kind === "markdown";
+
+        const offGuardPromise = ctx.windows.guardClose(
+          () => ownsActiveMarkdown() && isDirty(state),
+          () => confirmDiscardDialog(current?.name ?? "文档", "关闭"),
+        );
+        void offGuardPromise.then((off) => { offGuard = off; });
+        offSwitchGuard = ctx.workspace.guardSwitch(
+          () => ownsActiveMarkdown() && isDirty(state),
+          () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
+        );
+        offSave = bindSaveShortcut(ownsActiveMarkdown, () => void save());
+
+        const offFile = ctx.workspace.events.on("file-opened", (f) => void open(f));
+        const offSlot = ctx.slots.register("main.viewer", (el) => {
+          host = el;
+          render();
+          void open(ctx.workspace.activeFile);
+        });
+        return () => {
+          openSeq += 1;
+          offFile(); offSlot(); offGuard?.();
+          void offGuardPromise.then((off) => off());
+          offSwitchGuard?.(); offSave?.(); editor?.destroy();
+        };
+      }
+    note: |
+      整份插件文件把服务注入、UI 状态、渲染、异步打开和守卫收在同一个 apply 闭包里。这样活动文档生命周期的所有可变状态都集中可见，拆卸函数也能按相反关注点逐项解除订阅和编辑器。
+  - snippet: |
+      import type { Context } from "cordis";
+      import type { FileNode } from "../../types";
+      import { labelButton } from "../../ui/dom";
+      import { bindSaveShortcut, confirmDiscardDialog, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+      import { renderMarkdown } from "./preview";
+      import { editText, isDirty, markSaved, openDoc, toggleMode, type DocState } from "./mode";
+      import { createCodeMirror, type EditorFactory, type EditorHandle } from "./editor";
+
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "doc-markdown";
+      /** Service keys awaited before apply runs (windows added with the close guard). */
+      export const inject = ["files", "windows", "workspace", "slots"];
+    note: |
+      顶部声明插件名与宿主必须先注入的服务。files 负责读写，windows/workspace/slots 分别提供关窗守卫、活动文件事件和主阅读位，依赖形状在进入 UI 前就已经固定。
+  - snippet: |
+      /** Markdown document: preview and edit of the active file, manual Ctrl+S save.
+       * @param ctx Host context (files/windows/workspace/slots injected).
+       * @param _config Unused; the plugin takes no options.
+       * @param editorFactory Editor seam, defaulting to the real CodeMirror factory; tests inject a stub.
+       * @returns Teardown removing the file-opened subscription, the slot renderer, the close guard and any live editor. */
+      export function apply(
+        ctx: Context,
+        _config: Record<string, never>,
+        editorFactory: EditorFactory = createCodeMirror,
+      ): () => void {
+        let host: HTMLElement | null = null;
+        let current: FileNode | null = null;
+        let state: DocState = openDoc("");
+        let editor: EditorHandle | null = null;
+        let offGuard: (() => void) | null = null;
+        let offSwitchGuard: (() => void) | null = null;
+        let offSave: (() => void) | null = null;
+        let error: string | null = null;
+        let loading = false;
+        let openSeq = 0;
+        let saving = false;
+    note: |
+      apply 的签名把真实 CodeMirror 工厂设为默认值，同时允许测试注入假工厂。闭包先建立当前文件、文档状态、编辑器句柄、错误与加载标记，以及两个序号：openSeq 隔离乱序读取，saving 防止保存重入。
+  - snippet: |
+      import type { Context } from "cordis";
+      import type { FileNode } from "../../types";
+      import { labelButton } from "../../ui/dom";
+      import { bindSaveShortcut, confirmDiscardDialog, errorBanner, loadingHint, paintTitle } from "../../ui/viewer";
+      import { renderMarkdown } from "./preview";
+      import { editText, isDirty, markSaved, openDoc, toggleMode, type DocState } from "./mode";
+      import { createCodeMirror, type EditorFactory, type EditorHandle } from "./editor";
+    note: |
+      模块导入把 UI 小件、共享渲染器、纯状态机和编辑器缝接入插件。渲染器经由 preview 桥，状态机与编辑器工厂各自独立，宿主服务类型只以 Context 形状出现。
+  - snippet: |
+      /** Plugin id in the manifest and the static module table. */
+      export const name = "doc-markdown";
+      /** Service keys awaited before apply runs (windows added with the close guard). */
+      export const inject = ["files", "windows", "workspace", "slots"];
+    note: |
+      name 与 inject 是插件装配契约。宿主先准备 files、windows、workspace、slots，再调用 apply；这些键同时说明了该查看器需要系统能力的最小集合。
+  - snippet: |
+      /** Markdown document: preview and edit of the active file, manual Ctrl+S save.
+       * @param ctx Host context (files/windows/workspace/slots injected).
+       * @param _config Unused; the plugin takes no options.
+       * @param editorFactory Editor seam, defaulting to the real CodeMirror factory; tests inject a stub.
+       * @returns Teardown removing the file-opened subscription, the slot renderer, the close guard and any live editor. */
+      export function apply(
+        ctx: Context,
+        _config: Record<string, never>,
+        editorFactory: EditorFactory = createCodeMirror,
+      ): () => void {
+        let host: HTMLElement | null = null;
+        let current: FileNode | null = null;
+        let state: DocState = openDoc("");
+        let editor: EditorHandle | null = null;
+        let offGuard: (() => void) | null = null;
+        let offSwitchGuard: (() => void) | null = null;
+        let offSave: (() => void) | null = null;
+        let error: string | null = null;
+        let loading = false;
+        let openSeq = 0;
+        let saving = false;
+
+        const save = async (): Promise<void> => {
+          if (saving || !current || !isDirty(state)) return;
+          saving = true;
+          const savedText = state.text;
+          try {
+            await ctx.files.writeText(current.path, savedText);
+            host?.querySelector(".doc-error")?.remove();
+            error = null;
+            if (state.text === savedText) state = markSaved(state);
+            paintChrome();
+          } catch (e) {
+            error = `保存失败：${(e as Error).message}`;
+            if (host) errorBanner(host, error, () => { error = null; });
+          } finally {
+            saving = false;
+          }
+        };
+
+        const paintChrome = (): void => {
+          const dirty = current?.kind === "markdown" && isDirty(state);
+          host?.querySelector(".save-btn")?.classList.toggle("dirty", dirty);
+          if (current?.kind === "markdown") paintTitle(current, dirty);
+        };
+
+        const render = (): void => {
+          if (!host) return;
+          host.replaceChildren();
+          editor?.destroy();
+          editor = null;
+          if (error) errorBanner(host, error, () => { error = null; });
+          if (!current || current.kind !== "markdown") {
+            host.hidden = true;
+            paintChrome();
+            return;
+          }
+          host.hidden = false;
+          if (loading) {
+            host.append(loadingHint());
+            paintChrome();
+            return;
+          }
+          const bar = document.createElement("div");
+          bar.className = "viewer-toolbar";
+          const modeGroup = document.createElement("div");
+          modeGroup.className = "mode-group";
+          modeGroup.setAttribute("role", "group");
+          modeGroup.setAttribute("aria-label", "文档模式");
+          const previewBtn = labelButton("eye", "预览", { className: "btn btn-ghost mode-btn" });
+          previewBtn.setAttribute("aria-pressed", String(state.mode === "preview"));
+          previewBtn.addEventListener("click", () => {
+            if (state.mode === "preview") return;
+            state = { ...state, mode: "preview" };
+            render();
+          });
+          const editBtn = labelButton("pencil", "编辑", { className: "btn btn-ghost mode-btn" });
+          editBtn.setAttribute("aria-pressed", String(state.mode === "edit"));
+          editBtn.addEventListener("click", () => {
+            if (state.mode === "edit") return;
+            state = { ...state, mode: toggleMode(state.mode) };
+            render();
+          });
+          modeGroup.append(previewBtn, editBtn);
+          const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
+          saveBtn.setAttribute("aria-keyshortcuts", "Control+S Meta+S");
+          saveBtn.addEventListener("click", () => void save());
+          bar.append(modeGroup, saveBtn);
+          const body = document.createElement("div");
+          body.className = "doc-body";
+          if (state.mode === "preview") {
+            const pv = document.createElement("div");
+            pv.className = "markdown-body";
+            pv.innerHTML = renderMarkdown(state.text);
+            body.append(pv);
+          } else {
+            editor = editorFactory(body, state.text, (text) => {
+              state = editText(state, text);
+              paintChrome();
+            }, () => void save());
+          }
+          host.append(bar, body);
+          paintChrome();
+        };
+
+        const open = async (file: FileNode | null): Promise<void> => {
+          const seq = ++openSeq;
+          if (file?.kind === "markdown") {
+            current = file;
+            state = openDoc("");
+            error = null;
+            loading = true;
+            render();
+            let text: string;
+            try {
+              text = await ctx.files.readText(file.path);
+            } catch (e) {
+              if (seq !== openSeq) return;
+              loading = false;
+              state = openDoc(""); // 清空正文：读失败不得停留在上一个文档的内容上
+              error = `读取失败：${(e as Error).message}`;
+              render();
+              return;
+            }
+            if (seq !== openSeq) return;
+            loading = false;
+            state = openDoc(text);
+            error = null;
+            render();
+            return;
+          }
+          current = file;
+          error = null;
+          loading = false;
+          render();
+        };
+
+        const ownsActiveMarkdown = (): boolean =>
+          ctx.workspace.activeFile?.path === current?.path && current?.kind === "markdown";
+
+        const offGuardPromise = ctx.windows.guardClose(
+          () => ownsActiveMarkdown() && isDirty(state),
+          () => confirmDiscardDialog(current?.name ?? "文档", "关闭"),
+        );
+        void offGuardPromise.then((off) => { offGuard = off; });
+        offSwitchGuard = ctx.workspace.guardSwitch(
+          () => ownsActiveMarkdown() && isDirty(state),
+          () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
+        );
+        offSave = bindSaveShortcut(ownsActiveMarkdown, () => void save());
+
+        const offFile = ctx.workspace.events.on("file-opened", (f) => void open(f));
+        const offSlot = ctx.slots.register("main.viewer", (el) => {
+          host = el;
+          render();
+          void open(ctx.workspace.activeFile);
+        });
+        return () => {
+          openSeq += 1;
+          offFile(); offSlot(); offGuard?.();
+          void offGuardPromise.then((off) => off());
+          offSwitchGuard?.(); offSave?.(); editor?.destroy();
+        };
+      }
+    note: |
+      完整的 apply 闭包覆盖保存、渲染、乱序读取和守卫。保存把发起时文本作为基线候选，读取用 openSeq 丢弃过期结果，关闭/切换守卫都先确认当前活动 markdown 且确实脏。
+  - snippet: |
+      export function apply(
+        ctx: Context,
+        _config: Record<string, never>,
+        editorFactory: EditorFactory = createCodeMirror,
+      ): () => void {
+        let host: HTMLElement | null = null;
+        let current: FileNode | null = null;
+        let state: DocState = openDoc("");
+        let editor: EditorHandle | null = null;
+        let offGuard: (() => void) | null = null;
+        let offSwitchGuard: (() => void) | null = null;
+        let offSave: (() => void) | null = null;
+        let error: string | null = null;
+        let loading = false;
+        let openSeq = 0;
+        let saving = false;
+
+        const save = async (): Promise<void> => {
+          if (saving || !current || !isDirty(state)) return;
+          saving = true;
+          const savedText = state.text;
+          try {
+            await ctx.files.writeText(current.path, savedText);
+            host?.querySelector(".doc-error")?.remove();
+            error = null;
+            if (state.text === savedText) state = markSaved(state);
+            paintChrome();
+          } catch (e) {
+            error = `保存失败：${(e as Error).message}`;
+            if (host) errorBanner(host, error, () => { error = null; });
+          } finally {
+            saving = false;
+          }
+        };
+
+        const paintChrome = (): void => {
+          const dirty = current?.kind === "markdown" && isDirty(state);
+          host?.querySelector(".save-btn")?.classList.toggle("dirty", dirty);
+          if (current?.kind === "markdown") paintTitle(current, dirty);
+        };
+
+        const render = (): void => {
+          if (!host) return;
+          host.replaceChildren();
+          editor?.destroy();
+          editor = null;
+          if (error) errorBanner(host, error, () => { error = null; });
+          if (!current || current.kind !== "markdown") {
+            host.hidden = true;
+            paintChrome();
+            return;
+          }
+          host.hidden = false;
+          if (loading) {
+            host.append(loadingHint());
+            paintChrome();
+            return;
+          }
+          const bar = document.createElement("div");
+          bar.className = "viewer-toolbar";
+          const modeGroup = document.createElement("div");
+          modeGroup.className = "mode-group";
+          modeGroup.setAttribute("role", "group");
+          modeGroup.setAttribute("aria-label", "文档模式");
+          const previewBtn = labelButton("eye", "预览", { className: "btn btn-ghost mode-btn" });
+          previewBtn.setAttribute("aria-pressed", String(state.mode === "preview"));
+          previewBtn.addEventListener("click", () => {
+            if (state.mode === "preview") return;
+            state = { ...state, mode: "preview" };
+            render();
+          });
+          const editBtn = labelButton("pencil", "编辑", { className: "btn btn-ghost mode-btn" });
+          editBtn.setAttribute("aria-pressed", String(state.mode === "edit"));
+          editBtn.addEventListener("click", () => {
+            if (state.mode === "edit") return;
+            state = { ...state, mode: toggleMode(state.mode) };
+            render();
+          });
+          modeGroup.append(previewBtn, editBtn);
+          const saveBtn = labelButton("save", "保存", { className: "btn btn-ghost save-btn" });
+          saveBtn.setAttribute("aria-keyshortcuts", "Control+S Meta+S");
+          saveBtn.addEventListener("click", () => void save());
+          bar.append(modeGroup, saveBtn);
+          const body = document.createElement("div");
+          body.className = "doc-body";
+          if (state.mode === "preview") {
+            const pv = document.createElement("div");
+            pv.className = "markdown-body";
+            pv.innerHTML = renderMarkdown(state.text);
+            body.append(pv);
+          } else {
+            editor = editorFactory(body, state.text, (text) => {
+              state = editText(state, text);
+              paintChrome();
+            }, () => void save());
+          }
+          host.append(bar, body);
+          paintChrome();
+        };
+
+        const open = async (file: FileNode | null): Promise<void> => {
+          const seq = ++openSeq;
+          if (file?.kind === "markdown") {
+            current = file;
+            state = openDoc("");
+            error = null;
+            loading = true;
+            render();
+            let text: string;
+            try {
+              text = await ctx.files.readText(file.path);
+            } catch (e) {
+              if (seq !== openSeq) return;
+              loading = false;
+              state = openDoc(""); // 清空正文：读失败不得停留在上一个文档的内容上
+              error = `读取失败：${(e as Error).message}`;
+              render();
+              return;
+            }
+            if (seq !== openSeq) return;
+            loading = false;
+            state = openDoc(text);
+            error = null;
+            render();
+            return;
+          }
+          current = file;
+          error = null;
+          loading = false;
+          render();
+        };
+
+        const ownsActiveMarkdown = (): boolean =>
+          ctx.workspace.activeFile?.path === current?.path && current?.kind === "markdown";
+
+        const offGuardPromise = ctx.windows.guardClose(
+          () => ownsActiveMarkdown() && isDirty(state),
+          () => confirmDiscardDialog(current?.name ?? "文档", "关闭"),
+        );
+        void offGuardPromise.then((off) => { offGuard = off; });
+        offSwitchGuard = ctx.workspace.guardSwitch(
+          () => ownsActiveMarkdown() && isDirty(state),
+          () => ctx.windows.confirmDialog(`放弃对 ${current?.name} 的未保存修改并切换？`),
+        );
+        offSave = bindSaveShortcut(ownsActiveMarkdown, () => void save());
+
+        const offFile = ctx.workspace.events.on("file-opened", (f) => void open(f));
+        const offSlot = ctx.slots.register("main.viewer", (el) => {
+          host = el;
+          render();
+          void open(ctx.workspace.activeFile);
+        });
+        return () => {
+          openSeq += 1;
+          offFile(); offSlot(); offGuard?.();
+          void offGuardPromise.then((off) => off());
+          offSwitchGuard?.(); offSave?.(); editor?.destroy();
+        };
+      }
+    note: |
+      从函数声明开始的视窗突显默认工厂注入点与状态生命周期。loading/error 驱动用户看到的分支，editor 句柄随每次渲染销毁重建，拆卸时递增序号并释放事件、守卫和真实编辑器。

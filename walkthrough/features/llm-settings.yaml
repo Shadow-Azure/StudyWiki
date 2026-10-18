@@ -1,0 +1,78 @@
+kind: feature
+slug: llm-settings
+title: LLM endpoint 配置
+behavior: |
+  模型面板可从厂商预设实例化 endpoint，也可自定义 OpenAI 兼容地址；表单校验通过后经宿主服务交给 Rust 保存，apiKey 只在配置文件中保留并对外脱敏。用户可设默认模型、按需揭示明文并探测 GET /models。
+
+modules: [src/plugins/llm-settings/index.ts, src/plugins/llm-settings/model.ts, src/host/llm.ts, src-tauri/src/llm.rs, src-tauri/src/config.rs]
+steps:
+  - ref:
+      file: src/plugins/llm-settings/model.ts
+      snippet: |
+        export function validateDraft(d: EndpointDraft): string | null {
+          if (!d.id.trim()) return "id 不能为空";
+          if (!d.name.trim()) return "name 不能为空";
+          if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
+            return "baseUrl 必须以 http:// 或 https:// 开头";
+          }
+          if (d.models.length === 0) return "至少要有一个模型";
+
+    note: |
+        前端先给表单点名错误；空 apiKey 合法，便于自托管服务或稍后补 key。
+
+  - ref:
+      file: src/plugins/llm-settings/index.ts
+      snippet: |
+        ): Promise<void> {
+          const overlay = document.querySelector(".llm-panel");
+          if (!overlay) return;
+          const box = overlay.querySelector(".plugin-panel-box") as HTMLElement;
+          let draft = initial ?? blankDraft();
+          box.textContent = "";
+          const title = document.createElement("h3");
+          title.className = "plugin-panel-title";
+          title.textContent = initial ? "编辑 endpoint" : "新增 endpoint";
+          const form = document.createElement("form");
+          form.className = "llm-form";
+
+    note: |
+        掩码只是显示态；只有新增或明文被编辑时才发送 apiKeyDirty，避免把脱敏预览误存为新 key。
+
+  - ref:
+      file: src/host/llm.ts
+      snippet: |
+        export class LlmService {
+          readonly #deps: LlmDeps;
+
+    note: |
+        写配置只经 LLM 宿主服务；外置插件 guard 白名单不包含这类写面方法。
+
+  - ref:
+      file: src-tauri/src/llm.rs
+      snippet: |
+        pub fn llm_upsert_endpoint(app: AppHandle, endpoint: Endpoint) -> Result<(), LlmError> {
+            let dir = config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+            let mut s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+
+    note: |
+        Rust 读 settings、执行最终校验与合并，再原子写回；错误统一映射为稳定 LLM 错误码。
+
+  - ref:
+      file: src-tauri/src/config.rs
+      snippet: |
+        pub fn save_settings(dir: &Path, s: &Settings) -> Result<(), String> {
+            fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+            let path = dir.join("settings.json");
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let tmp = dir.join(format!(
+                "settings.json.{}.{}.tmp",
+
+    note: |
+        settings 临时文件创建即 0600，写入完整 JSON 后 rename，避免权限窗口和半截配置。
+
+related:
+  notes:
+    - 参见 [AI 推理供给](../../.agents/notes/implemented/feature/2026-10-01-ai-inference-supply.md)

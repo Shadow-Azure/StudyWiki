@@ -1,0 +1,52 @@
+kind: file-page
+source: src/loader/types.ts
+summary: 内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
+segments:
+  - snippet: |
+      /** Structural subset of the cordis plugin contract every built-in uses:
+       * the (name, inject, apply) triad with an optional cleanup return. */
+    note: |
+      PluginModule 固定为 Cordis 插件契约的结构子集，内置插件都用这三种成员表达。这样 loader 不需要依赖完整 Cordis 类型细节。
+  - snippet: |
+      /** Structural subset of the cordis plugin contract every built-in uses:
+       * the (name, inject, apply) triad with an optional cleanup return. */
+      export interface PluginModule {
+        /** Plugin id used by the manifest and audit output. */
+        name: string;
+    note: |
+      name 是清单和审计输出使用的插件 id。没有独立别名，装载报告能直接对应源模块。
+  - snippet: |
+      /** Structural subset of the cordis plugin contract every built-in uses:
+       * the (name, inject, apply) triad with an optional cleanup return. */
+      export interface PluginModule {
+        /** Plugin id used by the manifest and audit output. */
+        name: string;
+        /** Service keys awaited before apply runs. */
+        inject?: string[];
+    note: |
+      inject 列出 apply 前需要等待的服务键。loader 和 guard 也据此决定服务注入与白名单。
+  - snippet: |
+      /** Structural subset of the cordis plugin contract every built-in uses:
+       * the (name, inject, apply) triad with an optional cleanup return. */
+      export interface PluginModule {
+        /** Plugin id used by the manifest and audit output. */
+        name: string;
+        /** Service keys awaited before apply runs. */
+        inject?: string[];
+        /** Plugin body; returning a function makes all effects reversible. */
+        apply(ctx: any, config: any): void | (() => void);
+    note: |
+      apply 接收 ctx 和配置，是插件唯一执行体。返回清理函数时，宿主可以把插件效果做成可逆生命周期。
+  - snippet: |
+      /** Structural subset of the cordis plugin contract every built-in uses:
+       * the (name, inject, apply) triad with an optional cleanup return. */
+      export interface PluginModule {
+        /** Plugin id used by the manifest and audit output. */
+        name: string;
+        /** Service keys awaited before apply runs. */
+        inject?: string[];
+        /** Plugin body; returning a function makes all effects reversible. */
+        apply(ctx: any, config: any): void | (() => void);
+      }
+    note: |
+      整个类型刻意不要求实现 Cordis 的完整插件接口。静态表和测试可以只满足结构子集，同时保持宿主装载语义。

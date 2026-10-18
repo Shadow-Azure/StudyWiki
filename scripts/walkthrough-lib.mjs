@@ -11,7 +11,7 @@ const OVERVIEW_SECTION_KEYS = new Set(["heading", "body", "images"]);
 const SECTION_KEYS = new Set(["heading", "body", "images", "generated"]);
 const FEATURE_INDEX_KEYS = new Set(["features"]);
 const FEATURE_INDEX_ITEM_KEYS = new Set(["slug", "title", "summary", "issue"]);
-const MANIFEST_KEYS = new Set(["bootstrap", "lineCoverage"]);
+const MANIFEST_KEYS = new Set(["bootstrap", "lineCoverage", "reviewCoverage"]);
 const LINE_COVERAGE_KEYS = new Set(["threshold", "exemptions"]);
 const FILE_PAGE_KEYS = new Set(["kind", "source", "summary", "segments"]);
 const SEGMENT_KEYS = new Set(["snippet", "note"]);
@@ -31,13 +31,54 @@ const CHANGE_KEYS = new Set([
   "kind",
   "issue",
   "title",
-  "functional",
+  "scale",
+  "feature",
+  "userFlow",
   "architectural",
-  "code",
+  "architecturalFlowchart",
+  "design",
+  "designFlowcharts",
+  "codeMap",
+  "reviewGuide",
+  "verification",
   "touches",
+  "skill_gen_commit_id",
 ]);
+const SCALE_KEYS = new Set(["files", "additions", "deletions"]);
+const CODE_MAP_GROUP_KEYS = new Set(["group", "attention", "why", "files"]);
+const CODE_MAP_FILE_KEYS = new Set(["path", "note", "changes"]);
+const CODE_MAP_CHANGE_KEYS = new Set(["snippet", "note"]);
+const REVIEW_GUIDE_KEYS = new Set(["order", "risks", "acceptance"]);
+const ACCEPTANCE_KEYS = new Set(["item", "evidence"]);
+const FLOWCHART_KEYS = new Set(["title", "direction", "nodes", "edges", "explanation"]);
+const FLOWCHART_NODE_KEYS = new Set(["id", "label", "shape"]);
+const FLOWCHART_EDGE_KEYS = new Set(["from", "to", "label"]);
+const FLOWCHART_NODE_SHAPES = new Set(["rect", "rounded", "stadium", "diamond"]);
+const FLOWCHART_DIRECTIONS = new Set(["LR", "TB"]);
+const CHANGE_ATTENTIONS = new Set(["must-read", "skim", "skip"]);
+/**
+ * 机械变更路径归类规则：命中任一规则的路径由机器生成/维护，不承载语义讲解。
+ * 用途有二：codeMap 组里机械路径不得标 must-read；--diff 对账时机械路径
+ * 不被 codeMap.files 覆盖也合法。`.github/workflows/` 刻意不在其中——
+ * 流水线变更需要人读。
+ */
+export const MECHANICAL_PATTERNS = [
+  /\.i18n\.yaml$/u,
+  /^docs\/commands\./u,
+  /(^|\/)pnpm-lock\.yaml$/u,
+];
 const ACTIVE_ISSUE_STATUSES = new Set(["in-progress", "done"]);
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** 源代码路径（must-read 组必须带 changes 检视注解的范围）。 */
+export function isReviewableSourcePath(file) {
+  return typeof file === "string" && /^(?:src|scripts|src-tauri)\//u.test(file) && !isMechanicalPath(file);
+}
+
+/** 判断仓库相对路径是否命中机械归类规则。 */
+export function isMechanicalPath(file) {
+  return typeof file === "string" && MECHANICAL_PATTERNS.some((pattern) => pattern.test(file));
+}
 
 /** 判断值是否是可校验的普通对象（不含数组与 null）。 */
 function isObject(value) {
@@ -174,6 +215,13 @@ function validateManifest(site, errors) {
   if (manifest.bootstrap !== undefined && typeof manifest.bootstrap !== "boolean") {
     push(errors, label, "bootstrap 必须是 boolean");
   }
+  if (
+    manifest.reviewCoverage !== undefined &&
+    (typeof manifest.reviewCoverage !== "number" || !Number.isFinite(manifest.reviewCoverage) ||
+      manifest.reviewCoverage < 0 || manifest.reviewCoverage > 1)
+  ) {
+    push(errors, label, "reviewCoverage 必须是 0 到 1 的数字");
+  }
   const coverage = manifest.lineCoverage;
   if (!isObject(coverage)) {
     push(errors, label, "lineCoverage 必须是 map");
@@ -218,6 +266,239 @@ function validateStep(step, label, index, errors) {
   if (!validateKeys(step.ref, REF_KEYS, itemLabel, errors)) return;
   requireString(step.ref.file, "ref.file", itemLabel, errors);
   requireString(step.ref.snippet, "ref.snippet", itemLabel, errors);
+}
+
+/** change 页 scale：{files, additions, deletions} 非负整数三元组。 */
+function validateScale(scale, label, errors) {
+  const scaleLabel = `${label} scale`;
+  if (!isObject(scale)) {
+    push(errors, label, "scale 必须是 map");
+    return;
+  }
+  if (!validateKeys(scale, SCALE_KEYS, scaleLabel, errors)) return;
+  for (const field of ["files", "additions", "deletions"]) {
+    const value = scale[field];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+      push(errors, scaleLabel, `${field} 必须是非负整数`);
+    }
+  }
+}
+
+/** change 页 codeMap：变更地图分组；机械路径不得标 must-read。 */
+function validateCodeMap(codeMap, label, errors) {
+  if (!Array.isArray(codeMap) || codeMap.length === 0) {
+    push(errors, label, "codeMap 必须是非空数组");
+    return;
+  }
+  codeMap.forEach((group, index) => {
+    const groupLabel = `${label} codeMap[${index}]`;
+    if (!isObject(group)) {
+      push(errors, groupLabel, "必须是 map");
+      return;
+    }
+    if (!validateKeys(group, CODE_MAP_GROUP_KEYS, groupLabel, errors)) return;
+    requireString(group.group, "group", groupLabel, errors);
+    if (!CHANGE_ATTENTIONS.has(group.attention)) {
+      push(errors, groupLabel, "attention 必须是 must-read|skim|skip 之一");
+    }
+    if (typeof group.why !== "string" && group.why !== null) {
+      push(errors, groupLabel, "why 必须是字符串或 null");
+    }
+    if (!Array.isArray(group.files) || group.files.length === 0) {
+      push(errors, groupLabel, "files 必须是非空数组");
+      return;
+    }
+    group.files.forEach((file, fileIndex) => {
+      const fileLabel = `${groupLabel} files[${fileIndex}]`;
+      if (!isObject(file)) {
+        push(errors, fileLabel, "必须是 map");
+        return;
+      }
+      if (!validateKeys(file, CODE_MAP_FILE_KEYS, fileLabel, errors)) return;
+      requireString(file.path, "path", fileLabel, errors);
+      requireString(file.note, "note", fileLabel, errors);
+      if (
+        group.attention === "must-read" &&
+        isNonEmptyString(file.path) &&
+        isMechanicalPath(file.path)
+      ) {
+        push(errors, fileLabel, `机械变更不得标 must-read: ${file.path}`);
+      }
+      if (
+        group.attention === "must-read" &&
+        isNonEmptyString(file.path) &&
+        isReviewableSourcePath(file.path) &&
+        (!Array.isArray(file.changes) || file.changes.length === 0)
+      ) {
+        push(errors, fileLabel, `must-read 组的源代码文件必须带 changes 检视注解: ${file.path}`);
+      }
+    });
+  });  // changes（hunk 注解）形状校验：可选，出现则必须是 {snippet,note} 列表。
+  for (const group of codeMap) {
+    if (!isObject(group) || !Array.isArray(group.files)) continue;
+    for (const file of group.files) {
+      if (!isObject(file) || file.changes === undefined) continue;
+      if (!Array.isArray(file.changes)) {
+        errors.push(`${label} codeMap ${file.path ?? "?"}: changes 必须是列表`);
+        continue;
+      }
+      file.changes.forEach((change, index) => {
+        if (!isObject(change) || !Object.keys(change).every((key) => CODE_MAP_CHANGE_KEYS.has(key)) || typeof change.snippet !== "string" || typeof change.note !== "string") {
+          errors.push(`${label} codeMap ${file.path ?? "?"} changes[${index}]: 必须是 {snippet, note}`);
+        }
+      });
+    }
+  }
+
+}
+
+/** change 页 reviewGuide：阅读顺序 + 风险点 + 验收对照。 */
+function validateReviewGuide(reviewGuide, label, errors) {
+  const guideLabel = `${label} reviewGuide`;
+  if (!isObject(reviewGuide)) {
+    push(errors, label, "reviewGuide 必须是 map");
+    return;
+  }
+  if (!validateKeys(reviewGuide, REVIEW_GUIDE_KEYS, guideLabel, errors)) return;
+  if (
+    !Array.isArray(reviewGuide.order) ||
+    reviewGuide.order.length === 0 ||
+    !reviewGuide.order.every(isNonEmptyString)
+  ) {
+    push(errors, guideLabel, "order 必须是非空字符串数组");
+  }
+  if (!isStringArray(reviewGuide.risks)) {
+    push(errors, guideLabel, "risks 必须是字符串数组");
+  }
+  if (!Array.isArray(reviewGuide.acceptance) || reviewGuide.acceptance.length === 0) {
+    push(errors, guideLabel, "acceptance 必须是非空数组");
+    return;
+  }
+  reviewGuide.acceptance.forEach((entry, index) => {
+    const entryLabel = `${guideLabel} acceptance[${index}]`;
+    if (!isObject(entry)) {
+      push(errors, entryLabel, "必须是 map");
+      return;
+    }
+    if (!validateKeys(entry, ACCEPTANCE_KEYS, entryLabel, errors)) return;
+    requireString(entry.item, "item", entryLabel, errors);
+    requireString(entry.evidence, "evidence", entryLabel, errors);
+  });
+}
+
+/** change 页的非空字符串数组字段（userFlow/verification）。 */
+function requireNonEmptyStringArray(value, field, label, errors) {
+  if (!Array.isArray(value) || value.length === 0 || !value.every(isNonEmptyString)) {
+    push(errors, label, `${field} 必须是非空字符串数组`);
+  }
+}
+
+/** 叙事正文是否有实质内容：非空且不是"无/无。"占位（占位不需要配图）。 */
+function hasSubstance(text) {
+  return isNonEmptyString(text) && !/^\s*无[。.]?\s*$/u.test(text);
+}
+
+/**
+ * 校验单个流程图对象（architecturalFlowchart 或 designFlowcharts 项的图本体）。
+ * 结构：`{ title?, direction?, nodes: [{id, label, shape?}], edges: [{from, to, label?}] }`。
+ * @returns {boolean} 形状是否合法（供调用方决定是否继续做语义对账）。
+ */
+function validateFlowchart(chart, field, label, errors, extraKeys = []) {
+  if (!isObject(chart)) {
+    push(errors, label, `${field} 必须是 map（流程图：title?/direction?/nodes/edges）`);
+    return false;
+  }
+  if (!validateKeys(chart, new Set([...FLOWCHART_KEYS, ...extraKeys]), label, errors)) return false;
+  if (chart.title !== undefined && typeof chart.title !== "string") {
+    push(errors, label, `${field}.title 必须是字符串`);
+  }
+  if (!isNonEmptyString(chart.explanation)) {
+    push(errors, label, `${field}.explanation 必填（非空字符串：图表达什么、为什么这么画）`);
+  }
+  if (chart.direction !== undefined && !FLOWCHART_DIRECTIONS.has(chart.direction)) {
+    push(errors, label, `${field}.direction 必须是 LR|TB 之一`);
+  }
+  let shapeOk = true;
+  let nodesOk = true;
+  const ids = new Set();
+  if (!Array.isArray(chart.nodes) || chart.nodes.length < 2) {
+    push(errors, label, `${field}.nodes 必须是至少 2 项的数组`);
+    shapeOk = false;
+    nodesOk = false;
+  } else {
+    chart.nodes.forEach((node, index) => {
+      const nodeLabel = `${label} ${field}.nodes[${index}]`;
+      if (!isObject(node)) {
+        push(errors, nodeLabel, "必须是 map");
+        shapeOk = false;
+        nodesOk = false;
+        return;
+      }
+      if (!validateKeys(node, FLOWCHART_NODE_KEYS, nodeLabel, errors)) {
+        shapeOk = false;
+        nodesOk = false;
+      }
+      if (!isNonEmptyString(node.id)) {
+        push(errors, nodeLabel, "id 必须是非空字符串");
+        shapeOk = false;
+        nodesOk = false;
+      } else if (ids.has(node.id)) {
+        push(errors, nodeLabel, `id 重复: ${node.id}`);
+        shapeOk = false;
+        nodesOk = false;
+      } else {
+        ids.add(node.id);
+      }
+      if (!isNonEmptyString(node.label)) {
+        push(errors, nodeLabel, "label 必须是非空字符串");
+        shapeOk = false;
+        nodesOk = false;
+      }
+      if (node.shape !== undefined && !FLOWCHART_NODE_SHAPES.has(node.shape)) {
+        push(errors, nodeLabel, "shape 必须是 rect|rounded|stadium|diamond 之一");
+        shapeOk = false;
+        nodesOk = false;
+      }
+    });
+  }
+  if (!Array.isArray(chart.edges) || chart.edges.length === 0) {
+    push(errors, label, `${field}.edges 必须是非空数组`);
+    shapeOk = false;
+  } else {
+    chart.edges.forEach((edge, index) => {
+      const edgeLabel = `${label} ${field}.edges[${index}]`;
+      if (!isObject(edge)) {
+        push(errors, edgeLabel, "必须是 map");
+        shapeOk = false;
+        return;
+      }
+      if (!validateKeys(edge, FLOWCHART_EDGE_KEYS, edgeLabel, errors)) shapeOk = false;
+      for (const endpoint of ["from", "to"]) {
+        if (!isNonEmptyString(edge[endpoint])) {
+          push(errors, edgeLabel, `${endpoint} 必须是非空字符串`);
+          shapeOk = false;
+        } else if (nodesOk && !ids.has(edge[endpoint])) {
+          push(errors, edgeLabel, `${endpoint} 引用不存在的节点: ${edge[endpoint]}`);
+          shapeOk = false;
+        }
+      }
+      if (edge.label !== undefined && typeof edge.label !== "string") {
+        push(errors, edgeLabel, "label 必须是字符串");
+        shapeOk = false;
+      }
+    });
+  }
+  return shapeOk;
+}
+
+/** 提取 design 正文里"落地映射"功能点小节（#### 标题）名单，与 designFlowcharts 对账。 */
+export function designFeatureHeadings(design) {
+  const headings = [];
+  for (const line of String(design).split("\n")) {
+    const match = /^####\s+(.+?)\s*$/u.exec(line);
+    if (match) headings.push(match[1]);
+  }
+  return headings;
 }
 
 /**
@@ -303,11 +584,79 @@ export function validateSchema(site) {
     if (!validateKeys(change, CHANGE_KEYS, label, errors)) continue;
     requireString(change.issue, "issue", label, errors);
     requireString(change.title, "title", label, errors);
-    requireString(change.functional, "functional", label, errors);
+    validateScale(change.scale, label, errors);
+    requireString(change.feature, "feature", label, errors);
+    requireNonEmptyStringArray(change.userFlow, "userFlow", label, errors);
     requireString(change.architectural, "architectural", label, errors);
-    requireString(change.code, "code", label, errors);
+    if (change.design !== undefined && typeof change.design !== "string") {
+      push(errors, label, "design 必须是字符串（markdown 方案设计说明）");
+    }
+    // 架构影响/方案设计有实质内容时，对应流程图必填：图文结合是变更页的硬性交付面。
+    if (hasSubstance(change.architectural)) {
+      if (change.architecturalFlowchart === undefined) {
+        push(errors, label, "architecturalFlowchart 必填（architectural 非空时）");
+      } else {
+        validateFlowchart(change.architecturalFlowchart, "architecturalFlowchart", label, errors);
+      }
+    } else if (change.architecturalFlowchart !== undefined) {
+      push(errors, label, "architecturalFlowchart 仅在 architectural 非空时允许出现");
+    }
+    if (hasSubstance(change.design)) {
+      if (!Array.isArray(change.designFlowcharts) || change.designFlowcharts.length === 0) {
+        push(errors, label, "designFlowcharts 必填且非空（design 非空时，每个功能点一条）");
+      } else {
+        let flowchartsOk = true;
+        const features = [];
+        change.designFlowcharts.forEach((entry, index) => {
+          const entryLabel = `${label} designFlowcharts[${index}]`;
+          if (!isObject(entry)) {
+            push(errors, entryLabel, "必须是 map");
+            flowchartsOk = false;
+            return;
+          }
+          if (!isNonEmptyString(entry.feature)) {
+            push(errors, entryLabel, "feature 必须是非空字符串（对应 design 落地映射小节名）");
+            flowchartsOk = false;
+          } else {
+            features.push(entry.feature);
+          }
+          if (!validateFlowchart(entry, "designFlowcharts", entryLabel, errors, ["feature"])) {
+            flowchartsOk = false;
+          }
+        });
+        if (flowchartsOk) {
+          const headings = designFeatureHeadings(change.design);
+          if (headings.length > 0) {
+            const headingSet = new Set(headings);
+            const featureSet = new Set(features);
+            for (const heading of headings) {
+              if (!featureSet.has(heading)) {
+                push(errors, label, `design 功能点「${heading}」缺少对应 designFlowcharts 项`);
+              }
+            }
+            for (const feature of features) {
+              if (!headingSet.has(feature)) {
+                push(errors, label, `designFlowcharts 项「${feature}」在 design 落地映射中无此小节`);
+              }
+            }
+          }
+        }
+      }
+    } else if (change.designFlowcharts !== undefined) {
+      push(errors, label, "designFlowcharts 仅在 design 非空时允许出现");
+    }
+    validateCodeMap(change.codeMap, label, errors);
+    validateReviewGuide(change.reviewGuide, label, errors);
+    requireNonEmptyStringArray(change.verification, "verification", label, errors);
     if (!isNonEmptyStringArray(change.touches)) {
       push(errors, label, "touches 必须是非空字符串数组");
+    }
+    if (
+      change.skill_gen_commit_id !== undefined &&
+      (typeof change.skill_gen_commit_id !== "string" ||
+        !/^[0-9a-f]{7,40}$/u.test(change.skill_gen_commit_id))
+    ) {
+      push(errors, label, "skill_gen_commit_id 必须是 7-40 位十六进制 commit hash");
     }
   }
 
@@ -410,7 +759,7 @@ export function parseSite(root) {
 }
 
 /**
- * 定位 trimEnd 归一化后的跨行 snippet。
+ * 定位整行 trim 归一化后的跨行 snippet（行首缩进差异不敏感——YAML 块标量必然剥统一缩进，顶格复制是常态）。
  * @param {string} sourceText - 源码文本。
  * @param {string} snippet - 内容锚点。
  * @returns {{start:number,end:number,count:number}|null} 1-based 首个匹配区间与匹配次数。
@@ -419,7 +768,7 @@ export function locateSnippet(sourceText, snippet) {
   if (typeof sourceText !== "string" || typeof snippet !== "string" || snippet === "") {
     return null;
   }
-  const normalize = (text) => text.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd());
+  const normalize = (text) => text.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim());
   const haystack = normalize(sourceText).join("\n");
   // 块标量天然保留末尾换行；定位前只剥掉恰好一个归一化换行，
   // 使 end 表示内容最后一行，并避免空尾行灌大覆盖率。
@@ -486,6 +835,28 @@ export function checkAnchors(root, site) {
           checkAnchor(root, source, segment.snippet, `${label} segments[${index}]`, cache, errors);
         }
       });
+    }
+  }
+  // 变更页 changes 是历史检视注解：path 已不在当前树时按“历史归档”跳过；
+  // 仍存在的源文件必须保证 snippet 可定位，防止注解漂移成无锚文本。
+  for (const [slug, change] of site.changes) {
+    const label = pagePath("change", slug);
+    if (!isObject(change) || !Array.isArray(change.codeMap)) continue;
+    for (const group of change.codeMap) {
+      if (!isObject(group) || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (!isObject(file) || !isNonEmptyString(file.path)) continue;
+        if (!existsSync(path.join(root, file.path))) continue;
+        if (!Array.isArray(file.changes)) continue;
+        file.changes.forEach((entry, index) => {
+          const changeLabel = `${label} codeMap ${file.path} changes[${index}]`;
+          if (!isObject(entry) || !isNonEmptyString(entry.snippet)) return;
+          const loaded = readSource(root, file.path, cache);
+          if (loaded.error || locateSnippet(loaded.text, entry.snippet) === null) {
+            push(errors, file.path, `changes 注解 snippet 无法在源码中定位（${changeLabel}）`);
+          }
+        });
+      }
     }
   }
   for (const [slug, feature] of site.features) {
@@ -661,6 +1032,121 @@ export function checkLineCoverage(root, site) {
   return errors;
 }
 
+/** 计算注解 snippet 的 after 内容行数（块标量的一个空尾行不计）。 */
+function snippetLineCount(snippet) {
+  const lines = String(snippet).replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd());
+  if (lines.at(-1) === "") lines.pop();
+  return lines.length;
+}
+
+/**
+ * --diff 档逐段上限：must-read 组 reviewable 源码文件的每条 changes 注解
+ * 在 after 源码中最多锚定 20 行；skim/skip 与非源码路径不进入注意力骨架。
+ * @param {string} root - 仓库根目录（与覆盖率对账共用调用缝）。
+ * @param {object} site - 站点索引。
+ * @param {string[]} targetSlugs - 本轮 review 关注的变更页 slug。
+ * @returns {string[]} 错误列表。
+ */
+export function checkChangesSegments(root, site, targetSlugs) {
+  if (root !== null && root !== undefined && typeof root !== "string") {
+    return ["root 必须是字符串"];
+  }
+  if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+  const errors = [];
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (!isObject(file) || !isReviewableSourcePath(file.path) || !Array.isArray(file.changes)) continue;
+        file.changes.forEach((change, index) => {
+          if (!isObject(change) || typeof change.snippet !== "string") return;
+          const count = snippetLineCount(change.snippet);
+          if (count > 20) {
+            errors.push(`changes 注解每段不超过 20 行: ${file.path} changes[${index}] (${count} 行)`);
+          }
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * --diff 档注解覆盖率：must-read 组 reviewable 源码文件按 numstat additions
+ * 汇总分母；各文件 changes snippet 在当前源码中的 after 区间取并集作分子。
+ * 定位失败由锚点门禁单独红，这里按 0 计；无 additions 分母时不需要覆盖。
+ * @param {string} root - 仓库根目录。
+ * @param {object} site - 站点索引。
+ * @param {Array<{additions:number, deletions:number, path:string}>} numstat - 注入的 numstat。
+ * @param {string[]} targetSlugs - 本轮 review 关注的变更页 slug。
+ * @returns {string[]} 错误列表。
+ */
+export function checkReviewCoverage(root, site, numstat, targetSlugs) {
+  if (!Array.isArray(targetSlugs)) return ["targetSlugs 必须是数组"];
+  if (!Array.isArray(numstat)) return ["numstat 必须是数组"];
+  if (
+    numstat.some((row) =>
+      !isObject(row) ||
+      typeof row.additions !== "number" ||
+      typeof row.deletions !== "number" ||
+      typeof row.path !== "string"
+    )
+  ) {
+    return ["numstat 每项必须是 {additions, deletions, path}"];
+  }
+  const configured = isObject(site.manifest) ? site.manifest.reviewCoverage : undefined;
+  const threshold = configured ?? 0.9;
+  if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    return ["walkthrough/manifest.json: reviewCoverage 必须是 0 到 1 的数字"];
+  }
+
+  const targetPaths = new Set();
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (isObject(file) && isReviewableSourcePath(file.path)) targetPaths.add(normalizePath(file.path));
+      }
+    }
+  }
+
+  const additionsByPath = new Map(numstat.map((row) => [normalizePath(row.path), row.additions]));
+  const denominator = [...targetPaths].reduce((sum, file) => sum + Math.max(0, additionsByPath.get(file) ?? 0), 0);
+  if (denominator === 0) return [];
+
+  const cache = new Map();
+  const covered = new Set();
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || group.attention !== "must-read" || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (!isObject(file) || !isReviewableSourcePath(file.path) || !Array.isArray(file.changes)) continue;
+        const source = normalizePath(file.path);
+        if (!targetPaths.has(source)) continue;
+        const loaded = readSource(root, source, cache);
+        if (loaded.error) continue;
+        for (const change of file.changes) {
+          if (!isObject(change) || typeof change.snippet !== "string") continue;
+          const located = locateSnippet(loaded.text, change.snippet);
+          if (!located) continue;
+          for (let line = located.start; line <= located.end; line += 1) covered.add(`${source}:${line}`);
+        }
+      }
+    }
+  }
+  const ratio = covered.size / denominator;
+  if (ratio >= threshold) return [];
+  const actual = `${(ratio * 100).toFixed(2)}%`;
+  const expected = `${threshold * 100}%`;
+  return [`逐段注解覆盖率 <${expected}（实际 ${actual}）`];
+}
+
 /** 归一化 git 输出中的路径分隔符。 */
 function normalizePath(value) {
   return typeof value === "string" ? value.replaceAll("\\", "/") : "";
@@ -706,6 +1192,160 @@ export function checkDiff(diffFiles, site) {
   }
   for (const source of changedSources) {
     if (!touched.has(source)) errors.push(`changes touches 缺少 file 引用: ${source}`);
+  }
+  return errors;
+}
+
+/** 归一化 numstat 改名路径（`a/{b => c}/d` 与 `b => c` 两种形态取新路径）。 */
+function normalizeNumstatPath(value) {
+  return normalizePath(value)
+    .replace(/\{[^{}]* => ([^{}]*)\}/u, "$1")
+    .replace(/^.* => /u, "");
+}
+
+/**
+ * 解析 `git diff --numstat` 输出为 {additions, deletions, path} 数组；
+ * 二进制行的 `-` 计 0。坏行 fail-loud 抛错（CLI 契约边界）。
+ * @param {string} text - numstat 原始输出。
+ * @returns {Array<{additions:number, deletions:number, path:string}>} 行数组。
+ */
+export function parseNumstat(text) {
+  if (typeof text !== "string") throw new Error("numstat 输出必须是字符串");
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      const match = /^(\d+|-)\t(\d+|-)\t(.+)$/u.exec(line);
+      if (!match) throw new Error(`numstat 行格式非法: ${line}`);
+      return {
+        additions: match[1] === "-" ? 0 : Number.parseInt(match[1], 10),
+        deletions: match[2] === "-" ? 0 : Number.parseInt(match[2], 10),
+        path: normalizeNumstatPath(match[3]),
+      };
+    });
+}
+
+/**
+ * --diff 档变更页对账：凡本 PR 新增/修改的 changes 页（diff 中出现
+ * walkthrough/changes/<slug>.yaml 且该文件在本 PR 新建——base 无该文件，
+ * 由 addedDiffFiles 给出）。scale totals 对账仅在本 PR 恰好新增一个变更页
+ * 时执行——files 必须恰好相等，additions/deletions 允许 ±10% 容差（相对
+ * 实际值，端点含内）；新增多页（bootstrap 型大 PR，页面描述各自的历史 PR）
+ * 时 totals 结构上不可满足，退化为仅覆盖检查。codeMap 语义覆盖对全部新增
+ * 变更页生效：codeMap.files 必须覆盖 diff 中全部语义路径。仅被修改的历史
+ * 变更页只做 schema 静态检查：它们描述的是自己的历史 PR，scale 与本 diff
+ * 无关。
+ * 机械路径（MECHANICAL_PATTERNS）与 walkthrough/ 站点源自身豁免覆盖义务。
+ * @param {string[]} diffFiles - `git diff --name-only base...HEAD` 的注入结果。
+ * @param {object} site - 站点索引。
+ * @param {Array<{additions:number, deletions:number, path:string}>} [numstat]
+ *   `git diff --numstat` 解析结果；缺省时跳过 totals 对账、只做覆盖对账。
+ * @param {string[]} [addedDiffFiles]
+ *   `git diff --name-only --diff-filter=A base...HEAD` 的注入结果；对账对象
+ *   是 changedSlugs 与它的交集；交集恰为一页时执行 totals 对账，多页时仅做
+ *   覆盖检查；缺省视为空交集（不做对账）。
+ * @returns {string[]} 错误列表。
+ */
+export function checkDiffScale(diffFiles, site, numstat, addedDiffFiles) {
+  const errors = [];
+  if (!Array.isArray(diffFiles)) return ["diffFiles 必须是字符串数组"];
+  if (diffFiles.some((item) => typeof item !== "string")) {
+    return ["diffFiles 每项必须是字符串"];
+  }
+  if (numstat !== undefined) {
+    if (!Array.isArray(numstat)) return ["numstat 必须是数组"];
+    if (
+      numstat.some(
+        (row) =>
+          !isObject(row) ||
+          typeof row.additions !== "number" ||
+          typeof row.deletions !== "number" ||
+          typeof row.path !== "string",
+      )
+    ) {
+      return ["numstat 每项必须是 {additions, deletions, path}"];
+    }
+  }
+  if (addedDiffFiles !== undefined) {
+    if (!Array.isArray(addedDiffFiles)) return ["addedDiffFiles 必须是数组"];
+    if (addedDiffFiles.some((item) => typeof item !== "string")) {
+      return ["addedDiffFiles 每项必须是字符串"];
+    }
+  }
+  const diff = diffFiles.map(normalizePath);
+  const changedSlugs = [
+    ...new Set(
+      diff
+        .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+        .filter(Boolean),
+    ),
+  ].sort();
+  if (changedSlugs.length === 0) return errors;
+  const addedSlugs = new Set(
+    (addedDiffFiles ?? [])
+      .map((file) => normalizePath(file))
+      .map((file) => /^walkthrough\/changes\/([^/]+)\.yaml$/u.exec(file)?.[1])
+      .filter(Boolean),
+  );
+  // 只有「本 PR 新建」的变更页参与对账；被修改的历史页豁免。
+  const targetSlugs = changedSlugs.filter((slug) => addedSlugs.has(slug));
+  if (targetSlugs.length === 0) return errors;
+
+  // 裁决 G：totals 对账只在恰好新增一个变更页时执行；多页新增（bootstrap 型
+  // 大 PR）页面各自描述历史 PR，任何单一 totals 都不可能同时等于全部页面，
+  // 结构上不可满足，因此跳过、只保留覆盖检查。
+  if (numstat !== undefined && targetSlugs.length === 1) {
+    const totals = { additions: 0, deletions: 0 };
+    for (const row of numstat) {
+      totals.additions += row.additions;
+      totals.deletions += row.deletions;
+    }
+    for (const slug of targetSlugs) {
+      const page = site.changes.get(slug);
+      // schema 规则已负责形状；这里只对形状合法的 scale 做对账。
+      if (!isObject(page) || !isObject(page.scale)) continue;
+      const label = pagePath("change", slug);
+      const declared = page.scale;
+      if (typeof declared.files === "number" && declared.files !== numstat.length) {
+        push(
+          errors,
+          label,
+          `scale.files=${declared.files} 与实际 diff 文件数 ${numstat.length} 不一致（须恰好相等）`,
+        );
+      }
+      for (const [field, actual] of [
+        ["additions", totals.additions],
+        ["deletions", totals.deletions],
+      ]) {
+        const value = declared[field];
+        if (typeof value !== "number") continue;
+        if (Math.abs(value - actual) > actual * 0.1) {
+          push(errors, label, `scale.${field}=${value} 超出实际 ${actual} 的 ±10% 容差`);
+        }
+      }
+    }
+  }
+
+  const covered = new Set();
+  for (const slug of targetSlugs) {
+    const page = site.changes.get(slug);
+    if (!isObject(page) || !Array.isArray(page.codeMap)) continue;
+    for (const group of page.codeMap) {
+      if (!isObject(group) || !Array.isArray(group.files)) continue;
+      for (const file of group.files) {
+        if (isObject(file) && isNonEmptyString(file.path)) {
+          covered.add(normalizePath(file.path));
+        }
+      }
+    }
+  }
+  const semantic = [
+    ...new Set(
+      diff.filter((file) => !file.startsWith("walkthrough/") && !isMechanicalPath(file)),
+    ),
+  ].sort();
+  for (const file of semantic) {
+    if (!covered.has(file)) errors.push(`变更页 codeMap 未覆盖语义路径: ${file}`);
   }
   return errors;
 }
