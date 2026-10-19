@@ -159,519 +159,344 @@ codeMap:
         changes:
           - snippet: |
               /** 机器索引 `.study-wiki/index.yaml` 的受限 yaml 子集解析/序列化。
-               * 格式是 LF-only：解析器不归一化 CRLF，遇到 CR 按损坏输入拒绝。
-               */
-            note: |
-              六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
-          - snippet: |
+              * 格式是 LF-only：解析器不归一化 CRLF，遇到 CR 按损坏输入拒绝。
+              */
+
               /** 源类型：文本或视频。 */
-            note: |
-              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
-          - snippet: |
               export type SourceKind = "text" | "video";
             note: |
-              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
+              文件级注释声明 LF-only 输入合同，`SourceKind` 把源类型收窄为文本或视频，供记录、解析和序列化共用同一词表。
           - snippet: |
               /** 一条源记录：源 → 产物映射 + 内容哈希 + 分析时间。 */
-            note: |
-              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
-          - snippet: |
               export interface SourceRecord {
-                /** 库相对路径。 */
-                path: string;
-                /** 源类型：文本或视频（决定 ingest 路径）。 */
-                kind: SourceKind;
-                /** 源内容 SHA-256（小写 hex）。 */
-                sha256: string;
-                /** 文件大小（字节）。 */
-                size: number;
-                /** 最近一次分析完成时间（ISO）。 */
-                analyzedAt: string;
-                /** 产物目录（库相对路径）；文本源为 null（产物即源本身）。 */
-                artifact: string | null;
-                /** sources 页路径（库相对路径）；用于源迁址后仍把产物页与索引行绑定。 */
-                page?: string;
-            note: |
-              记录必须包含六个必填字段且不重复，可选 page；任何未知形状立即返回 null。
-          - snippet: |
+              /** 库相对路径。 */
+              path: string;
+              /** 源类型：文本或视频（决定 ingest 路径）。 */
+              kind: SourceKind;
+              /** 源内容 SHA-256（小写 hex）。 */
+              sha256: string;
+              /** 文件大小（字节）。 */
+              size: number;
+              /** 最近一次分析完成时间（ISO）。 */
+              analyzedAt: string;
+              /** 产物目录（库相对路径）；文本源为 null（产物即源本身）。 */
+              artifact: string | null;
+              /** sources 页路径（库相对路径）；用于源迁址后仍把产物页与索引行绑定。 */
+              page?: string;
               }
             note: |
-              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
+              `SourceRecord` 固定六个必填字段，并用可选 `page` 绑定 sources 产物页；迁址后程序可凭页面路径找回同一索引行，而不依赖页面 frontmatter 的旧 source。
           - snippet: |
               /** 机器索引顶层结构。 */
-            note: |
-              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
-          - snippet: |
               export interface MachineIndex {
-                version: 1;
-                sources: SourceRecord[];
-            note: |
-              六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
-          - snippet: |
+              version: 1;
+              sources: SourceRecord[];
               }
             note: |
-              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
+              `MachineIndex` 只允许版本 1 和 `SourceRecord[]`，把索引形状锁在程序独占的单一版本上。
           - snippet: |
               const FIELDS = [
-                "path",
-                "kind",
-                "sha256",
-                "size",
-                "analyzedAt",
-                "artifact",
-            note: |
-              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
-          - snippet: |
+              "path",
+              "kind",
+              "sha256",
+              "size",
+              "analyzedAt",
+              "artifact",
               ] as const;
-            note: |
-              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
-          - snippet: |
               type Field = (typeof FIELDS)[number];
-            note: |
-              记录必须包含六个必填字段且不重复，可选 page；任何未知形状立即返回 null。
-          - snippet: |
+              const OPTIONAL_FIELDS = ["page"] as const;
+              type OptionalField = (typeof OPTIONAL_FIELDS)[number];
               const ITEM_RE = /^  - ([a-zA-Z0-9]+): (.*)$/;
-            note: |
-              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
-          - snippet: |
               const CONT_RE = /^    ([a-zA-Z0-9]+): (.*)$/;
-            note: |
-              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
-          - snippet: |
               const INVALID_VALUE = Symbol("invalid value");
-            note: |
-              六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
-          - snippet: |
               type ParsedValue = string | number | null | typeof INVALID_VALUE;
             note: |
-              引号解码只接受反斜杠和双引号转义，其他转义按损坏输入拒绝。
+              `FIELDS` 与 `OPTIONAL_FIELDS` 是解析和序列化共享的封闭键集；两个正则只接受固定缩进的 `key: value` 行和续行，`INVALID_VALUE` 用哨兵区分“解析失败”和合法的 `null`。
           - snippet: |
               function unquote(raw: string): string | null {
-                if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
-                const inner = raw.slice(1, -1);
-                let result = "";
-                for (let index = 0; index < inner.length; index += 1) {
-                  const char = inner[index];
-                  if (char === '"') return null;
-                  if (char !== "\\") {
-                    result += char;
-                    continue;
-                  }
-                  const escaped = inner[index + 1];
-                  if (escaped !== "\\" && escaped !== '"') return null;
-                  result += escaped;
-                  index += 1;
-                }
-                return result;
-            note: |
-              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
-          - snippet: |
+              if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
+              const inner = raw.slice(1, -1);
+              let result = "";
+              for (let index = 0; index < inner.length; index += 1) {
+              const char = inner[index];
+              if (char === '"') return null;
+              if (char !== "\\") {
+              result += char;
+              continue;
+              }
+              const escaped = inner[index + 1];
+              if (escaped !== "\\" && escaped !== '"') return null;
+              result += escaped;
+              index += 1;
+              }
+              return result;
               }
             note: |
-              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
+              `unquote` 只接受双引号包裹的值，并且只解码反斜杠和双引号两种转义；未闭合引号、裸引号或不支持的转义都返回 `null`，避免手写解析器悄悄扩张成通用 YAML。
           - snippet: |
               function parseValue(
-                field: Field | OptionalField,
-                raw: string,
-            note: |
-              page 与必填字段共用标量解析；字符串字段仍走同一套引号解码，避免为可选字段开第二条格式路径。
-          - snippet: |
+              field: Field | OptionalField,
+              raw: string,
               ): ParsedValue {
-                if (field === "artifact" && raw === "null") return null;
-                if (field === "size") {
-                  if (!/^\d+$/.test(raw)) return INVALID_VALUE;
-                  const size = Number(raw);
-                  return Number.isSafeInteger(size) ? size : INVALID_VALUE;
-                }
-                if (field === "kind") {
-                  return raw === "text" || raw === "video" ? raw : INVALID_VALUE;
-                }
-                const value = unquote(raw);
-                return value === null ? INVALID_VALUE : value;
-            note: |
-              序列化前完整校验顶层和每条源记录，坏值 fail-fast。
-          - snippet: |
+              if (field === "artifact" && raw === "null") return null;
+              if (field === "size") {
+              if (!/^\d+$/.test(raw)) return INVALID_VALUE;
+              const size = Number(raw);
+              return Number.isSafeInteger(size) ? size : INVALID_VALUE;
+              }
+              if (field === "kind") {
+              return raw === "text" || raw === "video" ? raw : INVALID_VALUE;
+              }
+              const value = unquote(raw);
+              return value === null ? INVALID_VALUE : value;
               }
             note: |
-              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
+              `parseValue` 按字段收窄标量：只有 `artifact` 接受裸 `null`，`size` 必须是非负安全整数，`kind` 只能是 text/video，其余字段继续走统一的双引号解码。
           - snippet: |
               /** 解析机器索引；任何偏离受限 yaml 子集的输入都返回 null。
-               * @param text 机器索引文件文本。
-               * @returns 解析结果；输入损坏时返回 null。
-               */
-            note: |
-              六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
-          - snippet: |
+              * @param text 机器索引文件文本。
+              * @returns 解析结果；输入损坏时返回 null。
+              */
               export function parseMachineIndex(text: string): MachineIndex | null {
-                if (text.includes("\r")) return null;
-                const lines = text.split("\n").filter((line) => line.trim() !== "");
-                if (lines.length === 0) return null;
-                if (lines[0] !== "version: 1") return null;
-                const rest = lines.slice(1);
-                if (rest.length === 0) return null;
-                if (rest[0] === "sources: []") {
-                  return rest.length === 1 ? { version: 1, sources: [] } : null;
-                }
-                if (rest[0] !== "sources:") return null;
+              if (text.includes("\r")) return null;
+              const lines = text.split("\n").filter((line) => line.trim() !== "");
+              if (lines.length === 0) return null;
+              if (lines[0] !== "version: 1") return null;
+              const rest = lines.slice(1);
+              if (rest.length === 0) return null;
+              if (rest[0] === "sources: []") {
+              return rest.length === 1 ? { version: 1, sources: [] } : null;
+              }
+              if (rest[0] !== "sources:") return null;
             note: |
-              解析器先拒绝 CR、空索引、坏版本头和非空列表形状；只有 `sources:` 头部合法时才逐行收集记录。
+              `parseMachineIndex` 在逐行解析前先拒绝 CR、空输入、错误版本头和非空列表形状；空索引必须精确写成 `sources: []`，其他偏差直接返回 `null`。
           - snippet: |
-                const sources: SourceRecord[] = [];
-                let current: Partial<
-                  Record<Field | OptionalField, string | number | null>
-                > | null = null;
-                const seen = new Set<Field | OptionalField>();
-                const flush = (): boolean => {
-                  if (current === null) return true;
-                  if (!FIELDS.every((field) => seen.has(field))) return false;
-                  sources.push(current as SourceRecord);
-                  return true;
+              const sources: SourceRecord[] = [];
+              let current: Partial<
+              Record<Field | OptionalField, string | number | null>
+              > | null = null;
+              const seen = new Set<Field | OptionalField>();
+              const flush = (): boolean => {
+              if (current === null) return true;
+              if (!FIELDS.every((field) => seen.has(field))) return false;
+              sources.push(current as SourceRecord);
+              return true;
+              };
             note: |
-              每条记录按字段名收值；page 与必填字段共用已见集合，flush 只要求六个必填字段齐全。
+              `sources`、`current` 与 `seen` 共同保存逐记录解析状态；`flush` 只在上一条记录六个必填字段齐全时提交，可选 `page` 不改变必填字段门槛。
           - snippet: |
+              for (const line of rest.slice(1)) {
+              let match: RegExpMatchArray | null;
+              const item = line.match(ITEM_RE);
+              if (item) {
+              if (!flush()) return null;
+              current = {};
+              seen.clear();
+              match = item;
+              } else {
+              match = line.match(CONT_RE);
+              if (match === null || current === null) return null;
+              }
+            note: |
+              列表行开启新记录前先结算上一条；续行必须已有当前记录，否则把孤立续行或缺失分隔视为损坏输入。
+          - snippet: |
+              const key = match[1] as Field | OptionalField;
+              if (
+              (!(FIELDS as readonly string[]).includes(key) &&
+              !(OPTIONAL_FIELDS as readonly string[]).includes(key)) ||
+              seen.has(key)
+              ) {
+              return null;
+              }
+              const value = parseValue(key, match[2]);
+              if (value === INVALID_VALUE) return null;
+              seen.add(key);
+              current[key] = value;
+              }
               if (!flush()) return null;
               return { version: 1, sources };
             note: |
-              size 必须是非负安全整数，kind 只允许 text/video，artifact 允许 null，page 可选且必须是字符串。
-          - snippet: |
-              }
-            note: |
-              解析器先拒绝 CR、空索引、坏版本头和非空列表形状，再逐行收字段。
+              键必须属于六个必填字段或 `page`，同一记录不得重复写键；任何值解析失败立即返回 `null`，循环结束后再结算最后一条记录，不返回半截索引。
           - snippet: |
               /** 序列化机器索引；输出可被 `parseMachineIndex` 恒等还原。
-               * @param index 机器索引。
-               * @returns 受限 yaml 子集文本。
-               */
-            note: |
-              记录必须包含六个必填字段且不重复，可选 page；任何未知形状立即返回 null。
-          - snippet: |
+              * @param index 机器索引。
+              * @returns 受限 yaml 子集文本。
+              */
               export function serializeMachineIndex(index: MachineIndex): string {
-                if (index === null || index.version !== 1 || !Array.isArray(index.sources)) {
-                  throw new Error("machine index must contain version 1 and a sources array");
-                }
-                for (const source of index.sources) {
-                  if (
-                    source === null ||
-                    (source.kind !== "text" && source.kind !== "video") ||
-                    !Number.isSafeInteger(source.size) ||
-                    source.size < 0 ||
-                    typeof source.path !== "string" ||
-                    typeof source.sha256 !== "string" ||
-                    typeof source.analyzedAt !== "string" ||
-                    (source.artifact !== null && typeof source.artifact !== "string") ||
-                    (source.page !== undefined && typeof source.page !== "string")
-                  ) {
-                    throw new Error("machine index contains an unrepresentable source");
-                  }
-            note: |
-              序列化前先校验顶层、记录形状与可选 page 的字符串类型；坏值 fail-fast，不进入字段渲染。
-          - snippet: |
-              return `${lines.join("\n")}\n`;
-            note: |
-              输出固定字段序、双引号转义和末尾换行，保证恒等可解析。
-          - snippet: |
+              if (index === null || index.version !== 1 || !Array.isArray(index.sources)) {
+              throw new Error("machine index must contain version 1 and a sources array");
               }
             note: |
-              六个必填字段固定，可选 page 只为绑定产物页；值必须能安全落在受限 YAML 子集内。
+              序列化入口先校验顶层版本和 `sources` 数组；运行时传入的坏对象 fail-fast，避免把不可表示状态写成看似合法的索引。
           - snippet: |
-                for (const line of rest.slice(1)) {
-                  let match: RegExpMatchArray | null;
-                  const item = line.match(ITEM_RE);
-                  if (item) {
-                    if (!flush()) return null;
-                    current = {};
-                    seen.clear();
-                    match = item;
-                  } else {
-                    match = line.match(CONT_RE);
-                    if (match === null || current === null) return null;
-                  }
+              for (const source of index.sources) {
+              if (
+              source === null ||
+              (source.kind !== "text" && source.kind !== "video") ||
+              !Number.isSafeInteger(source.size) ||
+              source.size < 0 ||
+              typeof source.path !== "string" ||
+              typeof source.sha256 !== "string" ||
+              typeof source.analyzedAt !== "string" ||
+              (source.artifact !== null && typeof source.artifact !== "string") ||
+              (source.page !== undefined && typeof source.page !== "string")
+              ) {
+              throw new Error("machine index contains an unrepresentable source");
+              }
             note: |
-              遇到新条目先结算上一条；续行必须已有当前条目，否则按损坏输入拒绝。
+              每条记录在渲染前逐字段核对类型、非负安全整数和可选 `page`；错误在写盘前抛出，防止坏值穿过程序边界。
           - snippet: |
-                const key = match[1] as Field | OptionalField;
-                  if (
-                    (!(FIELDS as readonly string[]).includes(key) &&
-                      !(OPTIONAL_FIELDS as readonly string[]).includes(key)) ||
-                    seen.has(key)
-                  ) {
-                    return null;
-                  }
-                  const value = parseValue(key, match[2]);
-                  if (value === INVALID_VALUE) return null;
-                  seen.add(key);
-                  current[key] = value;
-                }
-                if (!flush()) return null;
-                return { version: 1, sources };
+              for (const value of [
+              source.path,
+              source.sha256,
+              source.analyzedAt,
+              source.artifact,
+              source.page ?? null,
+              ]) {
+              if (value !== null && /[\n\r\u2028\u2029]/u.test(value)) {
+              throw new Error("machine index strings must not contain line breaks");
+              }
+              }
+              }
             note: |
-              键必须属于六个必填字段或可选 page，且不得重复；任一值解析失败立即返回 null，不保留半条记录。
+              所有字符串字段（包括 `page`）都拒绝换行和 Unicode 行分隔符，避免值注入新的 YAML 行破坏固定格式。
           - snippet: |
-                for (const value of [
-                  source.path,
-                  source.sha256,
-                  source.analyzedAt,
-                  source.artifact,
-                  source.page ?? null,
-                ]) {
-                  if (value !== null && /[\n\r\u2028\u2029]/u.test(value)) {
-                    throw new Error("machine index strings must not contain line breaks");
-                  }
-                }
-                }
-                const quote = (value: string) =>
-                  `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+              const quote = (value: string) =>
+              `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+              const lines = [`version: ${index.version}`, "sources:"];
             note: |
-              序列化前拒绝任何行分隔符，page 也在检查范围内；quote 只转义反斜杠和双引号，保持受限子集可逆。
+              `quote` 只转义反斜杠和双引号，和 `unquote` 的解码集合闭合；输出从固定版本头和 sources 头开始，不接受其他排版。
           - snippet: |
-                const lines = [`version: ${index.version}`, "sources:"];
-                for (const source of index.sources) {
-                  lines.push(`  - path: ${quote(source.path)}`);
-                  lines.push(`    kind: ${source.kind}`);
-                  lines.push(`    sha256: ${quote(source.sha256)}`);
-                  lines.push(`    size: ${source.size}`);
-                  lines.push(`    analyzedAt: ${quote(source.analyzedAt)}`);
-                  lines.push(
-                    `    artifact: ${source.artifact === null ? "null" : quote(source.artifact)}`,
-                  );
-                  if (source.page !== undefined) {
-                    lines.push(`    page: ${quote(source.page)}`);
-                  }
-                }
+              for (const source of index.sources) {
+              lines.push(`  - path: ${quote(source.path)}`);
+              lines.push(`    kind: ${source.kind}`);
+              lines.push(`    sha256: ${quote(source.sha256)}`);
+              lines.push(`    size: ${source.size}`);
+              lines.push(`    analyzedAt: ${quote(source.analyzedAt)}`);
+              lines.push(
+              `    artifact: ${source.artifact === null ? "null" : quote(source.artifact)}`,
+              );
+              if (source.page !== undefined) {
+              lines.push(`    page: ${quote(source.page)}`);
+              }
+              }
+              return `${lines.join("\n")}\n`;
             note: |
-              输出固定字段序与固定缩进，page 只在存在时追加在 artifact 之后；末尾换行由调用方拼接，保证解析器可恒等还原。
+              每条记录按固定字段序和缩进写出，`page` 只在存在时追加；末尾换行保证输出再次经过 `parseMachineIndex` 时恒等可还原。
       - path: src/plugins/app-wiki/index.ts
         note: |
           插件装配把服务、prompt 贡献段和缓存失效事件接成生命周期。
         changes:
           - snippet: |
               import type { Context } from "cordis";
-            note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
-          - snippet: |
               import { createWikiService } from "./service";
-            note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
-          - snippet: |
+
               /** Plugin id in the manifest and the static module table. */
-            note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
-          - snippet: |
               export const name = "app-wiki";
-            note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
-          - snippet: |
               /** Service keys awaited before apply runs. */
-            note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
-          - snippet: |
               export const inject = ["agent", "files", "workspace"];
             note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
-          - snippet: |
-              /** Publish the wiki knowledge layer as `ctx.wiki`; register the prompt section.
-               * @param ctx Host context with the three injected services.
-               * @returns Disposer used by cordis lifecycle teardown.
-               */
-            note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+              静态 id 与内置插件表对应，`inject` 声明启动前必须就绪的 agent、files 和 workspace 服务；它是依赖声明，不承担权限边界语义。
           - snippet: |
               export function apply(ctx: Context): () => void {
-                const wiki = createWikiService({ files: ctx.files, workspace: ctx.workspace });
-                ctx.reflect.provide("wiki", wiki);
-                const unregister = ctx.agent.registerPromptSection(
-                  "wiki",
-                  (input) => wiki.contextSection(input),
-                );
-                const offRoot = ctx.workspace.events.on("root-changed", () => wiki.invalidate());
-                return () => {
-                  offRoot();
-                  unregister();
-                };
+              const wiki = createWikiService({ files: ctx.files, workspace: ctx.workspace });
+              ctx.reflect.provide("wiki", wiki);
+              const unregister = ctx.agent.registerPromptSection(
+              "wiki",
+              (input) => wiki.contextSection(input),
+              );
+              const offRoot = ctx.workspace.events.on("root-changed", () => wiki.invalidate());
             note: |
-              只监听换根做全量失效；打开文件由活动源解析器按需处理，不再清空所有 known 样本。teardown 先拆事件，再注销 prompt 贡献段。
+              `apply` 先创建 wiki 服务并挂到 `ctx.wiki`，再把同一服务注册成 system prompt 贡献段；换根事件只触发缓存失效，打开文件由活动源服务按需处理。
           - snippet: |
+              return () => {
+              offRoot();
+              unregister();
+              };
               }
             note: |
-              注册顺序由 Map 保持；teardown 先拆事件，再注销 prompt 贡献段。
+              disposer 先解除换根监听，再注销 prompt 贡献段；顺序保证插件卸载后不再写入已释放的服务。
       - path: src/plugins/app-wiki/schema.ts
         note: |
           schema 是插件持有的 LLM 行为契约，不复制到库内。
         changes:
           - snippet: |
               /** llm-wiki 维护契约（schema v1）：插件持有的行为契约，经 prompt 贡献缝注入。
-               * 设计约束：改 schema 即改 LLM 行为，不改代码；≤ 6000 字符（token 预算）；库内不复制本文件。 */
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
+              * 设计约束：改 schema 即改 LLM 行为，不改代码；≤ 6000 字符（token 预算）；库内不复制本文件。 */
+
               /** llm-wiki 维护契约版本。 */
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               export const WIKI_SCHEMA_VERSION = 1;
             note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+              版本常量与契约全文同处插件源码；调整维护规则只需发布新的 schema 文本，不改变 agent 工具或提示拼接代码。
           - snippet: |
               /** llm-wiki 维护契约全文，注入 system prompt。 */
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               export const WIKI_SCHEMA = `# llm-wiki 维护契约（schema v1）
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
+
               你是本学习库的 llm-wiki 维护者：你读 wiki，也写 wiki；用户只读（除非明确要求参与）。
             note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+              契约开头先规定角色：agent 同时读写 wiki，用户默认只读；这样后续 ingest、query、lint 指令都在同一权限语义下解释。
           - snippet: |
               ## 结构约定
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               - 库根下 \`.study-wiki/llm-wiki/\` 是你全权维护的 wiki 层；\`.study-wiki/index.yaml\` 与 \`.study-wiki/raw/\` 是程序维护的，绝对不要手改。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               - wiki 层布局：\`index.md\`（内容目录，每次操作后更新）、\`log.md\`（只追加的操作日志）、\`overview.md\`（全局综合判断）、\`sources/\`（每源一页）、\`concepts/\`、\`entities/\`。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               - 每个 wiki 页必须有 YAML frontmatter：
-                ---
-                title: 页面标题
-                type: source | concept | entity
-                source: 源库相对路径（仅 source 页必填）
-                created: YYYY-MM-DD
-                updated: YYYY-MM-DD
-                confidence: high | medium | low
-                related: ["其他页路径或 [[wikilink]]"]
-                ---
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
+              ---
+              title: 页面标题
+              type: source | concept | entity
+              source: 源库相对路径（仅 source 页必填）
+              created: YYYY-MM-DD
+              updated: YYYY-MM-DD
+              confidence: high | medium | low
+              related: ["其他页路径或 [[wikilink]]"]
+              ---
               - 页间交叉引用用 [[wikilink]]；sources 页路径按 \`<源相对路径去扩展名>.md\` 嵌套镜像（如 \`sources/courses/rust/ownership.md\`）。
             note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+              结构段把可写域限定在 `.study-wiki/llm-wiki/`，固定页面类型、frontmatter 和嵌套 sources 路径；程序维护的索引与 raw 明确禁止手改。
           - snippet: |
               ## sources 页必备两节
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               1. \`## 摘要\`：3-8 句精炼摘要。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               2. \`## 主题对照\`：主题 ↔ 位置对照表。文本源用章节/行号区间；视频源（m3 起）用时间戳区间，数据来自 \`.study-wiki/raw/<源>/topics.md\`（存在时）。格式 \`| 主题 | 位置 |\`，位置如 \`L12-L48\` 或 \`00:03:20-00:07:45\`。
             note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+              sources 页强制包含摘要和主题对照；位置单位按文本行号或视频时间戳区分，使 query 能先读页面再回到精确来源。
           - snippet: |
               ## ingest 流程（用户要求分析某源时）
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               1. 确认源状态（活动文件或用户指定路径）；程序提示会说明未分析/已过期。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               2. 通读源（大文件分段 read）。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               3. 与用户确认要点（用户赶时间可直接做，做完汇报）。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               4. 建/更新 sources 页（含主题对照）。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               5. 更新相关 concepts/entities 页（新页带完整 frontmatter）。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               6. 更新 index.md（目录反映全部页面）；log.md 追加一行：时间、动作、涉及页。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               7. 汇报：改了哪些页、新增哪些概念、有哪些矛盾存疑。
             note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+              ingest 是受控写作流程：先确认状态和要点，再写 sources、关联概念页、目录与日志；最后汇报改动和矛盾，避免 agent 静默覆盖用户知识。
           - snippet: |
               ## query 流程（用户提问时）
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               1. 先读 \`llm-wiki/index.md\` 定位相关页；时间戳问题先查对应 sources 页的主题对照节。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               2. 读相关页（必要时含 \`.study-wiki/raw/\` 下的 transcript/topics）。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               3. 作答带 [[wikilink]] 引用；wiki 未覆盖时明说「wiki 未覆盖，基于原文回答」，事后提议 ingest。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               4. 有价值的结论主动提议归档为新页/更新旧页，经用户确认再写。
             note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+              query 先走 index 和 sources 页，只有页面不足时才回读 raw；回答必须区分 wiki 已覆盖与原文补充，新增结论仍要经过用户确认。
           - snippet: |
               ## lint 流程（用户说 lint / 检查时）
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               1. 页面间矛盾（同一概念多处表述冲突）。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               2. 孤儿页：无任何入链的页。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               3. 被多页提及但没有独立页的概念（候选新概念）。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               4. 被新来源取代的过时结论（结合 log.md 与 frontmatter 的 updated）。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               5. index.md 与实际页面列表的不一致。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               6. 输出问题清单 + 建议修复顺序；只修用户点头的项。
             note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
+              lint 固定检查矛盾、孤儿页、缺页概念、过时结论和目录漂移；它只产出问题清单与修复顺序，写入仍需用户逐项确认。
           - snippet: |
               ## 视频源（m3 前）
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               视频源暂无转录能力：只报告状态，不伪造内容；可建议用户先记笔记或等待转录里程碑。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
+
               ## 纪律
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               - 写 wiki 页用 write/edit 工具，目标路径必须在 \`.study-wiki/llm-wiki/\` 内（write 会自动建目录）。
-            note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
               - 不修改 \`.study-wiki/index.yaml\`、\`.study-wiki/raw/\` 与库内原文。
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
-          - snippet: |
               - 不确定的信息标 confidence: low，不编造。
             note: |
-              写纪律禁止改动机器索引、raw 和原文；视频边界要求不伪造转录。
-          - snippet: |
-              `;
-            note: |
-              结构、frontmatter、sources 页与 ingest/query/lint 流程构成完整写作规则。
+              schema 末尾明确视频能力边界和写纪律：没有转录就不生成内容，所有写作限制在 wiki 层，低置信信息必须标注而不是猜测。
       - path: src/plugins/app-wiki/service.ts
         note: |
           活动源惰性索引服务：只探测打开文件、更新它自己的索引行，其他行原样保留；无活动文件不扫库。
@@ -1058,454 +883,348 @@ codeMap:
         changes:
           - snippet: |
               /** 源状态机与机器索引 reconcile：纯函数，无 IO，vitest 主战场。 */
-            note: |
-              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
-          - snippet: |
               import type { ProbeSample } from "../../host/files";
-            note: |
-              probe 缓存以 size+mtime 为键，命中直接复用哈希。
-          - snippet: |
               import {
-                parseMachineIndex,
-                serializeMachineIndex,
-                type MachineIndex,
-                type SourceRecord,
-            note: |
-              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
-          - snippet: |
+              parseMachineIndex,
+              serializeMachineIndex,
+              type MachineIndex,
+              type SourceRecord,
               } from "./index-yaml";
-            note: |
-              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
-          - snippet: |
+
               export { parseMachineIndex, serializeMachineIndex };
-            note: |
-              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
-          - snippet: |
               export type { MachineIndex, SourceRecord };
             note: |
-              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+              模块只依赖 probe 样本类型和索引 codec，并把解析、序列化与记录类型统一从 `index-yaml` 转发给服务层；状态判断本身不触碰文件系统。
           - snippet: |
               /** 源分析状态：unknown（无产物/无记录）、fresh、stale（源已变更）、moved（源迁址）。 */
-            note: |
-              probe 缓存以 size+mtime 为键，命中直接复用哈希。
-          - snippet: |
               export type SourceState =
-                | { state: "unknown" }
-                | { state: "fresh"; record: SourceRecord }
-                | { state: "stale"; record: SourceRecord; sample: ProbeSample }
-                | { state: "moved"; record: SourceRecord; sample: ProbeSample };
+              | { state: "unknown" }
+              | { state: "fresh"; record: SourceRecord }
+              | { state: "stale"; record: SourceRecord; sample: ProbeSample }
+              | { state: "moved"; record: SourceRecord; sample: ProbeSample };
             note: |
-              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+              `SourceState` 把四种结果压成可穷举的联合类型；fresh 只携带旧记录，stale 与 moved 同时携带旧记录和本次探测样本，调用方无需再猜状态对应哪份数据。
           - snippet: |
               /** probe 缓存句柄：按路径取可信样本，并可整体失效。 */
-            note: |
-              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
-          - snippet: |
               export interface ProbeCache {
-                /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
-                get(path: string, fresh: ProbeSample): ProbeSample;
-                /** 全量失效（换库根等场景）。 */
-                invalidate(): void;
-            note: |
-              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
-          - snippet: |
+              /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
+              get(path: string, fresh: ProbeSample): ProbeSample;
+              /** 全量失效（换库根等场景）。 */
+              invalidate(): void;
               }
             note: |
-              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+              `ProbeCache` 只暴露按路径取样本与整体失效两个动作，把缓存策略留在工厂内部；换库根时清空全部样本，避免旧库路径污染新库。
           - snippet: |
               /** 按判定序识别源分析状态：fresh、stale、moved 或 unknown。
-               * @param index 当前机器索引；null 表示无索引。
-               * @param relPath 库相对源路径。
-               * @param sample 当前源探测样本。
-               * @returns 源状态与判定所用的旧记录/新样本。
-               */
-            note: |
-              probe 缓存以 size+mtime 为键，命中直接复用哈希。
-          - snippet: |
+              * @param index 当前机器索引；null 表示无索引。
+              * @param relPath 库相对源路径。
+              * @param sample 当前源探测样本。
+              * @returns 源状态与判定所用的旧记录/新样本。
+              */
               export function classifySource(
-                index: MachineIndex | null,
-                relPath: string,
-                sample: ProbeSample,
-            note: |
-              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
-          - snippet: |
+              index: MachineIndex | null,
+              relPath: string,
+              sample: ProbeSample,
               ): SourceState {
-                const byPath = index?.sources.find((record) => record.path === relPath);
-                if (byPath) {
-                  return byPath.sha256 === sample.sha256
-                    ? { state: "fresh", record: byPath }
-                    : { state: "stale", record: byPath, sample };
-                }
-                const byHash = index?.sources.find((record) => record.sha256 === sample.sha256);
-                if (byHash) return { state: "moved", record: byHash, sample };
-                return { state: "unknown" };
-            note: |
-              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
-          - snippet: |
+              const byPath = index?.sources.find((record) => record.path === relPath);
+              if (byPath) {
+              return byPath.sha256 === sample.sha256
+              ? { state: "fresh", record: byPath }
+              : { state: "stale", record: byPath, sample };
               }
             note: |
-              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+              `classifySource` 先按路径找记录，路径命中后只比较内容哈希；同路径哈希不同立即判 stale，不会因为别处存在同哈希记录而误判 moved。
+          - snippet: |
+              const byHash = index?.sources.find((record) => record.sha256 === sample.sha256);
+              if (byHash) return { state: "moved", record: byHash, sample };
+              return { state: "unknown" };
+              }
+            note: |
+              只有路径未命中时才按内容哈希反查迁址记录；哈希也找不到才返回 unknown，因此新源、复制源和真正迁址不会混淆。
           - snippet: |
               /** 创建 path → 样本缓存；get 以 size+mtimeMs 校验，命中省哈希（靠命令快路径）。
-               * @returns probe 缓存句柄。
-               */
-            note: |
-              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
-          - snippet: |
+              * @returns probe 缓存句柄。
+              */
               export function createProbeCache(): ProbeCache {
-                const map = new Map<string, ProbeSample>();
-                return {
-                  /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
-                  get(path: string, fresh: ProbeSample): ProbeSample {
-                    const hit = map.get(path);
-                    if (hit && hit.size === fresh.size && hit.mtimeMs === fresh.mtimeMs) {
-                      return hit;
-                    }
-                    map.set(path, fresh);
-                    return fresh;
-                  },
-                  /** 全量失效（换库根等场景）。 */
-                  invalidate() {
-                    map.clear();
-                  },
-                };
+              const map = new Map<string, ProbeSample>();
+              return {
+              /** 返回可信样本：fresh 元数据命中缓存时返回缓存 sha256，否则存 fresh 并返回。 */
+              get(path: string, fresh: ProbeSample): ProbeSample {
+              const hit = map.get(path);
+              if (hit && hit.size === fresh.size && hit.mtimeMs === fresh.mtimeMs) {
+              return hit;
+              }
+              map.set(path, fresh);
+              return fresh;
+              },
             note: |
-              probe 缓存以 size+mtime 为键，命中直接复用哈希。
+              缓存命中要求路径、大小和 mtime 同时一致，命中时返回带旧哈希的样本，让 Rust probe 可以走 known 快路径；任一元数据变化都替换为新样本。
           - snippet: |
+              /** 全量失效（换库根等场景）。 */
+              invalidate() {
+              map.clear();
+              },
+              };
               }
             note: |
-              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
+              `invalidate` 直接清空路径表，供换根时丢弃整库样本；它不保留跨根记录，避免不同学习库中的同路径互相复用哈希。
           - snippet: |
               /** 产物证据：某源有已分析产物；newestArtifactMtimeMs 为产物最新 mtime（Unix 毫秒）。 */
-            note: |
-              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
-          - snippet: |
               export interface ArtifactEvidence {
-                /** 库相对源路径。 */
-                source: string;
-                /** 产物页库相对路径；源迁址后用它绑定既有索引行。 */
-                page?: string;
-                /** 产物最新 mtime（Unix 毫秒），转为 analyzedAt。 */
-                newestArtifactMtimeMs: number;
-            note: |
-              证据对象携带产物页路径；frontmatter 仍写旧 source 时，reconcile 靠 page 认出这是同一产物，而不是一条新记录。
-          - snippet: |
+              /** 库相对源路径。 */
+              source: string;
+              /** 产物页库相对路径；源迁址后用它绑定既有索引行。 */
+              page?: string;
+              /** 产物最新 mtime（Unix 毫秒），转为 analyzedAt。 */
+              newestArtifactMtimeMs: number;
               }
             note: |
-              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
+              `ArtifactEvidence` 只说明“某个源存在已分析产物”：source 是期望源路径，page 是实际 sources 页，mtime 用于生成 analyzedAt；索引物化只从这些证据出发。
           - snippet: |
               /** 物化机器索引：行存在 ⇔ 证据存在且有可用哈希；probed 缺哈希时保留旧值。
-               * moved 保留 artifact 与 analyzedAt，只改 path；无样本且无旧行时不写空哈希记录。
-               * @param prev 旧机器索引；null 表示无旧索引。
-               * @param evidence 现存产物证据列表。
-               * @param probed 按证据源路径提供的探测样本。
-               * @returns 新机器索引。
-               */
-            note: |
-              probe 缓存以 size+mtime 为键，命中直接复用哈希。
-          - snippet: |
+              * moved 保留 artifact 与 analyzedAt，只改 path；无样本且无旧行时不写空哈希记录。
+              * @param prev 旧机器索引；null 表示无旧索引。
+              * @param evidence 现存产物证据列表。
+              * @param probed 按证据源路径提供的探测样本。
+              * @returns 新机器索引。
+              */
               export function reconcileIndex(
-                prev: MachineIndex | null,
-                evidence: ArtifactEvidence[],
-                probed: Map<string, ProbeSample>,
-            note: |
-              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
-          - snippet: |
+              prev: MachineIndex | null,
+              evidence: ArtifactEvidence[],
+              probed: Map<string, ProbeSample>,
               ): MachineIndex {
-                const sources: SourceRecord[] = evidence.flatMap((event) => {
-                  const byPath = prev?.sources.find((record) => record.path === event.source);
-                  const byPage =
-                    event.page === undefined
-                      ? undefined
-                      : prev?.sources.find((record) => record.page === event.page);
-                  const old =
-                    byPath ??
-                    byPage ??
-                    prev?.sources.find(
-                      (record) => probed.get(event.source)?.sha256 === record.sha256,
-                    );
-                  const path = byPage !== undefined && byPath === undefined ? byPage.path : event.source;
-                  const sample = probed.get(path) ?? probed.get(event.source);
-                  const analyzedAt =
-                    byPage !== undefined && byPath === undefined && old !== undefined
-                      ? old.analyzedAt
-                      : new Date(event.newestArtifactMtimeMs).toISOString();
             note: |
-              查找顺序是先同路径、再产物页绑定、最后内容哈希。只有 path 未命中而 page 命中时才认定行已重指：保留旧路径与分析时间，样本从新路径读取。
+              `reconcileIndex` 以现存证据决定索引行集合，旧索引只用于找回历史字段；没有可用哈希和旧行时宁可不写，避免生成空记录。
           - snippet: |
-                  const sha256 = sample?.sha256 ?? old?.sha256;
-                  const size = sample?.size ?? old?.size;
-                  if (sha256 === undefined || sha256 === "" || size === undefined) {
-                    return [];
-                  }
-                  return [{
-                    path,
-                    kind: old?.kind ?? kindFromPath(path),
-                    sha256,
-                    size,
-                    analyzedAt,
-                    artifact: old?.artifact ?? null,
-                    ...(event.page === undefined ? {} : { page: event.page }),
-                  }];
-                  });
-                  return { version: 1, sources };
+              const sources: SourceRecord[] = evidence.flatMap((event) => {
+              const byPath = prev?.sources.find((record) => record.path === event.source);
+              const byPage =
+              event.page === undefined
+              ? undefined
+              : prev?.sources.find((record) => record.page === event.page);
+              const old =
+              byPath ??
+              byPage ??
+              prev?.sources.find(
+              (record) => probed.get(event.source)?.sha256 === record.sha256,
+              );
+              const path = byPage !== undefined && byPath === undefined ? byPage.path : event.source;
+              const sample = probed.get(path) ?? probed.get(event.source);
             note: |
-              reconcileIndex 以证据列表为行集合；missing probe 先保留旧哈希与大小，两者都缺失时丢弃该行而不是写空记录。moved 保留 artifact/analyzedAt，page 始终写回。
+              每条证据先按当前路径、再按 sources 页路径、最后按内容哈希找回旧行；page 命中而 path 未命中时继续沿用旧行的新路径，避免 moved 记录被 frontmatter 的旧 source 拉回。
           - snippet: |
+              const analyzedAt =
+              byPage !== undefined && byPath === undefined && old !== undefined
+              ? old.analyzedAt
+              : new Date(event.newestArtifactMtimeMs).toISOString();
+              const sha256 = sample?.sha256 ?? old?.sha256;
+              const size = sample?.size ?? old?.size;
+              if (sha256 === undefined || sha256 === "" || size === undefined) {
+              return [];
               }
             note: |
-              kindFromPath 为 m2 文本源兜底，同时保留视频扩展名识别。
+              analyzedAt 在 page 命中但 path 未命中时沿用旧值，表示迁址没有重新分析；哈希或大小仍缺失时直接丢弃该证据，阻止空记录进入索引。
+          - snippet: |
+              return [{
+              path,
+              kind: old?.kind ?? kindFromPath(path),
+              sha256,
+              size,
+              analyzedAt,
+              artifact: old?.artifact ?? null,
+              ...(event.page === undefined ? {} : { page: event.page }),
+              }];
+              });
+              return { version: 1, sources };
+              }
+            note: |
+              完整记录沿用旧类型与 artifact，带上当前 path、哈希、大小和页面绑定后进入返回值；外层最终只返回版本 1 的新索引。
           - snippet: |
               const VIDEO_EXT = new Set(["mp4", "mkv", "avi", "mov", "webm"]);
-            note: |
-              classifySource 先查同路径，再查同内容哈希，最后返回 unknown。
-          - snippet: |
+
               /** 按扩展名推断源类型：已知视频扩展名 → video，其余按 text（m2 文本闭环）。
-               * @param relPath 库相对源路径。
-               * @returns 推断出的源类型。
-               */
-            note: |
-              probe 缓存以 size+mtime 为键，命中直接复用哈希。
-          - snippet: |
+              * @param relPath 库相对源路径。
+              * @returns 推断出的源类型。
+              */
               export function kindFromPath(relPath: string): SourceRecord["kind"] {
-                const ext = relPath.split(".").pop()?.toLowerCase() ?? "";
-                return VIDEO_EXT.has(ext) ? "video" : "text";
-            note: |
-              ArtifactEvidence 只携带源路径和最新产物时间，避免把 UI 状态写进模型。
-          - snippet: |
+              const ext = relPath.split(".").pop()?.toLowerCase() ?? "";
+              return VIDEO_EXT.has(ext) ? "video" : "text";
               }
             note: |
-              reconcileIndex 以证据列表为行集合，按路径或内容哈希寻找旧记录并保留可保留字段。
+              类型推断只依赖扩展名白名单；已知视频后缀判为 video，其余在 m2 统一按 text 处理，新增视频格式只需扩展这个集合。
       - path: src-tauri/src/probe.rs
         note: |
           Rust probe 提供授权后的元数据和流式 SHA-256，避免前端读整文件。
         changes:
           - snippet: |
               //! 源文件探测：流式 SHA-256 + 大小 + mtime；known 命中（size + mtimeMs 一致）
-            note: |
-              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
-          - snippet: |
               //! 时跳过哈希（视频大文件每回合重哈希不可接受）。错误带稳定 code，message 仅诊断。
-            note: |
-              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
-          - snippet: |
+
               use serde::{Deserialize, Serialize};
-            note: |
-              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
-          - snippet: |
               use sha2::{Digest, Sha256};
-            note: |
-              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
-          - snippet: |
               use std::path::Path;
-            note: |
-              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
-          - snippet: |
+
               const CHUNK: usize = 64 * 1024;
             note: |
-              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
+              模块契约固定为流式哈希、稳定错误码和 64 KiB 块；known 快路径针对大视频反复探测的成本，错误 message 只用于诊断，调用方依赖 code。
           - snippet: |
               #[derive(Clone, Debug, Serialize, Deserialize)]
-            note: |
-              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
-          - snippet: |
               #[serde(rename_all = "camelCase")]
-            note: |
-              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
-          - snippet: |
               pub struct ProbeSample {
-                  pub size: u64,
-                  pub mtime_ms: i64,
-                  pub sha256: String,
-            note: |
-              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
-          - snippet: |
+              pub size: u64,
+              pub mtime_ms: i64,
+              pub sha256: String,
               }
             note: |
-              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
+              `ProbeSample` 是前后端交换的探针结果，camelCase 序列化与 TS 形状对齐；size、mtime 和哈希放在同一个样本里，状态判定不会混用不同时刻的元数据。
           - snippet: |
               #[derive(Debug, Serialize)]
-            note: |
-              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
-          - snippet: |
               pub struct ProbeError {
-                  pub code: String,
-                  pub message: String,
-            note: |
-              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
-          - snippet: |
+              pub code: String,
+              pub message: String,
               }
-            note: |
-              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
-          - snippet: |
+
               fn err(code: &str, message: String) -> ProbeError {
-                  ProbeError {
-                      code: code.into(),
-                      message,
-                  }
-            note: |
-              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
-          - snippet: |
+              ProbeError {
+              code: code.into(),
+              message,
+              }
               }
             note: |
-              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
+              `ProbeError` 把稳定错误分类和诊断文本分开，`err` 统一构造错误；前端可以按 `code` 分支，而不解析 OS 错误字符串。
           - snippet: |
               /// 探测文件：返回大小、mtime（Unix 毫秒）与流式 SHA-256。known 提供且
-            note: |
-              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
-          - snippet: |
               /// size/mtime 与磁盘一致时原样返回 known.sha256（快路径，不重读内容）。
-            note: |
-              先拒绝父目录组件，再取 metadata 和毫秒 mtime。
-          - snippet: |
               pub fn probe_file(path: &Path, known: Option<ProbeSample>) -> Result<ProbeSample, ProbeError> {
-                  if path
-                      .components()
-                      .any(|c| matches!(c, std::path::Component::ParentDir))
-                  {
-                      return Err(err(
-                          "PROBE_INVALID_PATH",
-                          format!("路径不得含 .. 组件：{}", path.display()),
-                      ));
-                  }
-                  let meta = std::fs::metadata(path).map_err(|e| {
-                      err(
-                          "PROBE_NOT_FOUND",
-                          format!("metadata {}: {e}", path.display()),
-                      )
-                  })?;
-                  let size = meta.len();
-                  let mtime_ms = meta
-                      .modified()
-                      .map_err(|e| err("PROBE_STAT", format!("mtime {}: {e}", path.display())))?
-            note: |
-              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
-          - snippet: |
-              if n == 0 {
-                  break;
+              if path
+              .components()
+              .any(|c| matches!(c, std::path::Component::ParentDir))
+              {
+              return Err(err(
+              "PROBE_INVALID_PATH",
+              format!("路径不得含 .. 组件：{}", path.display()),
+              ));
               }
-              hasher.update(&buf[..n]);
+              let meta = std::fs::metadata(path).map_err(|e| {
+              err(
+              "PROBE_NOT_FOUND",
+              format!("metadata {}: {e}", path.display()),
+              )
+              })?;
             note: |
-              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
+              `probe_file` 在任何读盘前先拒绝 `..` 组件，随后读取 metadata；路径穿越和源不存在分别返回稳定错误码，权限仍由上层读授权负责。
           - snippet: |
-              }
-            note: |
-              测试覆盖普通哈希、20 万字节快路径和路径逃逸拒绝。
-          - snippet: |
-              #[cfg(test)]
-            note: |
-              ProbeSample/ProbeError 是 IPC 稳定形状，错误 code 与诊断消息分离。
-          - snippet: |
-              mod tests {
-                  use super::*;
-
-                  const HELLO_SHA256: &str = "37703d6093ebf38016cecd7339ebc9ce08493ec0a26d7a32c13f9f3fda8c2b35";
-                  const SEVEN_FILL_SHA256: &str =
-                      "8cfcba83dcfc81a193bb4e52fd3161efb513906f52cbbe2328fac5f1a79c2b6e";
-
-                  #[test]
-                  fn hashes_known_content() {
-                      let dir = std::env::temp_dir().join(format!("sw-probe-{}", std::process::id()));
-                      let _ = std::fs::remove_dir_all(&dir);
-                      std::fs::create_dir_all(&dir).unwrap();
-                      let p = dir.join("a.md");
-                      std::fs::write(&p, b"hello study-wiki").unwrap();
-                      let r = probe_file(&p, None).unwrap();
-                      assert_eq!(r.size, 16);
-                      assert_eq!(r.sha256, HELLO_SHA256);
-                      assert!(r.mtime_ms > 0);
-                      std::fs::remove_dir_all(&dir).unwrap();
-                  }
-            note: |
-              小文件哈希对照独立 SHA-256 向量，避免测试只验证摘要长度。
-          - snippet: |
-              let e = probe_file(Path::new("/tmp/../etc/passwd"), None).unwrap_err();
-              assert_eq!(e.code, "PROBE_INVALID_PATH");
-            note: |
-              known size+mtime 命中时直接复用旧哈希，未命中才打开文件。
-          - snippet: |
-              }
-            note: |
-              64 KiB 分块读取并更新 SHA-256，最后输出小写十六进制摘要。
-          - snippet: |
+              let size = meta.len();
               let mtime_ms = meta
-                  .modified()
-                  .map_err(|e| err("PROBE_STAT", format!("mtime {}: {e}", path.display())))?
-                  .duration_since(std::time::UNIX_EPOCH)
-                  .map(|d| d.as_millis() as i64)
-                  .unwrap_or(0);
+              .modified()
+              .map_err(|e| err("PROBE_STAT", format!("mtime {}: {e}", path.display())))?
+              .duration_since(std::time::UNIX_EPOCH)
+              .map(|d| d.as_millis() as i64)
+              .unwrap_or(0);
               if let Some(known) = known {
-                  if known.size == size && known.mtime_ms == mtime_ms {
-                      return Ok(ProbeSample {
-                          size,
-                          mtime_ms,
-                          sha256: known.sha256,
-                      });
-                  }
+              if known.size == size && known.mtime_ms == mtime_ms {
+              return Ok(ProbeSample {
+              size,
+              mtime_ms,
+              sha256: known.sha256,
+              });
+              }
               }
             note: |
-              mtime 统一转 Unix 毫秒；size 与 mtime 同时命中时直接复用旧 SHA-256，不打开文件。
+              size 和毫秒 mtime 来自同一次 metadata 读取；known 的二者都一致时直接复用旧哈希，这是“未变文件不必重读”的快路径。
           - snippet: |
               let mut hasher = Sha256::new();
               let mut file = std::fs::File::open(path)
-                  .map_err(|e| err("PROBE_READ", format!("open {}: {e}", path.display())))?;
+              .map_err(|e| err("PROBE_READ", format!("open {}: {e}", path.display())))?;
               use std::io::Read;
               let mut buf = vec![0u8; CHUNK];
               loop {
-                  let n = file
-                      .read(&mut buf)
-                      .map_err(|e| err("PROBE_READ", format!("read {}: {e}", path.display())))?;
-            note: |
-              快路径未命中才打开文件，按 64 KiB 缓冲读取；打开与读取失败分成两个稳定 code 路径。
-          - snippet: |
               let n = file
-                  .read(&mut buf)
-                  .map_err(|e| err("PROBE_READ", format!("read {}: {e}", path.display())))?;
+              .read(&mut buf)
+              .map_err(|e| err("PROBE_READ", format!("read {}: {e}", path.display())))?;
               if n == 0 {
-                  break;
+              break;
               }
               hasher.update(&buf[..n]);
               }
               Ok(ProbeSample {
-                  size,
-                  mtime_ms,
-                  sha256: format!("{:x}", hasher.finalize()),
+              size,
+              mtime_ms,
+              sha256: format!("{:x}", hasher.finalize()),
               })
+              }
             note: |
-              读到 EOF 后输出小写十六进制摘要；哈希只覆盖内容，size/mtime 来自同一份 metadata。
+              known 未命中时按 64 KiB 块流式读取，内存上限固定；读完后输出小写十六进制摘要，哈希只覆盖文件内容，size 和 mtime 仍来自前面的 metadata。
           - snippet: |
+              #[cfg(test)]
+              mod tests {
+              use super::*;
+
+              const HELLO_SHA256: &str = "37703d6093ebf38016cecd7339ebc9ce08493ec0a26d7a32c13f9f3fda8c2b35";
+              const SEVEN_FILL_SHA256: &str =
+              "8cfcba83dcfc81a193bb4e52fd3161efb513906f52cbbe2328fac5f1a79c2b6e";
+            note: |
+              测试模块复用被测函数，并固定普通文本和 200 KB 填充文件的独立 SHA-256 向量，避免测试只对照实现自身的输出。
+          - snippet: |
+
+              #[test]
+              fn hashes_known_content() {
+              let dir = std::env::temp_dir().join(format!("sw-probe-{}", std::process::id()));
+              let _ = std::fs::remove_dir_all(&dir);
+              std::fs::create_dir_all(&dir).unwrap();
+              let p = dir.join("a.md");
+              std::fs::write(&p, b"hello study-wiki").unwrap();
+              let r = probe_file(&p, None).unwrap();
+              assert_eq!(r.size, 16);
+              assert_eq!(r.sha256, HELLO_SHA256);
+              assert!(r.mtime_ms > 0);
+              std::fs::remove_dir_all(&dir).unwrap();
+              }
+            note: |
+              第一个测试用独立 SHA-256 向量钉住内容哈希、size 和非零 mtime，确认没有 known 样本时走真实读文件路径。
+          - snippet: |
+              #[test]
               fn known_fast_path_skips_hash() {
-                  let dir = std::env::temp_dir().join(format!("sw-probe-fast-{}", std::process::id()));
-                  let _ = std::fs::remove_dir_all(&dir);
-                  std::fs::create_dir_all(&dir).unwrap();
-                  let p = dir.join("big.bin");
-                  std::fs::write(&p, vec![7u8; 200_000]).unwrap();
-                  let full = probe_file(&p, None).unwrap();
-                  assert_eq!(full.sha256, SEVEN_FILL_SHA256);
+              let dir = std::env::temp_dir().join(format!("sw-probe-fast-{}", std::process::id()));
+              let _ = std::fs::remove_dir_all(&dir);
+              std::fs::create_dir_all(&dir).unwrap();
+              let p = dir.join("big.bin");
+              std::fs::write(&p, vec![7u8; 200_000]).unwrap();
+              let full = probe_file(&p, None).unwrap();
+              assert_eq!(full.sha256, SEVEN_FILL_SHA256);
+              let poisoned = ProbeSample {
+              sha256: "0".repeat(64),
+              ..full.clone()
+              };
+              let fast = probe_file(&p, Some(poisoned.clone())).unwrap();
+              assert_eq!(fast.sha256, poisoned.sha256);
+              assert_eq!(fast.size, full.size);
+              assert_eq!(fast.mtime_ms, full.mtime_ms);
             note: |
-              20 万字节内容跨过 64 KiB 分块边界，并对照独立 SHA-256 向量。
+              known 快路径测试故意传入同 size/mtime 但伪造的 all-zero 哈希；实现若偷偷重算内容就会返回真实摘要并使断言失败，200 KB 文件还跨过 64 KiB 分块边界。
           - snippet: |
-                  let poisoned = ProbeSample {
-                      sha256: "0".repeat(64),
-                      ..full.clone()
-                  };
-                  let fast = probe_file(&p, Some(poisoned.clone())).unwrap();
-                  assert_eq!(fast.sha256, poisoned.sha256);
-                  assert_eq!(fast.size, full.size);
-                  assert_eq!(fast.mtime_ms, full.mtime_ms);
-                  let stale = probe_file(
-                      &p,
-                      Some(ProbeSample {
-                          size: 1,
-                          ..poisoned
-                      }),
-                  )
-                  .unwrap();
-                  assert_eq!(stale.sha256, full.sha256);
-                  std::fs::remove_dir_all(&dir).unwrap();
-                  }
+              let stale = probe_file(
+              &p,
+              Some(ProbeSample {
+              size: 1,
+              ..poisoned
+              }),
+              )
+              .unwrap();
+              assert_eq!(stale.sha256, full.sha256);
+              std::fs::remove_dir_all(&dir).unwrap();
+              }
             note: |
-              known 快路径传入同 size/mtime 的伪摘要，若实现退化为重哈希就会失败；size 失配仍验证回到真实摘要。
+              size 与 known 不符时缓存失效，探针重新读取并得到真实哈希；这一分支证明快路径只接受 size 与 mtime 同时一致的样本。
+          - snippet: |
+              #[test]
+              fn rejects_parent_dir_components() {
+              let e = probe_file(Path::new("/tmp/../etc/passwd"), None).unwrap_err();
+              assert_eq!(e.code, "PROBE_INVALID_PATH");
+              }
+              }
+            note: |
+              最后一个测试钉住路径穿越拒绝：含 `..` 的路径在 metadata 前就返回 `PROBE_INVALID_PATH`，授权根之外的文件不会被探测。
       - path: src/plugins/agent-core/prompt.ts
         note: |
           系统提示组装新增贡献段输入并保持纯函数。
@@ -1964,4 +1683,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: 5ffd8a5
+skill_gen_commit_id: c9d4c97
