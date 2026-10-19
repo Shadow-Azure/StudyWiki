@@ -264,6 +264,7 @@ function endpointRow(ctx: Context, e: RedactedEndpoint, rerender: () => Promise<
         kind: e.kind === "asr" ? "asr" : "chat",
         baseUrl: e.baseUrl,
         apiKey: "",
+        ...(e.protocol === "chat" ? { protocol: "chat" as const } : {}),
         models: e.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
       };
       void renderForm(ctx, presets, rerender, draft, e);
@@ -333,16 +334,42 @@ async function renderForm(
   const kindLabel = fieldLabel("类型");
   const kind = document.createElement("select");
   kind.name = "kind";
-  for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
+  for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写）"]] as const) {
     const opt = document.createElement("option");
     opt.value = value;
     opt.textContent = text;
     kind.append(opt);
   }
   kind.value = draft.kind;
-  kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
   kindField.append(kindLabel, kind);
-  top.append(vendorField, kindField);
+  const protocolField = document.createElement("div");
+  protocolField.className = "llm-field";
+  const protocolLabel = fieldLabel("ASR 协议");
+  const protocol = document.createElement("select");
+  protocol.name = "protocol";
+  for (const [value, text] of [
+    ["transcriptions", "转录接口 /v1/audio/transcriptions（默认）"],
+    ["chat", "聊天接口 input_audio（MiMo ASR 等）"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    protocol.append(opt);
+  }
+  protocolField.append(protocolLabel, protocol);
+  const syncProtocol = (): void => {
+    protocolField.hidden = draft.kind !== "asr";
+    protocol.value = draft.protocol === "chat" ? "chat" : "transcriptions";
+  };
+  protocol.addEventListener("change", () => {
+    draft.protocol = protocol.value === "chat" ? "chat" : undefined;
+  });
+  kind.addEventListener("change", () => {
+    draft.kind = kind.value === "asr" ? "asr" : "chat";
+    if (draft.kind === "chat") draft.protocol = undefined;
+    syncProtocol();
+  });
+  top.append(vendorField, kindField, protocolField);
   form.append(top);
   if (!initial) {
     const hint = document.createElement("p");
@@ -530,6 +557,7 @@ async function renderForm(
         ? blankDraft()
         : instantiatePreset(presets.find((p) => p.vendor === vendor.value)!);
     kind.value = draft.kind;
+    syncProtocol();
     drawFields();
   };
   vendor.addEventListener("change", refreshFields);
@@ -556,6 +584,7 @@ async function renderForm(
     const keyDirty = !initial || !endpoint?.hasKey || editedKey !== null;
     const payload: EndpointInput = {
       ...draft,
+      protocol: draft.protocol ?? null,
       // 新增态原样传（空 key 合法）；编辑态未动掩码 = 保留（空 + 无 dirty）。
       apiKey: keyDirty || !initial ? draft.apiKey : "",
     };
@@ -567,7 +596,10 @@ async function renderForm(
   });
 
   vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
-  if (initial) drawFields();
+  if (initial) {
+    syncProtocol();
+    drawFields();
+  }
   else refreshFields();
   box.append(title, form);
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { instantiatePreset, validateDraft } from "../src/plugins/llm-settings/model";
+import { blankDraft, instantiatePreset, validateDraft } from "../src/plugins/llm-settings/model";
 import * as llmSettings from "../src/plugins/llm-settings";
 
 const preset = {
@@ -32,9 +32,51 @@ describe("model", () => {
     dup.models.push({ ...dup.models[0] });
     expect(validateDraft(dup)).toContain("模型");
   });
+
+  it("asr 预设实例化携带 kind 与 protocol", () => {
+    const draft = instantiatePreset({ vendor: "mimo-asr", name: "小米 MiMo ASR",
+      baseUrl: "https://api.xiaomimimo.com/v1", kind: "asr", protocol: "chat",
+      models: [{ id: "mimo-v2.5-asr", capabilities: [] }] });
+    expect(draft.kind).toBe("asr");
+    expect(draft.protocol).toBe("chat");
+  });
+
+  it("validateDraft 拒绝 chat kind 携带 protocol 与未知 protocol 值", () => {
+    const bad = { ...blankDraft(), id: "a", name: "a", baseUrl: "https://x.com/v1",
+      models: [{ id: "m", capabilities: [] }], protocol: "chat" as const };
+    expect(validateDraft(bad)).toContain("protocol");
+    const asr = { ...bad, kind: "asr" as const };
+    expect(validateDraft(asr)).toBeNull();
+    const unknown = { ...asr, protocol: "websocket" as never };
+    expect(validateDraft(unknown)).toContain("protocol");
+  });
 });
 
 describe("panel", () => {
+  it("asr endpoint 表单显示协议下拉并保存 protocol", async () => {
+    const { ctx, saved, renders } = fakeCtx();
+    const asrPreset = { vendor: "mimo-asr", name: "小米 MiMo ASR",
+      baseUrl: "https://api.xiaomimimo.com/v1", kind: "asr", protocol: "chat",
+      models: [{ id: "mimo-v2.5-asr", capabilities: [] }] };
+    (ctx.llm as { listPresets: () => Promise<unknown> }).listPresets = () =>
+      Promise.resolve([asrPreset]);
+    llmSettings.apply(ctx as never);
+    const host = document.createElement("div");
+    renders[0](host);
+    document.body.append(host);
+    (host.querySelector("button") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    (document.querySelector(".llm-panel [data-action=add]") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r));
+    const form = document.querySelector(".llm-panel form") as HTMLFormElement;
+    const protocol = form.querySelector("select[name=protocol]") as HTMLSelectElement;
+    expect(protocol).not.toBeNull();
+    expect(protocol.value).toBe("chat");
+    form.dispatchEvent(new Event("submit"));
+    await new Promise((r) => setTimeout(r));
+    expect(saved).toContainEqual(expect.objectContaining({ kind: "asr", protocol: "chat" }));
+  });
+
   it("saves a default-model change through ctx.llm", async () => {
     const { ctx, saved, renders } = fakeCtx();
     (ctx.llm as { listEndpoints: () => Promise<unknown> }).listEndpoints = () =>
