@@ -358,7 +358,8 @@ async function renderForm(
   }
   protocolField.append(protocolLabel, protocol);
   const syncProtocol = (): void => {
-    protocolField.hidden = draft.kind !== "asr";
+    // .llm-field 自带 display:flex，hidden 会被作者样式覆盖，显式切 display。
+    protocolField.style.display = draft.kind === "asr" ? "" : "none";
     protocol.value = draft.protocol === "chat" ? "chat" : "transcriptions";
   };
   protocol.addEventListener("change", () => {

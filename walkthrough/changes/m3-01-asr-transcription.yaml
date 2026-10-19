@@ -209,6 +209,11 @@ codeMap:
           - snippet: |
               fn build_multipart_head(fields: &[(&str, &str)], file_name: &str) -> (Vec<u8>, &'static str) {
                   let mut out = Vec::new();
+                  // 文件名进 header：转义引号与换行，杜绝 multipart 头注入。
+                  let file_name: String = file_name
+                      .chars()
+                      .map(|c| if c == '"' || c == '\r' || c == '\n' { '_' } else { c })
+                      .collect();
                   for (name, value) in fields {
                       out.extend_from_slice(
                           format!(
@@ -217,18 +222,8 @@ codeMap:
                           .as_bytes(),
                       );
                   }
-                  out.extend_from_slice(
-                      format!(
-                          "--{MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-                      )
-                      .as_bytes(),
-                  );
-                  (out, MULTIPART_BOUNDARY)
-              }
-
-              /// multipart 收尾。
             note: |
-                multipart 头按固定边界逐字段拼接，file part 带文件名；body 由 head + 文件流 + tail 组成，200MB 视频不会被整体读入内存。
+                multipart 头按固定边界逐字段拼接；文件名在进 header 前把引号与换行替换掉，避免 multipart 头注入。body 由 head + 文件流 + tail 组成，200MB 视频不会被整体读入内存。
           - snippet: |
               fn transcribe_checked(
                   agent: &ureq::Agent,

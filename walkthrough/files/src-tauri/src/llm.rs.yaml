@@ -754,6 +754,11 @@ segments:
       /// multipart 头部（file part 之前的全部字段 + file 头）；body = head + 文件字节 + 尾。
       fn build_multipart_head(fields: &[(&str, &str)], file_name: &str) -> (Vec<u8>, &'static str) {
           let mut out = Vec::new();
+          // 文件名进 header：转义引号与换行，杜绝 multipart 头注入。
+          let file_name: String = file_name
+              .chars()
+              .map(|c| if c == '"' || c == '\r' || c == '\n' { '_' } else { c })
+              .collect();
           for (name, value) in fields {
               out.extend_from_slice(
                   format!(
@@ -1447,6 +1452,14 @@ segments:
               assert!((full.segments[0].end - 4.2).abs() < 1e-6);
               let bare: WireTranscription = serde_json::from_str(r#"{"text":"全文"}"#).unwrap();
               assert!(bare.segments.is_empty());
+          }
+
+          #[test]
+          fn multipart_head_sanitizes_filename() {
+              let (head, _) = build_multipart_head(&[], "a\"b\r\nX: y.mp4");
+              let text = String::from_utf8(head).unwrap();
+              assert!(text.contains(r#"filename="a_b__X: y.mp4""#));
+              assert!(!text.contains("\r\nX: y"));
           }
 
           #[test]

@@ -72,6 +72,15 @@ describe("panel", () => {
     const protocol = form.querySelector("select[name=protocol]") as HTMLSelectElement;
     expect(protocol).not.toBeNull();
     expect(protocol.value).toBe("chat");
+    const kind = form.querySelector("select[name=kind]") as HTMLSelectElement;
+    kind.value = "chat";
+    kind.dispatchEvent(new Event("change"));
+    expect((protocol.closest(".llm-field") as HTMLElement).style.display).toBe("none");
+    kind.value = "asr";
+    kind.dispatchEvent(new Event("change"));
+    expect((protocol.closest(".llm-field") as HTMLElement).style.display).toBe("");
+    protocol.value = "chat";
+    protocol.dispatchEvent(new Event("change"));
     form.dispatchEvent(new Event("submit"));
     await new Promise((r) => setTimeout(r));
     expect(saved).toContainEqual(expect.objectContaining({ kind: "asr", protocol: "chat" }));
