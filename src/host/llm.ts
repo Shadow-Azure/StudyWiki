@@ -43,6 +43,10 @@ export interface LlmPreset {
   name: string;
   /** OpenAI-compatible base URL. */
   baseUrl: string;
+  /** Preset class: chat or asr. */
+  kind: string;
+  /** ASR wire protocol; null/absent means the transcriptions endpoint. */
+  protocol?: string | null;
   /** Editable template model list. */
   models: ModelEntry[];
 }
@@ -57,6 +61,8 @@ export interface RedactedEndpoint {
   vendor: string;
   hasKey: boolean;
   keyPreview: string;
+  /** ASR wire protocol projection; null/absent means the transcriptions endpoint. */
+  protocol?: string | null;
   models: ModelEntry[];
 }
 
@@ -77,6 +83,8 @@ export interface EndpointInput {
   apiKey: string;
   /** 编辑态 dirty：true = apiKey 为显式值（空串 = 显式清空）；缺省 = 空 apiKey 表示保留已存 key。 */
   apiKeyDirty?: boolean;
+  /** ASR wire protocol: transcriptions (default) or chat; only valid on kind=asr. */
+  protocol?: string | null;
   models: ModelEntry[];
 }
 
@@ -135,6 +143,24 @@ export interface ChatResult {
   content: string;
   finishReason: string;
   usage?: { promptTokens: number; completionTokens: number };
+}
+
+/** One timestamped transcript segment (seconds). */
+export interface TranscriptionSegment {
+  /** Segment start in seconds. */
+  start: number;
+  /** Segment end in seconds. */
+  end: number;
+  /** Segment text. */
+  text: string;
+}
+
+/** Unified transcription result: an empty segments array means the server returned no timestamps. */
+export interface TranscriptionResult {
+  /** Full transcript text. */
+  text: string;
+  /** Timestamped segments, possibly empty. */
+  segments: TranscriptionSegment[];
 }
 
 /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
@@ -227,6 +253,27 @@ export class LlmService {
     return { endpointId: owners[0].id, model: resolved, entry };
   }
 
+  /** 解析转录模型归属：只路由 asr 类 endpoint，chat 配置不得误入转录命令。
+   * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
+  async #routeAsr(model?: string): Promise<{ endpointId: string; model: string }> {
+    const settings = await this.listEndpoints();
+    const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+    if (model) {
+      const owners = asr.filter((e) => e.models.some((m) => m.id === model));
+      if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
+      if (owners.length > 1) {
+        throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
+      }
+      return { endpointId: owners[0]!.id, model };
+    }
+    const candidates = asr.flatMap((e) => e.models.map((m) => ({ endpointId: e.id, model: m.id })));
+    if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
+    if (candidates.length > 1) {
+      throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);
+    }
+    return candidates[0]!;
+  }
+
   /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
    * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）/
    *   tools 不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
@@ -248,6 +295,21 @@ export class LlmService {
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       },
     });
+  }
+
+  /** 转录库根内音视频：Rust 侧按 endpoint protocol 分叉执行，本层只做 asr 路由。
+   * @throws LlmError 路由 MODEL_* 与传输词表原样透传。 */
+  async transcribe(req: { path: string; language?: string; model?: string }): Promise<TranscriptionResult> {
+    const { endpointId, model } = await this.#routeAsr(req.model);
+    return this.#call<TranscriptionResult>("llm_transcribe", {
+      req: { endpointId, model, path: req.path, ...(req.language ? { language: req.language } : {}) },
+    });
+  }
+
+  /** 是否存在至少一条带模型的 asr endpoint（agent 工具动态挂载依据）。 */
+  async hasAsrCapability(): Promise<boolean> {
+    const settings = await this.listEndpoints();
+    return settings.endpoints.some((e) => e.kind === "asr" && e.models.length > 0);
   }
 
   /** Convert an abortable stream into the non-streaming result shape. */
