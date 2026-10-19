@@ -743,7 +743,13 @@ fn build_multipart_head(fields: &[(&str, &str)], file_name: &str) -> (Vec<u8>, &
     // 文件名进 header：转义引号与换行，杜绝 multipart 头注入。
     let file_name: String = file_name
         .chars()
-        .map(|c| if c == '"' || c == '\r' || c == '\n' { '_' } else { c })
+        .map(|c| {
+            if c == '"' || c == '\r' || c == '\n' {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     for (name, value) in fields {
         out.extend_from_slice(
@@ -769,7 +775,9 @@ fn multipart_tail() -> Vec<u8> {
 
 /// 转录专用 agent：30 分钟超时。
 fn transcribe_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(TRANSCRIBE_TIMEOUT).build()
+    ureq::AgentBuilder::new()
+        .timeout(TRANSCRIBE_TIMEOUT)
+        .build()
 }
 
 /// 门禁后的转录入口：kind 必须 asr；path 必须在库根内；按 protocol 分叉。
@@ -780,7 +788,10 @@ fn transcribe_checked(
     root_check: &dyn Fn(&str) -> bool,
 ) -> Result<TranscriptionResult, LlmError> {
     if ep.kind != "asr" {
-        return Err(LlmError::new("INVALID_CONFIG", "转录只接受 kind=asr 的 endpoint"));
+        return Err(LlmError::new(
+            "INVALID_CONFIG",
+            "转录只接受 kind=asr 的 endpoint",
+        ));
     }
     if !root_check(&req.path) {
         return Err(LlmError::new(
@@ -858,7 +869,10 @@ fn run_transcribe_chat(
         .send_bytes(body.to_string().as_bytes())
         .map_err(map_transport)?;
     let wire: WireChat = serde_json::from_reader(resp.into_reader()).map_err(|e| {
-        LlmError::new("BAD_RESPONSE", format!("响应不是合法 chat/completions 回包：{e}"))
+        LlmError::new(
+            "BAD_RESPONSE",
+            format!("响应不是合法 chat/completions 回包：{e}"),
+        )
     })?;
     let choice = wire
         .choices
@@ -913,8 +927,12 @@ fn run_transcribe(
         .set("Content-Length", &total.to_string())
         .send(body)
         .map_err(map_transport)?;
-    let wire: WireTranscription = serde_json::from_reader(resp.into_reader())
-        .map_err(|e| LlmError::new("BAD_RESPONSE", format!("转录响应不是合法 verbose_json：{e}")))?;
+    let wire: WireTranscription = serde_json::from_reader(resp.into_reader()).map_err(|e| {
+        LlmError::new(
+            "BAD_RESPONSE",
+            format!("转录响应不是合法 verbose_json：{e}"),
+        )
+    })?;
     Ok(TranscriptionResult {
         text: wire.text,
         segments: wire.segments,
