@@ -4,7 +4,7 @@ use crate::config::{self, Endpoint, ModelEntry, Settings};
 use crate::llm_stream::{parse_sse_lines, StreamChunk};
 use base64::Engine as _;
 use serde::Serialize;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
@@ -21,6 +21,10 @@ const STREAM_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 /// 单请求附件聚合解码字节上限：与响应侧 DEFAULT_STREAM_EVENT_LIMIT_BYTES（100 MiB）对称。
 const MAX_REQUEST_ATTACHMENT_BYTES: u64 = 100 * 1024 * 1024;
+/// 转录独立超时：长视频分钟级，不可复用 chat 300s。
+const TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(1800);
+/// 转录 multipart 的边界标记（固定值即可：body 内容由本函数独家组装，不存在注入面）。
+const MULTIPART_BOUNDARY: &str = "swasr7f3a9d21c4e8b6f0a5c3d2e190";
 
 /// 归一错误：code 为全链路共享词表（前端路由层另有 MODEL_* 三码；
 /// INTERNAL 仅由 async 命令的后台任务 JoinError 产生，正常路径不可达）。
@@ -699,6 +703,149 @@ fn find_endpoint(s: &Settings, id: &str) -> Result<Endpoint, LlmError> {
         .ok_or_else(|| LlmError::new("ENDPOINT_UNKNOWN", format!("endpoint 不存在：{id}")))
 }
 
+/// 转录请求（IPC 入线）：endpointId + model 由前端 asr 路由解析；path 为库根内媒体绝对路径。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribeRequest {
+    pub endpoint_id: String,
+    pub model: String,
+    pub path: String,
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+/// 一段时间戳段（秒，浮点）。
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct TranscriptionSegment {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
+/// 转录统一结果：segments 为空数组表示服务端未给时间戳（上层降级单段）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TranscriptionResult {
+    pub text: String,
+    pub segments: Vec<TranscriptionSegment>,
+}
+
+/// verbose_json 回包子集；segments 缺席容忍为空。
+#[derive(Debug, serde::Deserialize)]
+struct WireTranscription {
+    text: String,
+    #[serde(default)]
+    segments: Vec<TranscriptionSegment>,
+}
+
+/// multipart 头部（file part 之前的全部字段 + file 头）；body = head + 文件字节 + 尾。
+fn build_multipart_head(fields: &[(&str, &str)], file_name: &str) -> (Vec<u8>, &'static str) {
+    let mut out = Vec::new();
+    for (name, value) in fields {
+        out.extend_from_slice(
+            format!(
+                "--{MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    out.extend_from_slice(
+        format!(
+            "--{MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    (out, MULTIPART_BOUNDARY)
+}
+
+/// multipart 收尾。
+fn multipart_tail() -> Vec<u8> {
+    format!("--{MULTIPART_BOUNDARY}--\r\n").into_bytes()
+}
+
+/// 转录专用 agent：30 分钟超时。
+fn transcribe_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new().timeout(TRANSCRIBE_TIMEOUT).build()
+}
+
+/// 门禁后的转录入口：kind 必须 asr；path 必须在库根内；按 protocol 分叉。
+fn transcribe_checked(
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &TranscribeRequest,
+    root_check: &dyn Fn(&str) -> bool,
+) -> Result<TranscriptionResult, LlmError> {
+    if ep.kind != "asr" {
+        return Err(LlmError::new("INVALID_CONFIG", "转录只接受 kind=asr 的 endpoint"));
+    }
+    if !root_check(&req.path) {
+        return Err(LlmError::new(
+            "UNAUTHORIZED_PATH",
+            format!("转录文件不在库根内：{}", req.path),
+        ));
+    }
+    match ep.protocol.as_deref() {
+        Some("chat") => run_transcribe_chat(agent, ep, req),
+        _ => run_transcribe(agent, ep, req, root_check),
+    }
+}
+
+/// 过渡桩：聊天口转录在 Task 5 接线；此前明确报错，不静默走错协议。
+fn run_transcribe_chat(
+    _agent: &ureq::Agent,
+    _ep: &Endpoint,
+    _req: &TranscribeRequest,
+) -> Result<TranscriptionResult, LlmError> {
+    Err(LlmError::new(
+        "UNSUPPORTED_CONTENT",
+        "聊天口转录尚未接线：请先把 endpoint protocol 改为 transcriptions",
+    ))
+}
+
+/// transcriptions 路：multipart 流式上传原文件（视频容器原样，依赖服务端解码）。
+fn run_transcribe(
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &TranscribeRequest,
+    _root_check: &dyn Fn(&str) -> bool,
+) -> Result<TranscriptionResult, LlmError> {
+    let file = std::fs::File::open(&req.path)
+        .map_err(|e| LlmError::new("UNSUPPORTED_CONTENT", format!("转录文件读取失败：{e}")))?;
+    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let file_name = std::path::Path::new(&req.path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "audio.bin".into());
+    let mut fields: Vec<(&str, &str)> = vec![
+        ("model", req.model.as_str()),
+        ("response_format", "verbose_json"),
+        ("timestamp_granularities[]", "segment"),
+    ];
+    if let Some(language) = &req.language {
+        fields.push(("language", language.as_str()));
+    }
+    let (head, boundary) = build_multipart_head(&fields, &file_name);
+    let tail = multipart_tail();
+    let total = head.len() as u64 + file_len + tail.len() as u64;
+    let body = std::io::Cursor::new(head)
+        .chain(file)
+        .chain(std::io::Cursor::new(tail));
+    let url = join_url(&ep.base_url, "audio/transcriptions");
+    let resp = with_auth(agent.post(&url), ep)
+        .set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        )
+        .set("Content-Length", &total.to_string())
+        .send(body)
+        .map_err(map_transport)?;
+    let wire: WireTranscription = serde_json::from_reader(resp.into_reader())
+        .map_err(|e| LlmError::new("BAD_RESPONSE", format!("转录响应不是合法 verbose_json：{e}")))?;
+    Ok(TranscriptionResult {
+        text: wire.text,
+        segments: wire.segments,
+    })
+}
+
 /// upsert 本体：先校验（INVALID_CONFIG），再按 id 替换或追加。
 /// key 语义由 dirty 标记区分（编辑表单回填掩码，\“没动\”与\“删空\”在 wire 上
 /// 曾无法区分）：apiKeyDirty false/缺省且空 apiKey = 保留已存 key（安全默认，
@@ -873,6 +1020,32 @@ pub async fn llm_chat(
     })
     .await
     .map_err(|e| LlmError::new("INTERNAL", format!("chat 后台任务异常终止：{e}")))?
+}
+
+/// 转录：只认 kind=asr 的 endpoint，按 protocol 分叉；path 必须在已打开库根内。
+#[tauri::command]
+pub async fn llm_transcribe(
+    app: AppHandle,
+    reg: tauri::State<'_, Mutex<crate::windows::WindowRegistry>>,
+    req: TranscribeRequest,
+) -> Result<TranscriptionResult, LlmError> {
+    let roots_ok = {
+        let reg = reg.lock().unwrap();
+        reg.roots()
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir =
+            config::app_studywiki_dir(&app).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let s = config::load_settings(&dir).map_err(|e| LlmError::new("INVALID_CONFIG", e))?;
+        let ep = find_endpoint(&s, &req.endpoint_id)?;
+        let root_check = |p: &str| crate::windows::path_under_roots(&roots_ok, p);
+        transcribe_checked(&transcribe_agent(), &ep, &req, &root_check)
+    })
+    .await
+    .map_err(|e| LlmError::new("INTERNAL", format!("转录后台任务异常终止：{e}")))?
 }
 
 /// RAII 清理一条流的中止登记：HTTP 构建或发送失败也会在 drop 时移除 id。
@@ -1154,6 +1327,83 @@ mod tests {
         assert_eq!(mimo.base_url, "https://api.xiaomimimo.com/v1");
         assert_eq!(mimo.models[0].id, "mimo-v2.5-asr");
         assert!(table.iter().filter(|p| p.kind == "chat").count() >= 4);
+    }
+
+    #[test]
+    fn multipart_head_contains_fields_and_filename() {
+        let (head, boundary) = build_multipart_head(
+            &[
+                ("model", "whisper-large-v3"),
+                ("response_format", "verbose_json"),
+                ("timestamp_granularities[]", "segment"),
+                ("language", "zh"),
+            ],
+            "lecture-01.mp4",
+        );
+        let text = String::from_utf8(head).unwrap();
+        assert!(text.contains(&format!("--{boundary}")));
+        assert!(text.contains(r#"name="model""#));
+        assert!(text.contains("whisper-large-v3"));
+        assert!(text.contains(r#"name="timestamp_granularities[]""#));
+        assert!(text.contains(r#"name="file"; filename="lecture-01.mp4""#));
+    }
+
+    #[test]
+    fn verbose_json_parses_segments_and_tolerates_absence() {
+        let full: WireTranscription = serde_json::from_str(
+            r#"{"text":"全文","segments":[{"start":0.0,"end":4.2,"text":"第一句"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(full.segments.len(), 1);
+        assert!((full.segments[0].end - 4.2).abs() < 1e-6);
+        let bare: WireTranscription = serde_json::from_str(r#"{"text":"全文"}"#).unwrap();
+        assert!(bare.segments.is_empty());
+    }
+
+    #[test]
+    fn transcribe_transcriptions_route_roundtrip() {
+        let (url, rx) = mock_server(
+            200,
+            r#"{"text":"今天我们讲二叉树","segments":[{"start":0.0,"end":4.2,"text":"今天我们讲二叉树"}]}"#,
+        );
+        let mut ep = ep(&url, "sk-test");
+        ep.kind = "asr".into();
+        let dir = std::env::temp_dir().join(format!("sw-asr-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let media = dir.join("a.wav");
+        std::fs::write(&media, b"RIFFfake").unwrap();
+        let req = TranscribeRequest {
+            endpoint_id: ep.id.clone(),
+            model: "whisper-large-v3".into(),
+            path: media.to_string_lossy().to_string(),
+            language: Some("zh".into()),
+        };
+        let root = dir.to_string_lossy().to_string();
+        let result =
+            run_transcribe(&transcribe_agent(), &ep, &req, &|p| p.starts_with(&root)).unwrap();
+        assert_eq!(result.segments.len(), 1);
+        let sent = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(sent.contains("multipart/form-data; boundary="));
+        assert!(sent.contains("Authorization: Bearer"));
+        assert!(sent.contains("verbose_json"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn transcribe_rejects_chat_endpoint_and_outside_path() {
+        let chat_ep = ep("http://127.0.0.1:1/v1", "k"); // kind=chat
+        let req = TranscribeRequest {
+            endpoint_id: chat_ep.id.clone(),
+            model: "x".into(),
+            path: "/tmp/a.wav".into(),
+            language: None,
+        };
+        let err = transcribe_checked(&transcribe_agent(), &chat_ep, &req, &|_| true).unwrap_err();
+        assert_eq!(err.code, "INVALID_CONFIG");
+        let mut ep2 = ep("http://127.0.0.1:1/v1", "k");
+        ep2.kind = "asr".into();
+        let err2 = transcribe_checked(&transcribe_agent(), &ep2, &req, &|_| false).unwrap_err();
+        assert_eq!(err2.code, "UNAUTHORIZED_PATH");
     }
 
     #[test]

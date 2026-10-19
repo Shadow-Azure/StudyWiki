@@ -729,6 +729,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
         llm::agent_set_default_approval_mode,
         llm::llm_chat,
         llm::llm_chat_stream,
+        llm::llm_transcribe,
         llm::llm_chat_abort
     ])
 }
