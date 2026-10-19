@@ -1,6 +1,6 @@
 kind: change
 issue: m2-01-ai-inference-supply
-skill_gen_commit_id: 0a9722c
+skill_gen_commit_id: e21b23c
 title: #49 模型供给定论与推理服务
 scale:
   files: 39
