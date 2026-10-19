@@ -436,6 +436,11 @@ pub struct LlmPreset {
     pub vendor: String,
     pub name: String,
     pub base_url: String,
+    /// 预设类别：chat（对话/视觉）或 asr（转写）。
+    pub kind: String,
+    /// 仅 asr 模板携带：None = transcriptions 转录口；chat = 聊天口 input_audio。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
     pub models: Vec<ModelEntry>,
 }
 
@@ -450,6 +455,8 @@ fn presets() -> Vec<LlmPreset> {
             vendor: "zhipu".into(),
             name: "智谱 GLM".into(),
             base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
+            kind: "chat".into(),
+            protocol: None,
             models: vec![
                 m("glm-5.3", &["text", "tools", "vision"]),
                 m("glm-5.3-flash", &["text", "tools"]),
@@ -459,6 +466,8 @@ fn presets() -> Vec<LlmPreset> {
             vendor: "deepseek".into(),
             name: "DeepSeek".into(),
             base_url: "https://api.deepseek.com/v1".into(),
+            kind: "chat".into(),
+            protocol: None,
             models: vec![
                 m("deepseek-v4-pro", &["text", "tools"]),
                 m("deepseek-v4-flash", &["text", "tools"]),
@@ -468,13 +477,33 @@ fn presets() -> Vec<LlmPreset> {
             vendor: "moonshot".into(),
             name: "Kimi（月之暗面）".into(),
             base_url: "https://api.moonshot.cn/v1".into(),
+            kind: "chat".into(),
+            protocol: None,
             models: vec![m("kimi-k3", &["text", "tools"])],
         },
         LlmPreset {
             vendor: "minimax".into(),
             name: "MiniMax".into(),
             base_url: "https://api.minimaxi.com/v1".into(),
+            kind: "chat".into(),
+            protocol: None,
             models: vec![m("minimax-m3", &["text", "tools"])],
+        },
+        LlmPreset {
+            vendor: "speaches".into(),
+            name: "Speaches（自托管 ASR）".into(),
+            base_url: "http://localhost:8000".into(),
+            kind: "asr".into(),
+            protocol: None,
+            models: vec![m("whisper-large-v3", &[])],
+        },
+        LlmPreset {
+            vendor: "mimo-asr".into(),
+            name: "小米 MiMo ASR".into(),
+            base_url: "https://api.xiaomimimo.com/v1".into(),
+            kind: "asr".into(),
+            protocol: Some("chat".into()),
+            models: vec![m("mimo-v2.5-asr", &[])],
         },
     ]
 }
@@ -1083,12 +1112,10 @@ mod tests {
 
     #[test]
     fn presets_cover_known_tool_models() {
-        let models = presets()
-            .into_iter()
-            .flat_map(|preset| preset.models)
-            .collect::<Vec<ModelEntry>>();
-        let ids = models
+        let table = presets();
+        let ids = table
             .iter()
+            .flat_map(|preset| preset.models.iter())
             .map(|model| model.id.as_str())
             .collect::<Vec<&str>>();
 
@@ -1100,13 +1127,33 @@ mod tests {
                 "deepseek-v4-pro",
                 "deepseek-v4-flash",
                 "kimi-k3",
-                "minimax-m3"
+                "minimax-m3",
+                "whisper-large-v3",
+                "mimo-v2.5-asr"
             ]
         );
-        for model in models {
-            assert!(model.capabilities.contains(&"text".to_string()));
-            assert!(model.capabilities.contains(&"tools".to_string()));
+        for preset in table.into_iter().filter(|preset| preset.kind == "chat") {
+            for model in preset.models {
+                assert!(model.capabilities.contains(&"text".to_string()));
+                assert!(model.capabilities.contains(&"tools".to_string()));
+            }
         }
+    }
+
+    #[test]
+    fn presets_include_asr_templates_with_protocol() {
+        let table = presets();
+        let speaches = table.iter().find(|p| p.vendor == "speaches").unwrap();
+        assert_eq!(speaches.kind, "asr");
+        assert_eq!(speaches.protocol, None);
+        assert_eq!(speaches.base_url, "http://localhost:8000");
+        assert_eq!(speaches.models[0].id, "whisper-large-v3");
+        let mimo = table.iter().find(|p| p.vendor == "mimo-asr").unwrap();
+        assert_eq!(mimo.kind, "asr");
+        assert_eq!(mimo.protocol.as_deref(), Some("chat"));
+        assert_eq!(mimo.base_url, "https://api.xiaomimimo.com/v1");
+        assert_eq!(mimo.models[0].id, "mimo-v2.5-asr");
+        assert!(table.iter().filter(|p| p.kind == "chat").count() >= 4);
     }
 
     #[test]
