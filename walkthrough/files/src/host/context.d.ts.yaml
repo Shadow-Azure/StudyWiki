@@ -1,6 +1,6 @@
 kind: file-page
 source: src/host/context.d.ts
-summary: cordis Context 声明合并：七个宿主服务 + agent 会话服务类型挂入（workspace 只暴露插件 facade）
+summary: cordis Context 声明合并：七个宿主服务 + agent 会话与 wiki 知识层服务类型挂入（workspace 只暴露插件 facade）
 segments:
   - snippet: |
       import type { Context } from "cordis";
@@ -12,71 +12,7 @@ segments:
       import type { PluginsService } from "./plugins";
       import type { LlmService } from "./llm";
       import type { AgentService } from "../plugins/agent-core/service";
-    note: 这一组 import 只为声明合并提供类型来源，不引入运行时代码。它把宿主服务、agent 会话服务和插件 facade 汇聚到一个编译期注册点，让后续 Context 上的服务访问获得统一类型。放在这里可以避免各服务实现互相知道 cordis。
-  - snippet: |
-      declare module "cordis" {
-        interface Context {
-          /** 文件通道（读树/读写文本/选目录/媒体 URL/fs 变更流）。 */
-          files: FilesService;
-          /** Excel 数据模型服务（xlsx 解析/序列化；人与 AI 共用读写面）。 */
-          excel: ExcelService;
-          /** 窗口身份/创建/原生确认框/关窗守卫。 */
-          windows: WindowsService;
-          /** 窗口 scope 工作区插件面（读/事件/守卫打开；换根仅经 windows 单路）。 */
-          workspace: WorkspaceFacade;
-          /** 类型化 UI 槽位注册表。 */
-          slots: SlotsService;
-    note: 模块扩充从 files、excel、windows 到 workspace/slots 逐步挂入服务类型。workspace 特意声明为 WorkspaceFacade，而不是内部 WorkspaceService，把插件可见面限制在读、事件、受守卫打开和守卫注册。
-  - snippet: |
-      declare module "cordis" {
-        interface Context {
-          /** 文件通道（读树/读写文本/选目录/媒体 URL/fs 变更流）。 */
-          files: FilesService;
-          /** Excel 数据模型服务（xlsx 解析/序列化；人与 AI 共用读写面）。 */
-          excel: ExcelService;
-          /** 窗口身份/创建/原生确认框/关窗守卫。 */
-          windows: WindowsService;
-          /** 窗口 scope 工作区插件面（读/事件/守卫打开；换根仅经 windows 单路）。 */
-          workspace: WorkspaceFacade;
-          /** 类型化 UI 槽位注册表。 */
-          slots: SlotsService;
-          /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */
-          plugins: PluginsService;
-          /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
-          llm: LlmService;
-    note: 同一模块扩充还纳入 plugins、slots 与文件/数据/窗口能力，形成插件管理和 UI 槽位的公共类型出口。plugin-manager 与 shell 插件的主要消费者关系直接写在注释里。
-  - snippet: |
-      declare module "cordis" {
-        interface Context {
-          /** 文件通道（读树/读写文本/选目录/媒体 URL/fs 变更流）。 */
-          files: FilesService;
-          /** Excel 数据模型服务（xlsx 解析/序列化；人与 AI 共用读写面）。 */
-          excel: ExcelService;
-          /** 窗口身份/创建/原生确认框/关窗守卫。 */
-          windows: WindowsService;
-          /** 窗口 scope 工作区插件面（读/事件/守卫打开；换根仅经 windows 单路）。 */
-          workspace: WorkspaceFacade;
-          /** 类型化 UI 槽位注册表。 */
-          slots: SlotsService;
-          /** 外置插件包管理 + 装载通道（plugin-manager 唯一消费者）。 */
-          plugins: PluginsService;
-          /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
-          llm: LlmService;
-          /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
-          agent: AgentService;
-        }
-      }
-    note: 完整 Context 模块扩充把七个宿主服务与 agent 会话服务统一收口。agent 虽可被 Context 类型看到，但注释明确外置插件 guard 白名单不含它，编译面和行为边界一起成立。
-  - snippet: |
-      import type { Context } from "cordis";
-      import type { FilesService } from "./files";
-      import type { ExcelService } from "./excel";
-      import type { WindowsService } from "./windows";
-      import type { WorkspaceFacade } from "./workspace";
-      import type { SlotsService } from "./slots";
-      import type { PluginsService } from "./plugins";
-      import type { LlmService } from "./llm";
-      import type { AgentService } from "../plugins/agent-core/service";
+      import type { WikiService } from "../plugins/app-wiki/service";
 
       declare module "cordis" {
         interface Context {
@@ -94,8 +30,11 @@ segments:
           plugins: PluginsService;
           /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
           llm: LlmService;
-          /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
+          /** agent 会话服务（内置插件 agent-core 提供；inject 是依赖声明，不是权限边界；agent 不属于外置插件 API 承诺）。 */
           agent: AgentService;
+          /** wiki 知识层服务（内置插件 app-wiki 提供；inject 是依赖声明，不是权限边界；wiki 不属于外置插件 API 承诺）。 */
+          wiki: WikiService;
         }
       }
-    note: 完整文件视窗显示声明合并没有运行时代码，只服务编译期注入契约。这样服务实现保持互相独立，而消费代码能从同一 Context 类型发现可用宿主面。
+    note: |
+      Context 声明合并把七个宿主服务、agent 会话服务和 wiki 知识层服务挂到同一编译期出口；workspace 只暴露插件 facade，运行时仍由各内置插件 provide。

@@ -14,6 +14,7 @@ segments:
       import * as pluginManager from "../plugins/plugin-manager";
       import * as llmSettings from "../plugins/llm-settings";
       import * as agentCore from "../plugins/agent-core";
+      import * as appWiki from "../plugins/app-wiki";
     note: |
       静态表直接 import 全部内置插件模块。构建器因此能在打包期确定内置集合，不留下运行时发现机制。
   - snippet: |
@@ -54,5 +55,6 @@ segments:
         "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
         "llm-settings": { plugin: llmSettings as PluginModule, defaults: {} },
         "agent-core": { plugin: agentCore as PluginModule, defaults: {} },
+        "app-wiki": { plugin: appWiki as PluginModule, defaults: {} },
     note: |
-      后半段登记 agent、窗口、插件管理、LLM 设置和 agent-core。整个表在构建期闭合，新增或退役内置插件必须改这里。
+      后半段登记 agent、窗口、插件管理、LLM 设置、agent-core 和 app-wiki。整个表在构建期闭合，新增或退役内置插件必须改这里。

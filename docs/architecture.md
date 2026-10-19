@@ -13,7 +13,7 @@
 src/                                前端（TypeScript + Vite，无 UI 框架）
   boot-error.ts                     启动错误面板：bootstrap 拒绝时向 #app 内联渲染错误与清理指引（替代白屏）
   bootstrap.ts                      每窗口启动流程：七宿主服务入 ctx + 清单迁移装载 + 插件激活 + 外置坏行回填（Tauri 绑定可注入）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、boot.ts、external.ts、manifest.ts、table.ts）
-  host/context.d.ts                 cordis Context 声明合并：七个宿主服务 + agent 会话服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、service.ts）
+  host/context.d.ts                 cordis Context 声明合并：七个宿主服务 + agent 会话与 wiki 知识层服务类型挂入（workspace 只暴露插件 facade）（→ excel.ts、files.ts、llm.ts、plugins.ts、slots.ts、windows.ts、workspace.ts、service.ts、service.ts）
   host/emitter.ts                   极简类型化事件发射器（on 返回反订阅）
   host/excel.ts                     Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                     文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
@@ -26,7 +26,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   loader/activate.ts                外置插件共享激活：guard 包装 + fiber 等待式审计 + 串行队列 + running/失败登记（boot 与热路径唯一入口）（→ guard.ts、types.ts）
   loader/boot.ts                    装载器：内置行 fail-loud + ext: 行分治坏行（BootReport），全树激活审计（→ activate.ts、manifest.ts、table.ts、types.ts）
   loader/external.ts                外置模块装载缝：全前端唯一动态 import 点（blob 通道，用后即回收）
-  loader/guard.ts                   外置插件 guard 门面：inject 白名单 Proxy + 关键宿主服务成员白名单（非沙箱）（→ types.ts）
+  loader/guard.ts                   外置插件 guard 门面：按 inject 依赖声明暴露服务 + 关键宿主服务成员白名单（非沙箱）（→ types.ts）
   loader/manifest.ts                插件清单装载：缺失时从模块表生成默认并写回 + 存量迁移（表新增内置行合并落盘），损坏 fail-loud（→ table.ts）
   loader/table.ts                   静态模块表：id → 插件 + 默认配置（构建期单一 home，行随插件任务落地）（→ types.ts）
   loader/types.ts                   内置插件导出形状 PluginModule：(name, inject, apply) 三件套的结构子集
@@ -44,6 +44,11 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/app-agent/render.ts       app-agent 渲染纯函数：流式快照合帧重绘、回合过程组、决策行、审批详情浮层与 compaction 分隔（→ llm-stream.ts、tools.ts、types.ts、markdown.ts）
   plugins/app-shell/index.ts        app-shell 插件：四列 shell（titlebar 栏开关+活动文件名、Activity Rail、双折叠栏、reader）+ 拖拽把手 + 四槽容器挂载 + 开关状态绘制与保存 + 活动栏与标题基线 + 无 root 欢迎态、未选文档空态与 other 不支持提示态（→ layout.ts、dom.ts、icons.ts、viewer.ts）
   plugins/app-shell/layout.ts       app-shell 纯函数：栏几何 clamp、状态归一化与 localStorage 布局读写（无 DOM）
+  plugins/app-wiki/index-yaml.ts    app-wiki 机器索引受限 yaml 子集解析/序列化：固定键集与标量形状校验，损坏输入返回 null
+  plugins/app-wiki/index.ts         app-wiki cordis 插件：注入 agent/files/workspace，发布 ctx.wiki 并注册/注销 prompt 贡献段与换根失效（→ service.ts）
+  plugins/app-wiki/schema.ts        app-wiki schema v1 维护契约常量：wiki 布局、frontmatter、ingest/query/lint 流程与写纪律全文
+  plugins/app-wiki/service.ts       app-wiki 服务：按活动源惰性更新索引行、绑定页面与源路径、判定源状态、重指 moved 与生成 prompt 上下文段（→ files.ts、workspace.ts、service.ts、schema.ts、state.ts、types.ts）
+  plugins/app-wiki/state.ts         app-wiki 源状态机与 reconcile：fresh/stale/moved/unknown 判定、probe 元数据缓存、产物证据驱动机器索引物化（→ files.ts、index-yaml.ts）
   plugins/app-windows/index.ts      app-windows 插件：Activity Rail 新建窗口（携带当前 root）与打开文件夹入口（→ dom.ts）
   plugins/doc-excel/editing.ts      doc-excel 纯函数：单元格输入解析（十进制数值化 / `'` 强制文本 / 空白清空）+ 选区几何 + 值/字体/填充/合并写回 worksheet（→ model.ts）
   plugins/doc-excel/index.ts        doc-excel 插件：活动文件多 sheet 查看器/编辑器 + 样式与合并渲染、单击/Shift 选区、内联编辑、脏标记/保存重试/全局保存/关窗与切换守卫 + 虚拟滚动（file-opened 挂渲染，kind 不符清空）（→ editing.ts、model.ts、types.ts、dom.ts、viewer.ts）
@@ -70,12 +75,13 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
 src-tauri/                          Rust 壳
   config.rs                         用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
   grep.rs                           agent grep 原生命令：sidecar ripgrep 裸 argv spawn + rg --json 流式解析 + raw/timeout/limit 预算与 SEARCH_* 错误词表
-  lib.rs                            tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、grep.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、windows.rs）
+  lib.rs                            tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、grep.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、probe.rs、windows.rs）
   llm.rs                            LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口 + 附件大小门禁（单件 20 MB / 聚合 100 MB）（唯一联网点，ureq rustls）
   llm_stream.rs                     流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                           入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                   macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
   plugins.rs                        插件目录命令面：封闭契约解析 + 扫描/读入口/删目录 + 安装管线（registry 直拉/sha512/tgz 校验/原子落盘）
+  probe.rs                          源文件探测：授权命令返回大小/mtime/流式 SHA-256，known size+mtime 命中时跳过内容重读
   windows.rs                        窗口注册表（label→root，upsert）+ create/get/set 窗口命令 + asset 运行期授权 + plugins.json 清单 IO
 vendor/                             vendored 上游源码：cordis（Shadow-Azure fork，上游 f8ea3cd）+ cosmokit，收编清单见 vendor/VENDORED.md
 ```
@@ -97,11 +103,13 @@ export type FileNode = {
 };
 ```
 
-命令面权威清单（含签名）在 [commands.md](commands.md) 生成区。
+命令清单（含签名）见 [commands.md](commands.md) 生成区。
 
 数据流：树读取——选文件夹→`read_tree` 定 kind→view-filetree 渲染；打开——`workspace.openFile` 过守卫后按 kind 分派：markdown、excel、视频各走专用面，other 由 shell 提示；保存广播 `fs://changed`；换根先守卫确认再 Rust 授权登记；建窗由 Rust 创建，新窗 bootstrap 领 root 后激活插件；外置插件安装/启停/重载/回退/移除经 plugin-manager，`ext:` 走唯一 blob 缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理由插件发起，宿主路由 endpoint 并做能力门禁，Rust 只读配置与传输 HTTPS；流式经 Channel，`llm_chat_abort` 置停。
 
 Agent 回合：`ctx.agent` 经 `ctx.llm.chatStream` 带 tools；`tool_calls` 串行，四工具经 `ctx.files`，写先审批、越界读授权后重试（契约见 [agent.md](plugins/agent.md)）。
+
+llm-wiki：`ctx.wiki` 判态并物化 `.study-wiki/index.yaml`；wiki 页由 agent 维护，schema 入 prompt。
 
 ## 关键决策点
 

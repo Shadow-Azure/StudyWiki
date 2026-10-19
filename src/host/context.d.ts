@@ -7,6 +7,7 @@ import type { SlotsService } from "./slots";
 import type { PluginsService } from "./plugins";
 import type { LlmService } from "./llm";
 import type { AgentService } from "../plugins/agent-core/service";
+import type { WikiService } from "../plugins/app-wiki/service";
 
 declare module "cordis" {
   interface Context {
@@ -24,7 +25,9 @@ declare module "cordis" {
     plugins: PluginsService;
     /** LLM 推理服务（endpoint 列表/探测/非流式与流式 chat；模型路由与能力门禁在本层）。 */
     llm: LlmService;
-    /** agent 会话服务（内置插件 agent-core 提供；外置插件 guard 白名单不含）。 */
+    /** agent 会话服务（内置插件 agent-core 提供；inject 是依赖声明，不是权限边界；agent 不属于外置插件 API 承诺）。 */
     agent: AgentService;
+    /** wiki 知识层服务（内置插件 app-wiki 提供；inject 是依赖声明，不是权限边界；wiki 不属于外置插件 API 承诺）。 */
+    wiki: WikiService;
   }
 }

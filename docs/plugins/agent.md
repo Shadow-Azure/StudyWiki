@@ -6,7 +6,7 @@
 
 ## 服务面
 
-`agent-core` 无 UI，注入三宿主面后发布 `ctx.agent`：列表、打开、删除、清理。会话含 `title`、`mode`、`model`、`running`、`rootMismatch`、`messages`/`lines`、`send`/`abort`/`setMode`/`setModel`/`respond` 与订阅。`app-agent` 只挂右栏；外置 guard 不暴露 `agent`。
+`agent-core` 无 UI，注入三宿主面后发布 `ctx.agent`：列表、打开、删除、清理。会话含 `title`、`mode`、`model`、`running`、`rootMismatch`、`messages`/`lines`、`send`/`abort`/`setMode`/`setModel`/`respond` 与订阅。`app-agent` 只挂右栏；`agent` 是内置服务，不在外置 API 承诺内；`inject` 声明依赖，不是权限。
 
 ## 工具契约
 

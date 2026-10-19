@@ -1,6 +1,6 @@
 kind: change
 issue: m2-01-ai-inference-supply
-skill_gen_commit_id: b6bb224
+skill_gen_commit_id: 9e95c02
 title: #49 模型供给定论与推理服务
 scale:
   files: 39
@@ -107,6 +107,7 @@ codeMap:
                   .invoke_handler(tauri::generate_handler![
                       read_tree,
                       read_text_file,
+                      probe_source_file,
                       grep_files,
                       write_text_file,
                       read_binary_file,
@@ -810,7 +811,7 @@ codeMap:
       - path: tests/llm-settings.test.ts
         note: 表单、能力和配置持久化行为。
       - path: src/loader/guard.ts
-        note: 外置插件服务白名单边界。
+        note: 外置插件门面按 inject 依赖声明收窄服务面，成员白名单另行限制；声明不是权限边界。
       - path: scripts/dep-allowlist.json
         note: 依赖白名单登记。
   - group: 文档与机械伴生

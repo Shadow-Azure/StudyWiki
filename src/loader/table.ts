@@ -9,6 +9,7 @@ import * as appWindows from "../plugins/app-windows";
 import * as pluginManager from "../plugins/plugin-manager";
 import * as llmSettings from "../plugins/llm-settings";
 import * as agentCore from "../plugins/agent-core";
+import * as appWiki from "../plugins/app-wiki";
 
 /** One static module table row. */
 export interface TableEntry {
@@ -34,4 +35,5 @@ Object.assign(MODULE_TABLE, {
   "plugin-manager": { plugin: pluginManager as PluginModule, defaults: {} },
   "llm-settings": { plugin: llmSettings as PluginModule, defaults: {} },
   "agent-core": { plugin: agentCore as PluginModule, defaults: {} },
+  "app-wiki": { plugin: appWiki as PluginModule, defaults: {} },
 });

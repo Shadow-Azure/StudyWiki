@@ -1,0 +1,332 @@
+import { isAbsolute, join, normalize, relative } from "pathe";
+import type { FilesService, ProbeSample } from "../../host/files";
+import type { WorkspaceFacade } from "../../host/workspace";
+import type { FileNode } from "../../types";
+import type { PromptSectionInput } from "../agent-core/service";
+import { WIKI_SCHEMA } from "./schema";
+import {
+  classifySource,
+  createProbeCache,
+  kindFromPath,
+  parseMachineIndex,
+  serializeMachineIndex,
+  type ArtifactEvidence,
+  type MachineIndex,
+  type SourceRecord,
+  type SourceState,
+} from "./state";
+
+const SOURCES_DIR = ".study-wiki/llm-wiki/sources";
+const INDEX_MD = ".study-wiki/llm-wiki/index.md";
+const INDEX_YAML = ".study-wiki/index.yaml";
+const HEAD_LINE_BUDGET = 80;
+const HEAD_CHAR_BUDGET = 4096;
+const TRUNCATION_SUFFIX = "…（截断）";
+
+/** wiki 知识层服务：源状态判定与 prompt 贡献段。 */
+export interface WikiService {
+  /** 某库相对路径源的分析状态；只探测并更新该源自己的索引行。 */
+  sourceState(relPath: string): Promise<SourceState>;
+  /** prompt 贡献段：wiki 未初始化且无库内活动文件时返回 null。 */
+  contextSection(input: PromptSectionInput): Promise<string | null>;
+  /** 失效 probe 缓存与根记忆（换库根时由事件触发）。 */
+  invalidate(): void;
+}
+
+/** 组装 wiki 服务。
+ * @param deps 文件通道与窗口工作区投影。
+ * @returns 可注入 cordis 的 wiki 服务实例。
+ */
+export function createWikiService(deps: {
+  files: FilesService;
+  workspace: WorkspaceFacade;
+}): WikiService {
+  const cache = createProbeCache();
+  const knownSamples = new Map<string, ProbeSample>();
+  let lastRoot: string | null = null;
+
+  async function probeAbs(path: string): Promise<ProbeSample | null> {
+    const target = normalize(path);
+    try {
+      const fresh = await deps.files.probeSourceFile(target, knownSamples.get(target));
+      const sample = cache.get(target, fresh);
+      knownSamples.set(target, sample);
+      return sample;
+    } catch {
+      knownSamples.delete(target);
+      return null;
+    }
+  }
+
+  async function pageEvidence(
+    root: string,
+    source: string,
+    page: string,
+  ): Promise<ArtifactEvidence | null> {
+    const sample = await probeAbs(join(root, page));
+    if (sample === null) return null;
+    return { source, page, newestArtifactMtimeMs: sample.mtimeMs };
+  }
+
+  async function directEvidence(root: string, source: string): Promise<ArtifactEvidence | null> {
+    return pageEvidence(root, source, sourcesPagePath(source));
+  }
+
+  async function resolveSourceState(
+    root: string,
+    relPath: string,
+  ): Promise<{ state: SourceState; index: MachineIndex | null }> {
+    if (lastRoot !== root) {
+      cache.invalidate();
+      knownSamples.clear();
+      lastRoot = root;
+    }
+    const prevText = await deps.files.readText(join(root, INDEX_YAML)).catch(() => null);
+    const prev = prevText === null ? null : parseMachineIndex(prevText);
+    const sample = await probeAbs(join(root, relPath));
+    if (sample === null) return { state: { state: "unknown" }, index: prev };
+
+    const state = classifySource(prev, relPath, sample);
+    if (state.state === "stale") return { state, index: prev };
+
+    if (state.state === "moved") {
+      const evidence = await directEvidence(root, relPath);
+      const page =
+        evidence?.page ??
+        state.record.page ??
+        (await findSourcePage(root, state.record.path)) ??
+        sourcesPagePath(state.record.path);
+      const record: SourceRecord = {
+        ...state.record,
+        path: relPath,
+        size: sample.size,
+        sha256: sample.sha256,
+        page,
+      };
+      const index = upsertRecord(prev, record, state.record);
+      await writeIndex(root, prevText, index);
+      return { state: { state: "fresh", record }, index };
+    }
+
+    let evidence = await directEvidence(root, relPath);
+    if (evidence === null && state.state === "fresh" && state.record.page !== undefined) {
+      evidence = await pageEvidence(root, relPath, state.record.page);
+    }
+    if (evidence === null && state.state === "unknown") {
+      const page = await findSourcePage(root, relPath);
+      if (page !== null) evidence = await pageEvidence(root, relPath, page);
+    }
+    if (evidence === null) {
+      if (state.state === "fresh") {
+        const index = removeRecord(prev, state.record);
+        await writeIndex(root, prevText, index);
+        return { state: { state: "unknown" }, index };
+      }
+      return { state, index: prev };
+    }
+
+    if (state.state === "fresh") {
+      const record =
+        state.record.page === evidence.page
+          ? state.record
+          : { ...state.record, page: evidence.page };
+      if (record === state.record) return { state: { state: "fresh", record }, index: prev };
+      const index = upsertRecord(prev, record, state.record);
+      await writeIndex(root, prevText, index);
+      return { state: { state: "fresh", record }, index };
+    }
+
+    const record: SourceRecord = {
+      path: relPath,
+      kind: kindFromPath(relPath),
+      sha256: sample.sha256,
+      size: sample.size,
+      analyzedAt: new Date(evidence.newestArtifactMtimeMs).toISOString(),
+      artifact: null,
+      page: evidence.page,
+    };
+    const index = upsertRecord(prev, record);
+    await writeIndex(root, prevText, index);
+    return { state: { state: "fresh", record }, index };
+  }
+
+  async function writeIndex(
+    root: string,
+    previous: string | null,
+    index: MachineIndex,
+  ): Promise<void> {
+    const serialized = serializeMachineIndex(index);
+    if (serialized !== previous) {
+      await deps.files.writeText(join(root, INDEX_YAML), serialized);
+    }
+  }
+
+  async function findSourcePage(root: string, source: string): Promise<string | null> {
+    let nodes;
+    try {
+      nodes = await deps.files.readTree(join(root, SOURCES_DIR));
+    } catch {
+      return null;
+    }
+    for (const path of markdownPaths(nodes)) {
+      const sourceRel = relativeTo(join(root, SOURCES_DIR), path);
+      if (sourceRel === null) continue;
+      const rel = sourceRel.slice(0, -".md".length);
+      if ((await resolveSourceFromPage(path, rel)) === source) {
+        return toRel(root, path);
+      }
+    }
+    return null;
+  }
+
+  async function contextSection(input: PromptSectionInput): Promise<string | null> {
+    const root = deps.workspace.root;
+    if (root === null) return null;
+    const initialized = await deps.files
+      .readText(join(root, INDEX_MD))
+      .then(() => true)
+      .catch(() => false);
+
+    const rel = toRel(root, input.activeFilePath);
+    const parts: string[] = [];
+    if (rel !== null) {
+      const { state } = await resolveSourceState(root, rel);
+      parts.push(stateLine(state, rel));
+    }
+    if (initialized) {
+      const head = await boundedHead(root);
+      if (head !== null) parts.push(head);
+    } else if (rel === null) {
+      return null;
+    }
+    parts.push(WIKI_SCHEMA);
+    return parts.join("\n\n");
+  }
+
+  async function boundedHead(root: string): Promise<string | null> {
+    const text = await deps.files.readText(join(root, INDEX_MD)).catch(() => null);
+    if (text === null) return null;
+    const lines = text.split("\n");
+    const lineLimited = lines.slice(0, HEAD_LINE_BUDGET).join("\n");
+    const truncatedByLines = lines.length > HEAD_LINE_BUDGET;
+    if (lineLimited.length <= HEAD_CHAR_BUDGET) {
+      return `# llm-wiki index 头部\n${lineLimited}${truncatedByLines ? TRUNCATION_SUFFIX : ""}`;
+    }
+    return `# llm-wiki index 头部\n${lineLimited.slice(0, HEAD_CHAR_BUDGET)}${TRUNCATION_SUFFIX}`;
+  }
+
+  async function resolveSourceFromPage(path: string, rel: string): Promise<string> {
+    const text = await deps.files.readText(path).catch(() => null);
+    if (text !== null) {
+      const source = readFrontmatterSource(text);
+      if (source !== null) return source;
+    }
+    return `${rel}.md`;
+  }
+
+  return {
+    async sourceState(relPath) {
+      const root = deps.workspace.root;
+      if (root === null) return { state: "unknown" };
+      const rel = normalize(relPath);
+      return (await resolveSourceState(root, rel)).state;
+    },
+    contextSection,
+    invalidate() {
+      cache.invalidate();
+      knownSamples.clear();
+      lastRoot = null;
+    },
+  };
+}
+
+function toRel(root: string, path: string | null): string | null {
+  return path === null ? null : relativeTo(root, path);
+}
+
+function relativeTo(root: string, path: string): string | null {
+  const rel = relative(root, path);
+  if (rel.length === 0 || isAbsolute(rel) || rel === ".." || rel.startsWith("../")) {
+    return null;
+  }
+  return rel;
+}
+
+function upsertRecord(
+  index: MachineIndex | null,
+  record: SourceRecord,
+  previous?: SourceRecord,
+): MachineIndex {
+  const sources = index?.sources ?? [];
+  const target = previous ?? sources.find((item) => item.path === record.path);
+  if (target === undefined) {
+    return { version: 1, sources: [...sources.filter((item) => item.path !== record.path), record] };
+  }
+  const next = sources.map((item) => (item === target ? record : item));
+  return {
+    version: 1,
+    sources: next.filter((item, position) =>
+      next.findIndex((candidate) => candidate.path === item.path) === position
+    ),
+  };
+}
+
+function removeRecord(index: MachineIndex | null, record: SourceRecord): MachineIndex {
+  return {
+    version: 1,
+    sources: (index?.sources ?? []).filter((item) => item.path !== record.path),
+  };
+}
+
+function stateLine(state: SourceState, rel: string): string {
+  if (state.state === "fresh") {
+    return `活动文件已分析：${state.record.page ?? sourcesPagePath(state.record.path)}`;
+  }
+  if (state.state === "stale") {
+    return `活动文件已变更，请重新 ingest：${rel}`;
+  }
+  if (kindFromPath(rel) === "video") {
+    return `活动文件尚未分析；转录能力后续里程碑提供：${rel}`;
+  }
+  return `活动文件尚未分析：${rel}`;
+}
+
+function sourcesPagePath(source: string): string {
+  const withoutExtension = source.replace(/\.[^./\\]+$/u, "");
+  return `${SOURCES_DIR}/${withoutExtension}.md`;
+}
+
+function markdownPaths(nodes: FileNode[]): string[] {
+  const paths: string[] = [];
+  for (const node of nodes) {
+    if (node.kind === "dir") {
+      paths.push(...markdownPaths(node.children ?? []));
+      continue;
+    }
+    if (node.path.endsWith(".md")) paths.push(node.path);
+  }
+  return paths;
+}
+
+function readFrontmatterSource(text: string): string | null {
+  if (!text.startsWith("---\n")) return null;
+  const end = text.indexOf("\n---", 4);
+  if (end === -1) return null;
+  for (const line of text.slice(4, end).split("\n")) {
+    const match = line.match(/^source:\s*(.*?)\s*$/u);
+    if (match === null) continue;
+    return unquoteFrontmatterValue(match[1]);
+  }
+  return null;
+}
+
+function unquoteFrontmatterValue(value: string): string {
+  const quoted =
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")));
+  if (quoted) {
+    return value.slice(1, -1);
+  }
+  return value;
+}

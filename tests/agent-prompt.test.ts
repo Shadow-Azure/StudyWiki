@@ -25,4 +25,20 @@ describe("buildSystemPrompt", () => {
   it("无 AGENTS.md 不留占位", () => {
     expect(buildSystemPrompt(base)).not.toContain("AGENTS.md");
   });
+
+  it("extraSections 追加在库约定之后且按序拼接", () => {
+    const p = buildSystemPrompt({
+      ...base,
+      agentsMd: "# 库约定",
+      extraSections: ["# wiki 段\n状态行", "# 第二段"],
+    });
+    expect(p.indexOf("# 库约定")).toBeLessThan(p.indexOf("# wiki 段"));
+    expect(p.indexOf("# wiki 段")).toBeLessThan(p.indexOf("# 第二段"));
+  });
+
+  it("extraSections 缺省或全空白不留占位", () => {
+    expect(buildSystemPrompt(base)).not.toContain("wiki");
+    expect(buildSystemPrompt({ ...base, extraSections: [] })).toBe(buildSystemPrompt(base));
+    expect(buildSystemPrompt({ ...base, extraSections: ["", "  "] })).toBe(buildSystemPrompt(base));
+  });
 });

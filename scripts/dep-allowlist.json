@@ -12,6 +12,7 @@
     "@lezer/highlight",
     "codemirror",
     "exceljs",
+    "pathe",
     "zod"
   ],
   "nodeRefExempt": {

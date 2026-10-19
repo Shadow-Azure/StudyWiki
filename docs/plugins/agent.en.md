@@ -6,7 +6,7 @@ English | [中文](agent.md)
 
 ## Service surface
 
-UI-free `agent-core` injects the three host facades and publishes `ctx.agent`: list, open, delete, cleanup. A session has `title`, `mode`, `model`, `running`, `rootMismatch`, `messages`/`lines`, `send`/`abort`/`setMode`/`setModel`/`respond` and subscriptions. `app-agent` is only the right rail; the external guard does not expose `agent`.
+UI-free `agent-core` injects the three host facades and publishes `ctx.agent`: list, open, delete, cleanup. A session has `title`, `mode`, `model`, `running`, `rootMismatch`, `messages`/`lines`, `send`/`abort`/`setMode`/`setModel`/`respond` and subscriptions. `app-agent` is only the right rail; `agent` is a built-in internal service and not part of the external plugin API promise. External `inject` declares dependencies, not permissions.
 
 ## Tool contract
 

@@ -12,6 +12,7 @@ pub mod config;
 mod grep;
 pub mod llm;
 mod llm_stream;
+mod probe;
 
 #[cfg(target_os = "macos")]
 pub mod native_close;
@@ -106,6 +107,11 @@ fn walk_dir(root: &Path) -> Result<Vec<FileNode>, String> {
 }
 
 fn std_write(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        }
+    }
     fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
@@ -622,6 +628,28 @@ fn read_text_file<R: tauri::Runtime>(
     fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))
 }
 
+/// agent wiki 源探测：读域授权校验后返回大小/mtime/SHA-256；known 命中跳过哈希。
+#[tauri::command]
+fn probe_source_file<R: tauri::Runtime>(
+    window: tauri::Window<R>,
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+    path: String,
+    known: Option<crate::probe::ProbeSample>,
+) -> Result<crate::probe::ProbeSample, crate::probe::ProbeError> {
+    let config_root = config::app_studywiki_dir(&app).map_err(|e| crate::probe::ProbeError {
+        code: "PROBE_UNAUTHORIZED".into(),
+        message: e,
+    })?;
+    ensure_authorized_read(&state, window.label(), &path, &config_root).map_err(|e| {
+        crate::probe::ProbeError {
+            code: "PROBE_UNAUTHORIZED".into(),
+            message: e,
+        }
+    })?;
+    crate::probe::probe_file(std::path::Path::new(&path), known)
+}
+
 /// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含当前窗口读 grants。
 #[tauri::command]
 fn grep_files<R: tauri::Runtime>(
@@ -665,6 +693,7 @@ pub fn app_builder() -> tauri::Builder<tauri::Wry> {
     .invoke_handler(tauri::generate_handler![
         read_tree,
         read_text_file,
+        probe_source_file,
         grep_files,
         write_text_file,
         read_binary_file,
@@ -1027,6 +1056,27 @@ mod tests {
         assert!(decode_path_header("/lib/%2").is_err());
         assert!(decode_path_header("/lib/%zz").is_err());
         assert!(decode_path_header("/lib/%FF").is_err());
+    }
+
+    #[test]
+    fn std_write_creates_missing_parent_dirs() {
+        let dir = std::env::temp_dir().join(format!("sw-stdwrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let p = dir.join("a/b/c/page.md");
+        std_write(&p, "body").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "body");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn std_write_errors_when_parent_component_is_file() {
+        let dir = std::env::temp_dir().join(format!("sw-stdwrite-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("blocker"), b"x").unwrap();
+        let p = dir.join("blocker/page.md");
+        assert!(std_write(&p, "body").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

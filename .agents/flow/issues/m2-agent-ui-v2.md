@@ -10,6 +10,8 @@ status: ready
 scope:
   - .agents/flow/issues/m2-agent-ui-v2.*
   - .agents/notes/implemented/feature/2026-10-07-agent-ui-v2.*
+  - .agents/notes/implemented/process/2026-10-13-computer-use-smoke-reporting.*
+  - .agents/skills/computer-use-smoke-reporting/**
   - docs/architecture.*
   - scripts/code-map.manifest.json
   - src/plugins/app-agent/**
@@ -21,6 +23,7 @@ scope:
   - tests/active-layer.test.ts
   - plans/2026-10-07-agent-ui-*.md
   - plans/2026-10-11-pr54-review.md
+  - plans/review/2026-10-12-pr51-smoke-review.md
   - plans/agent-ui-preview-v2.html
 adr:
   - ../../notes/implemented/feature/2026-10-07-agent-ui-v2.md
