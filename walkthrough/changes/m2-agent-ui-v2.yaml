@@ -1,0 +1,321 @@
+kind: change
+issue: m2-agent-ui-v2
+skill_gen_commit_id: 20c20f5
+title: #52 Agent 面板交互 v2
+scale:
+  files: 11
+  additions: 2226
+  deletions: 552
+feature: |
+  用户在右栏发送一轮 agent 任务时，工具调用默认收进一个可展开的过程组，只显示当前动作或完成摘要；当 agent 请求写文件、编辑或越权读取时，输入区切换成审批台，用户能查看摘要、详情，用按钮或快捷键批准、拒绝，并在决策后拿回原草稿。
+
+  ![Agent composer 与回合状态](../assets/m2-agent-ui-v2/composer-turn-state.svg)
+
+  *图 1：输入区三态与回合收尾共用同一套事件清理语义。*
+userFlow:
+  - 用户在右栏发送任务 → `turn-start` 建立过程组 → 看到“正在执行 <工具>”或已完成动作摘要。
+  - 用户展开过程组 → 工具卡按执行顺序展开 → 再次点击即可收起，结论不被过程噪声淹没。
+  - agent 请求写入或读取库外文件 → composer 进入审批态并保存草稿 → 用户看到请求摘要、详情入口和批准/拒绝按钮。
+  - 用户点击“查看详情”或按 Esc → 先处理详情浮层；浮层关闭后 Esc 才拒绝审批 → 一次键盘动作只表达一个安全语义。
+  - 用户批准/拒绝 → 对话流写入一行决策记录，composer 短暂显示 decided → 400ms 后恢复原草稿，并展示下一条排队审批。
+  - 回合运行中用户点停止 → 当前和排队审批被清空，composer 恢复 normal → 过程组收成“回合已中断”。
+architectural: |
+  `app-agent` 继续只承担右栏 UI，不改变 `agent-core` 的会话、工具和审批协议。结构变化集中在一个插件内部：过程组成为 transcript 的回合级容器，composer 成为审批交互的唯一入口，窗口级 `ActiveLayerStack` 负责浮层与快捷键的所有权。
+
+  沿图 2：`turn-start` 建立过程组，`tool-start`/`tool-end` 更新当前动作和步数，`turn-end`/`aborted`/`error` 分别收组成完成、中断和出错。审批不插入 transcript，而是进入队列；仅在 composer 为 normal 且没有更高层浮层时取队首接管输入区。
+
+  语义变化是审批决策的可见位置：历史记录只保留一行 `renderDecisionLine`，详细请求留在需求发生时的 composer 浮层。这样用户阅读历史时先看到结论，需要追溯时再展开过程或查看审批详情。
+architecturalFlowchart:
+  title: 回合与审批收敛
+  direction: LR
+  nodes:
+    - id: message
+      label: 用户消息
+      shape: stadium
+    - id: event
+      label: app-agent 事件接线
+    - id: group
+      label: 过程组
+    - id: tools
+      label: 工具事件
+    - id: approval
+      label: 审批队列
+    - id: composer
+      label: composer 审批态
+    - id: decision
+      label: 决策行
+    - id: settle
+      label: 回合收尾
+      shape: stadium
+  edges:
+    - from: message
+      to: event
+    - from: event
+      to: group
+      label: turn-start
+    - from: tools
+      to: group
+      label: tool-start / tool-end
+    - from: event
+      to: approval
+      label: onApproval
+    - from: approval
+      to: composer
+      label: normal 且无浮层
+    - from: composer
+      to: decision
+      label: 批准 / 拒绝
+    - from: group
+      to: settle
+      label: turn-end / aborted / error
+    - from: composer
+      to: settle
+      label: aborted
+  explanation: |
+    图表达一轮任务里两条会合的控制流：工具过程进入可展开组，审批请求进入 composer；只有回合收尾事件同时负责结束过程组和清理输入区状态。把审批从 transcript 挪到 composer，可以让用户的决策发生在注意力与键盘焦点所在处。
+design: |
+  ### 问题与约束
+  - 工具过程平铺会让长回合淹没助手结论；审批大卡既占空间，又在决策后留下大块历史噪声。
+  - `agent-core` 的会话、工具协议与 JSONL 契约不能为 UI 改形；历史记录只提供 `assistant.toolCalls`，没有独立工具结果行。
+  - Esc、⌘/Ctrl+Enter 同时可能被插件模态、模型浮层和审批占用，必须有一个窗口级所有权栈。
+
+  ### 候选方案
+  - 保留 transcript 审批大卡，仅压缩样式：改动小，但决策后仍占据主阅读区，焦点与决策位置分离。
+  - 每个工具调用单独折叠，不建回合组：实现简单，但用户仍需在多个摘要之间拼出一条执行链。
+  - 回合级过程组 + composer 审批接管：默认只留结论与耗时，审批出现在准备发送的位置，代价是 DOM 状态机和事件生命周期更复杂。
+
+  ### 选型与理由
+  选择回合级过程组与 composer 三态。过程组直接以 `turn-start` 和 `turn-end` 为边界，不需要推断工具之间的业务关系；composer 保存草稿后替换子树，决策完成再恢复，既不污染 `agent-core`，也不让审批离开当前工作区。
+
+  ### 关键权衡与边界
+  - 历史动作结果只能显示占位说明，因为 JSONL 不保存工具结果内容；页面不伪造已丢失的数据。
+  - 多个审批逐个展示，`decided` 只停 400ms；中断会清空当前与排队审批，避免对已取消请求继续操作。
+  - 浮层出现时 agent 快捷键让路，关闭后订阅回调再展示下一条审批；快捷键不会穿透到下层。
+
+  ### 落地映射：功能点 → 变更文件
+  #### 回合折叠与审批接管
+
+  沿图「回合折叠与审批接管」：流式快照与工具事件先进入过程组，审批请求排队后由 normal composer 取队首；决策写一行记录，经过 decided 短态再恢复草稿并展示下一条。状态机住在 `app-agent`，渲染件保持无状态。
+
+  ```text
+  src/plugins/app-agent/
+    ├─ index.ts     事件接线、审批队列、composer 状态机、快捷键与清理
+    ├─ render.ts    过程组、决策行、审批摘要与详情浮层的 DOM 渲染
+    └─ attachments.ts 多模态草稿的既有输入面
+  src/ui/
+    ├─ active-layer.ts 窗口级浮层所有权栈：一次 Escape 只交给顶层
+    └─ icons.ts        面板开关图标
+  src/styles.css     过程组、审批台、toast、宽窄 composer 与响应式布局
+  tests/
+    ├─ app-agent.test.ts        编排、审批排队、停止清理与草稿恢复
+    ├─ app-agent-render.test.ts 无状态渲染结构与详情浮层
+    └─ active-layer.test.ts     浮层层序与快捷键所有权
+  ```
+designFlowcharts:
+  - feature: 回合折叠与审批接管
+    title: 回合折叠与审批接管
+    direction: LR
+    nodes:
+      - id: snapshot
+        label: 流式快照
+        shape: rounded
+      - id: group
+        label: 过程组
+      - id: step
+        label: 当前工具动作
+      - id: request
+        label: 审批请求
+      - id: normal
+        label: normal composer
+      - id: approval
+        label: approval composer
+      - id: decided
+        label: decided 短态
+      - id: restored
+        label: 恢复草稿
+        shape: stadium
+    edges:
+      - from: snapshot
+        to: group
+        label: 更新渲染
+      - from: step
+        to: group
+        label: tool-start / tool-end
+      - from: request
+        to: normal
+        label: 入队
+      - from: normal
+        to: approval
+        label: 取队首并保存草稿
+      - from: approval
+        to: decided
+        label: 批准 / 拒绝
+      - from: decided
+        to: restored
+        label: 400ms
+      - from: restored
+        to: normal
+        label: 展示下一条
+    explanation: |
+      图表达两个独立状态机在 composer 汇合：流式快照与工具事件只更新过程组，审批请求先入队，只有当 composer 处于 normal 且没有更高层浮层时才取队首接管输入区。批准或拒绝统一压成 decided 短态，再恢复草稿并回到 normal，让多条审批串行展示。回到 normal 的回边就是队列继续消费的入口，因此审批不会并发占用输入区。
+codeMap:
+  - group: 回合与审批状态机
+    attention: must-read
+    why: 事件顺序、审批排队和中断清理共同决定用户看到的行为是否正确。
+    files:
+      - path: src/plugins/app-agent/index.ts
+        note: 右栏插件的事件编排器：维护过程组、审批队列、composer 三态、快捷键与生命周期清理。
+        changes:
+          - snippet: |
+              case "aborted":
+                turnRunning = false;
+                approvalQueue = [];
+                activeApproval = null;
+                approvalDetail?.remove();
+                approvalDetail = null;
+                approvalToggle = null;
+                if (decideTimer) {
+                  clearTimeout(decideTimer);
+                  decideTimer = null;
+                }
+                if (composerEl?.dataset.state && composerEl.dataset.state !== "normal") restoreComposer();
+                messageQueue = [];
+                renderQueue();
+                processGroup?.settle("回合已中断", Date.now() - turnStartedAt);
+                processGroup = null;
+                appendInterrupted();
+                finishActive();
+                paintButtons();
+                break;
+            note: |
+              aborted 是同一条清尾路径：清空当前与排队审批、取消延迟展示、恢复 composer、清空未发送队列，再把过程组 settle 为已中断，避免已经失效的审批继续接受操作。
+          - snippet: |
+              const presentNextApproval = (): void => {
+                if (
+                  disposed || !composerEl || !panel ||
+                  composerEl.dataset.state !== "normal" || activeLayers.size > 0
+                ) return;
+                const next = approvalQueue.shift();
+                if (!next || !input || !composerRow) return;
+                activeApproval = next;
+                savedDraft = input.value;
+                input.value = "";
+                if (approvalDetail) approvalDetail.remove();
+                const prompt = renderApprovalPrompt(next, decideApproval);
+                approvalDetail = prompt.detail;
+                approvalToggle = prompt.toggle;
+                panel.append(approvalDetail);
+                composerEl.dataset.state = "approval";
+                composerEl.dataset.approvalId = next.id;
+                composerEl.replaceChildren(prompt.root);
+                paintButtons();
+              };
+            note: |
+              审批只在 composer 为 normal 且没有更高浮层时取队首，并先保存当前草稿再替换子树。这个门条件保证插件模态打开时不会偷偷推进安全决策。
+          - snippet: |
+              approvalQueue = approvalQueue.filter((item) => item.id !== active.id);
+              activeApproval = null;
+              approvalDetail?.remove();
+              approvalDetail = null;
+              approvalToggle = null;
+              composerEl.dataset.state = "decided";
+              delete composerEl.dataset.approvalId;
+              const decided = document.createElement("div");
+              decided.className = "agent-approval-decided";
+              decided.textContent = outcome.decision === "allow" ? "✓ 已批准，Agent 继续执行" : "✕ 已拒绝，Agent 可继续对话";
+              composerEl.replaceChildren(decided);
+              paintButtons();
+              if (decideTimer) clearTimeout(decideTimer);
+              decideTimer = setTimeout(() => {
+                decideTimer = null;
+                restoreComposer();
+                presentNextApproval();
+              }, 400);
+            note: |
+              决策后先从队列移除当前请求，再进入 decided 短态；延时结束后恢复草稿并立即展示下一条审批，保证多请求逐个处理而不会并发接管输入区。
+      - path: src/plugins/app-agent/render.ts
+        note: 无状态 DOM 渲染件：过程组折叠、决策行和审批摘要/详情。
+        changes:
+          - snippet: |
+              settle(label: string, durationMs: number): void {
+                text.textContent = label;
+                time.textContent = `${(durationMs / 1000).toFixed(1)}s`;
+                root.classList.remove("running");
+                root.classList.add("done");
+                if (!root.contains(document.activeElement)) root.classList.remove("open");
+              },
+            note: |
+              过程组 settle 时写入结果与耗时，并在焦点不在组内时自动收起；用户正在展开检查结果时不会被强行合上。
+          - snippet: |
+              const detail = renderApprovalDetail(req);
+              const toggle = document.createElement("button");
+              toggle.type = "button";
+              toggle.className = "agent-detail-toggle";
+              toggle.dataset.detailToggle = "";
+              toggle.setAttribute("aria-expanded", "false");
+              toggle.textContent = "查看详情 ▾";
+              toggle.addEventListener("click", () => {
+                const open = detail.classList.toggle("open");
+                toggle.setAttribute("aria-expanded", String(open));
+              });
+            note: |
+              审批摘要与详情分离：详情浮层由同一个 toggle 控制展开并同步 aria-expanded，主视图保持一行摘要，需要审计时再展开。
+      - path: src/ui/active-layer.ts
+        note: 窗口级浮层栈，决定 Escape 与审批承接顺序。
+        changes:
+          - snippet: |
+              escape(layer: object): boolean {
+                const entry = this.#layers.at(-1);
+                if (!entry || entry.layer !== layer) return false;
+                this.#layers.pop();
+                this.#notify();
+                entry.surface.close();
+                return true;
+              }
+            note: |
+              只有栈顶浮层才能消费 Escape；它关闭后通知订阅者恢复被挡住的审批。这个集中所有权避免了两个 document 监听器同时解释一次按键。
+  - group: 视觉与测试支撑
+    attention: skim
+    why: 样式和回归测试支撑交互，但不改变状态机协议。
+    files:
+      - path: src/styles.css
+        note: 过程组、审批台、浮层、toast 与宽窄 composer 的视觉规则。
+      - path: src/ui/icons.ts
+        note: 左右面板开关 inline SVG。
+      - path: tests/app-agent.test.ts
+        note: 过程折叠、审批排队、草稿恢复、中断清理和运行中排队。
+      - path: tests/app-agent-render.test.ts
+        note: 无状态渲染结构、详情浮层与决策行。
+      - path: tests/active-layer.test.ts
+        note: 浮层层序和 Escape 所有权。
+reviewGuide:
+  order:
+    - 先读 `app-agent/index.ts` 的 `handleEvent`：确认 turn-start/tool-start/tool-end/turn-end/aborted/error 的收组顺序。
+    - 再读 `presentNextApproval`、`decideApproval`、`restoreComposer`：确认草稿、队列和 decided 短态的先后。
+    - 接着读 `render.ts`：过程组只在焦点不在组内时自动收起，审批详情与摘要分居两个节点。
+    - 然后读 `active-layer.ts`：一次 Escape 只能由栈顶消费，审批不能穿透模态。
+    - 最后抽查测试：Stop 后审批必须清空，排队审批必须逐个恢复草稿。
+  risks:
+    - 如果 aborted 清尾顺序被改坏，后端已取消的审批会继续停在 composer，用户点击后得到 no-op，却看到“已批准/已拒绝”的假反馈。
+    - 如果 Agent 快捷键绕过 ActiveLayerStack，插件模态与审批会争用同一次 Escape，可能把“关闭设置”误记成拒绝写入。
+    - 历史 JSONL 没有工具结果内容；若未来渲染器假定结果存在，旧会话会显示空白或伪造内容。
+  acceptance:
+    - item: 回合过程组运行中显示当前动作，结束后自动折叠为摘要
+      evidence: tests/app-agent.test.ts 与 tests/app-agent-render.test.ts
+    - item: 审批接管 composer，支持详情、批准/拒绝、排队与草稿恢复
+      evidence: tests/app-agent.test.ts
+    - item: Stop、中断与错误不会留下悬空审批
+      evidence: tests/app-agent.test.ts（aborted 单审批与排队审批）
+    - item: 浮层打开时 Agent 快捷键让路
+      evidence: tests/active-layer.test.ts 与 tests/app-agent.test.ts
+verification:
+  - 2026-10-13：历史 PR #54 声明 pnpm test 73 files / 584 tests 通过，GitHub CI 6/6 通过。
+  - 2026-10-19：npm_config_cache=/tmp/sw-npm-cache pnpm exec vitest run（三张变更页的 8 个定向文件）— 通过，94/94。
+touches:
+  - feature:agent-chat
+  - feature:approval-gate
+  - file:src/plugins/app-agent/index.ts
+  - file:src/plugins/app-agent/render.ts
+  - file:src/ui/active-layer.ts
+  - file:src/styles.css
+  - file:src/ui/icons.ts

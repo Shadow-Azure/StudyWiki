@@ -6,10 +6,11 @@
 kind: issue
 milestone: m2
 priority: P1
-status: ready
+status: done
 scope:
   - src/plugins/app-shell/**
   - .agents/flow/issues/m2-shell-rails-v2.*
+  - walkthrough/assets/m2-shell-rails-v2/**
   - src/plugins/app-windows/**
   - src/plugins/plugin-manager/**
   - src/plugins/llm-settings/**

@@ -6,10 +6,12 @@ English | [中文](m2-04-llm-wiki.md)
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-04-llm-wiki.*
   - .agents/flow/issues/m3-03-raw-index.*
+  - .gitignore
+  - plans/2026-10-18-pr62-review.md
   - plans/2026-10-18-llm-wiki-*.md
   - walkthrough/assets/m2-04-llm-wiki/**
   - src/plugins/**

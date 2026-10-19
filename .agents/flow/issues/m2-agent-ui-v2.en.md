@@ -6,9 +6,10 @@ English | [中文](m2-agent-ui-v2.md)
 kind: issue
 milestone: m2
 priority: P1
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m2-agent-ui-v2.*
+  - walkthrough/assets/m2-agent-ui-v2/**
   - .agents/notes/implemented/feature/2026-10-07-agent-ui-v2.*
   - .agents/notes/implemented/process/2026-10-13-computer-use-smoke-reporting.*
   - .agents/skills/computer-use-smoke-reporting/**

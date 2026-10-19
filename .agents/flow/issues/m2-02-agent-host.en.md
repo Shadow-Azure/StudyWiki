@@ -6,7 +6,7 @@ English | [中文](m2-02-agent-host.md)
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-02-agent-host.*
   - src/host/**
@@ -27,7 +27,7 @@ scope:
   - docs/commands.*
   - docs/plugins/*
 adr:
-  - ../../notes/proposed/architecture/2026-10-01-agent-host-streaming.md
+  - ../../notes/implemented/architecture/2026-10-01-agent-host-streaming.md
 github:
   number: 29
   url: https://github.com/Shadow-Azure/StudyWiki/issues/29

@@ -1,0 +1,320 @@
+kind: change
+issue: m2-shell-rails-v2
+skill_gen_commit_id: 20c20f5
+title: #53 主窗口 Activity Rail 与可折叠侧栏
+scale:
+  files: 17
+  additions: 1418
+  deletions: 199
+feature: |
+  主窗口现在固定显示 54px 的 Activity Rail，文件栏和 Agent 栏成为两个可独立拖拽、隐藏和恢复的侧栏；宽度与开合状态在本机保存。历史插件的 `topbar.left` 注册仍会自动落到 Activity Rail，macOS 主窗与动态窗则把应用内开关和系统窗口按钮放在同一层。
+
+  ![双窗口布局同步](../assets/m2-shell-rails-v2/two-window-layout.svg)
+
+  *图 1：多个窗口共享本机布局偏好，拖拽中的窗口先暂停接收外部更新。*
+userFlow:
+  - 用户从标题栏左侧开关打开或关闭文件栏 → shell 立即重排四列 → Activity Rail 保持固定，阅读区获得释放空间。
+  - 用户拖动文件栏或 Agent 栏的 12px 命中区 → Pointer Capture 持续接收移动 → 蓝线与竖向 pill 跟随，松手后保存宽度。
+  - 用户双击拖拽条或多按 Home/End → 侧栏回到默认宽度或当前允许的边界 → 阅读区始终至少保留 340px。
+  - 用户使用 Cmd/Ctrl+B 或加 Option/Alt 的快捷键 → 分别切换文件栏与 Agent 栏 → 开关状态和 aria-pressed 同步。
+  - 用户重启应用 → 从 `studywiki.shell-layout.v1` 读取宽度与开合状态 → 两栏恢复到上次形状。
+  - 本地存储损坏或版本不匹配 → 只回退对应字段或整套默认值 → 应用继续启动，不因 UI 偏好阻断使用。
+architectural: |
+  shell 从三栏改为 `Activity Rail | 文件栏 | 阅读区 | Agent 栏`。固定 Activity Rail 承载 `activity.left`，文件树、阅读器和 Agent 仍使用既有槽位；`app-shell` 负责四列 DOM、拖拽与持久化，`app-windows` 等命令插件只注册渲染，不再决定自己所在的位置。
+
+  沿图 2：标题栏开关决定两栏可见性；Activity Rail 固定占 54px；文件栏、阅读区和 Agent 栏在剩余宽度内分配空间。旧插件注册 `topbar.left` 时，`SlotsService` 在入口归一成 `activity.left`，因此 API v1 插件无需重编译。
+
+  语义变化在布局所有权：宽度和开合状态成为 shell 的本机偏好，隐藏栏只把渲染宽度降为 0，子树仍保持挂载，Agent 会话与运行状态不会因收起而销毁。macOS overlay 与最小窗口尺寸同时应用到主窗和动态窗，避免两套建窗路径分叉。
+architecturalFlowchart:
+  title: 四列壳布局
+  direction: LR
+  nodes:
+    - id: titlebar
+      label: 标题栏开关
+      shape: stadium
+    - id: activity
+      label: Activity Rail
+    - id: files
+      label: 文件栏
+    - id: reader
+      label: 阅读区
+    - id: agent
+      label: Agent 栏
+    - id: slots
+      label: 槽位挂载
+    - id: alias
+      label: topbar.left 归一
+    - id: windows
+      label: 主窗与动态窗
+      shape: rounded
+  edges:
+    - from: titlebar
+      to: files
+      label: 切换文件栏
+    - from: titlebar
+      to: agent
+      label: 切换 Agent 栏
+    - from: activity
+      to: files
+      label: 固定 54px
+    - from: files
+      to: reader
+      label: 剩余宽度
+    - from: reader
+      to: agent
+      label: 最小 340px
+    - from: slots
+      to: activity
+      label: activity.left
+    - from: alias
+      to: activity
+      label: API v1 兼容
+    - from: windows
+      to: reader
+      label: overlay 与最小尺寸
+  explanation: |
+    图强调 Activity Rail 是位置固定的宿主容器，两个可折叠侧栏围绕阅读区分配剩余宽度；槽位别名不是另一列，而是在注册入口归一到同一容器。把主窗与动态窗放在终点，是为了提醒 overlay 和最小尺寸必须由两条建窗路径共同维持。
+design: |
+  ### 问题与约束
+  - 原有三栏把全局命令、品牌和文件标题挤在顶栏；右侧 Agent 栏没有同规格拖拽条，隐藏后也没有可发现的恢复入口。
+  - 必须保留外置插件 API v1 的 `topbar.left`，并维持阅读区最小宽度、Agent 子树挂载和现有槽位契约。
+  - 发布产物不引入 UI 框架；布局偏好是本机 UI 状态，不进入 `settings.json` 或学习库。
+
+  ### 候选方案
+  - 保留三栏，只加粗拖拽命中区：改动最小，但全局命令仍与阅读标题争夺顶栏。
+  - 隐藏侧栏后保留 56px 图标轨：恢复更近，但压缩阅读区，且与用户确认的完全隐藏交互不一致。
+  - 固定 Activity Rail + 两侧栏完全折叠：全局命令获得稳定归属，阅读区可回收完整侧栏宽度，代价是标题栏开关和 layout 状态机更复杂。
+
+  ### 选型与理由
+  选择固定 Activity Rail 与两个完全折叠的侧栏。`layout.ts` 只负责几何与持久化纯函数，`index.ts` 只负责 DOM、Pointer Capture、键盘与 storage 事件；边界先在绝对尺寸内归一，再按当前视口扣除另一栏和阅读区最小宽度。
+
+  ### 关键权衡与边界
+  - `localStorage` 采用最后写入者获胜，不提供跨窗口冲突合并；正在拖拽的窗口忽略 storage 事件，松手后再恢复同步。
+  - 非 macOS 仍保留系统标题栏，只让 macOS 的 application titlebar 使用 overlay；三端完全自绘窗口留作后续议题。
+  - Activity Rail 当前只承载命令图标，不引入视图切换；外置 v1 插件仍通过别名进入同一空间。
+
+  ### 落地映射：功能点 → 变更文件
+  #### 拖拽与持久化链路
+
+  沿图「拖拽与持久化链路」：用户按下拖拽条后 shell 记录起点并捕获指针，移动只更新 pending x，由 rAF 写回布局；松手时先 flush 最后一帧，再做一次持久化。布局读取经过归一化，坏数据只让对应字段回退。
+
+  ```text
+  src/plugins/app-shell/
+    ├─ layout.ts  几何边界、版本化状态、localStorage 读写与坏数据归一
+    └─ index.ts   四列 DOM、槽位挂载、Pointer Capture、键盘、storage 与清理
+  src/host/slots.ts           API v1 槽位别名归一，统一挂到 Activity Rail
+  src/plugins/app-windows/    新窗口命令迁入 Activity Rail
+  src/plugins/plugin-manager/ 插件管理命令迁入 Activity Rail
+  src/plugins/llm-settings/   模型设置命令迁入 Activity Rail
+  src-tauri/
+    ├─ tauri.conf.json       主窗最小尺寸与 macOS overlay 配置
+    └─ src/windows.rs        动态窗使用同一最小尺寸和 overlay
+  tests/
+    ├─ app-shell-layout.test.ts 纯几何、归一化与持久化边界
+    ├─ app-shell.test.ts        拖拽、折叠、快捷键与跨窗同步
+    └─ host-workspace-slots.test.ts 旧槽位别名
+  ```
+designFlowcharts:
+  - feature: 拖拽与持久化链路
+    title: 拖拽与持久化链路
+    direction: LR
+    nodes:
+      - id: down
+        label: pointerdown
+        shape: stadium
+      - id: capture
+        label: Pointer Capture
+      - id: frame
+        label: rAF 合帧
+      - id: clamp
+        label: 约束宽度
+      - id: up
+        label: pointerup
+      - id: save
+        label: 保存布局
+      - id: storage
+        label: storage 事件
+      - id: repaint
+        label: 重读并重绘
+        shape: rounded
+    edges:
+      - from: down
+        to: capture
+      - from: capture
+        to: frame
+        label: pointermove
+      - from: frame
+        to: clamp
+        label: 最新 x
+      - from: clamp
+        to: up
+        label: 持续绘制
+      - from: up
+        to: save
+        label: flush 最后一帧
+      - from: save
+        to: storage
+        label: 其他窗口收到
+      - from: storage
+        to: repaint
+        label: 非拖拽中
+    explanation: |
+      图把拖拽、几何约束和跨窗同步放在一条链上：移动期间只画不写，松手才持久化，避免每个 pointermove 都触发存储；storage 事件在非拖拽状态才重读，防止另一个窗口把正在拖动的手柄拽回去。
+codeMap:
+  - group: 四列壳与布局状态
+    attention: must-read
+    why: 几何约束、Pointer Capture 与跨窗同步决定侧栏是否会挤坏阅读区或丢状态。
+    files:
+      - path: src/plugins/app-shell/layout.ts
+        note: 纯函数布局模型：尺寸常量、视口约束、版本化状态和 localStorage 容错。
+        changes:
+          - snippet: |
+              export function maxRailWidth(side: RailSide, viewport: number, otherOpenWidth: number): number {
+                const limits = RAIL_LIMITS[side];
+                const available = Math.floor(viewport - ACTIVITY_WIDTH - otherOpenWidth - MAIN_MIN);
+                return Math.max(limits.min, Math.min(limits.max, available));
+              }
+            note: |
+              侧栏最大宽度先扣除固定 Activity Rail、另一侧栏和阅读区最小宽度；返回值仍不低于本栏最小值，保证极端窄窗口也有确定结果。
+          - snippet: |
+              export function normalizeShellLayout(value: unknown, _viewport = window.innerWidth): ShellLayoutState {
+                const fallback = defaultShellLayout();
+                if (typeof value !== "object" || value === null) return fallback;
+                const input = value as Record<string, Record<string, unknown>>;
+                if ((input as Record<string, unknown>).version !== 1) return fallback;
+                const rail = (side: RailSide): RailLayout => ({
+                  width: clampAbsolute(side, input[side]?.width),
+                  open: typeof input[side]?.open === "boolean" ? input[side].open as boolean : true,
+                });
+                return { version: 1, files: rail("files"), agent: rail("agent") };
+              }
+            note: |
+              持久化输入是不可信边界：版本不符整套回退，单栏宽度与布尔值则逐字段归一。绝对几何在这里只做粗约束，真实视口约束由 shell 绘制时再应用。
+      - path: src/plugins/app-shell/index.ts
+        note: 四列 DOM 与交互：槽位挂载、拖拽手势、键盘、跨窗 storage 和清理。
+        changes:
+          - snippet: |
+              const constrainState = (): void => {
+                if (state.files.open) {
+                  state.files.width = clampRailWidth(
+                    "files", state.files.width, window.innerWidth,
+                    state.agent.open ? state.agent.width : 0,
+                  );
+                }
+                if (state.agent.open) {
+                  state.agent.width = clampRailWidth(
+                    "agent", state.agent.width, window.innerWidth,
+                    state.files.open ? state.files.width : 0,
+                  );
+                }
+              };
+            note: |
+              每次绘制前都按当前窗口重新约束两栏；关闭栏不参与宽度扣除，打开时自动给阅读区让路，避免窗口缩小后保留失效几何。
+          - snippet: |
+              const onStorage = (event: StorageEvent): void => {
+                if (event.key !== SHELL_LAYOUT_KEY || isDragging()) return;
+                state = loadShellLayout();
+                paint();
+              };
+            note: |
+              跨窗更新只处理布局键；正在拖拽的窗口先忽略，避免另一个窗口的写入打断本地手势。松手后的正常持久化会让最后写入值成为共识。
+          - snippet: |
+              const stop = (event: PointerEvent): void => {
+                if (!active || event.pointerId !== pointerId) return;
+                const hasPendingFrame = frame !== null;
+                cancelGesture(event, false);
+                // A settle flushes the last coalesced position even if pointerup arrives
+                // before the browser runs the scheduled animation frame.
+                if (hasPendingFrame) write();
+                setWidth(side, state[side].width);
+              };
+            note: |
+              pointerup 先结束捕获与拖拽标记，再主动 flush 尚未执行的 rAF，确保最后一次移动不会因合帧丢失；setWidth 在此时完成持久化。
+      - path: src/host/slots.ts
+        note: 槽位别名与注册归一，保护外置 v1 插件。
+        changes:
+          - snippet: |
+              const SLOT_ALIASES = new Map<string, SlotName>([["topbar.left", "activity.left"]]);
+
+              /** Normalize an API v1 registration to its current slot; unknown preview slot
+               * names pass through unchanged.
+               * @param slot Declared registration slot, including the API v1 alias.
+               * @returns Current slot name for known registrations; otherwise the input. */
+              export function normalizeSlotRegistration<T extends string>(
+                slot: T,
+              ): T extends SlotRegistration ? SlotName : T {
+                return (SLOT_ALIASES.get(slot) ?? slot) as T extends SlotRegistration ? SlotName : T;
+              }
+            note: |
+              旧插件的 `topbar.left` 在注册入口归一成 `activity.left`，挂载只认当前槽位；兼容发生在服务边界，旧插件渲染函数不改。
+      - path: src-tauri/src/windows.rs
+        note: 动态窗复用最小尺寸与 macOS overlay 设置。
+        changes:
+          - snippet: |
+              let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
+                  .title("StudyWiki")
+                  .inner_size(1180.0, 760.0)
+                  .min_inner_size(920.0, 480.0);
+
+              // Shadowing keeps the macOS-only builder methods out of other platforms,
+              // so cross-platform clippy does not see an unused mutable builder.
+              #[cfg(target_os = "macos")]
+              let builder = builder
+                  .title_bar_style(tauri::TitleBarStyle::Overlay)
+                  .hidden_title(true)
+                  .traffic_light_position(tauri::LogicalPosition::new(12.0, 12.0));
+            note: |
+              动态窗与主窗共用最小内尺寸，平台条件编译只在 macOS 叠加 overlay 与红绿灯位置，其他平台不会看到未使用的 builder 方法。
+  - group: 视觉与测试支撑
+    attention: skim
+    why: 样式和回归测试验证布局，不改变槽位与几何契约。
+    files:
+      - path: src/styles.css
+        note: Activity Rail、拖拽条、overlay 标题区与响应式布局视觉。
+      - path: src/ui/icons.ts
+        note: 两侧栏开关的 inline SVG。
+      - path: scripts/gen-plugin-template.mjs
+        note: 外置脚手架示例迁到 `activity.left`。
+      - path: tests/app-shell.test.ts
+        note: 拖拽 clamp、取消恢复、开关、快捷键与跨窗同步。
+      - path: tests/app-shell-layout.test.ts
+        note: 纯几何与持久化损坏回退。
+      - path: tests/host-workspace-slots.test.ts
+        note: `topbar.left` 到 `activity.left` 的兼容。
+reviewGuide:
+  order:
+    - 先读 `app-shell/layout.ts`：确认绝对边界与视口约束是两层，不是一套 mix。
+    - 再读 `app-shell/index.ts` 的 `constrainState`、`connectHandle` 和 `onStorage`：检查拖拽、rAF 与持久化的时序。
+    - 接着读 `host/slots.ts`：旧槽位只在注册入口归一，mount 不接受历史键。
+    - 然后读 `windows.rs` 与 `tauri.conf.json`：主窗和动态窗的最小尺寸、overlay 必须一致。
+    - 最后抽查 `tests/app-shell.test.ts` 的取消、双击重置和双窗口同步。
+  risks:
+    - 如果 pointerup 没有 flush pending rAF，最后一次拖动会丢失，表现为松手回弹到旧宽度。
+    - 如果跨窗 storage 在拖拽中仍然重绘，另一个窗口会抢走本地手势，用户看到手柄跳动。
+    - 如果 `topbar.left` 被从 mount 层临时放行，会重新出现别名与当前槽位两套入口，外置插件行为难以预测。
+  acceptance:
+    - item: 固定 Activity Rail、文件栏与 Agent 栏独立拖拽/隐藏
+      evidence: tests/app-shell.test.ts
+    - item: 宽度与开合状态持久化，损坏输入回退默认
+      evidence: tests/app-shell-layout.test.ts 与 tests/app-shell.test.ts
+    - item: 快捷键、Home/End 和双击重置可用
+      evidence: tests/app-shell.test.ts
+    - item: 旧 `topbar.left` 插件仍进入 Activity Rail
+      evidence: tests/host-workspace-slots.test.ts 与 tests/ui-preview.test.ts
+    - item: macOS overlay 与动态窗最小尺寸一致
+      evidence: src-tauri/tauri.conf.json、src-tauri/src/windows.rs；PR #54 人工打包冒烟
+verification:
+  - 2026-10-13：历史 PR #54 声明 pnpm test 73 files / 584 tests 通过，GitHub CI 6/6 通过。
+  - 2026-10-19：npm_config_cache=/tmp/sw-npm-cache pnpm exec vitest run（三张变更页的 8 个定向文件）— 通过，94/94。
+touches:
+  - feature:multi-window
+  - feature:plugin-load
+  - file:src/plugins/app-shell/index.ts
+  - file:src/plugins/app-shell/layout.ts
+  - file:src/host/slots.ts
+  - file:src/plugins/app-windows/index.ts
+  - file:src/plugins/plugin-manager/index.ts
+  - file:src/plugins/llm-settings/index.ts
+  - file:src-tauri/src/windows.rs
+  - file:src-tauri/tauri.conf.json
+  - file:src/styles.css

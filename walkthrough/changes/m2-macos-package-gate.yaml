@@ -1,0 +1,302 @@
+kind: change
+issue: m2-macos-package-gate
+skill_gen_commit_id: 20c20f5
+title: #55 macOS DMG 安装启动门禁
+scale:
+  files: 10
+  additions: 335
+  deletions: 14
+feature: |
+  发布链路不再把“DMG 构建成功”当作安装可用。macOS 产物会先被复制到隔离目录，核对应用结构、bundle 身份与 ad-hoc 签名，再通过 Finder 同源的 `open` 启动并确认进程存活；任何一步失败都会在上传产物前中止。
+
+  ![DMG 安装启动门禁](../assets/m2-macos-package-gate/dmg-launch-gate.svg)
+
+  *图 1：DMG 挂载、隔离安装、身份与签名检查、标准启动和清理的发布顺序。*
+userFlow:
+  - 开发者推送 PR 或发布 tag → macOS lane 构建 DMG → 产物进入隔离验证。
+  - 门禁挂载 DMG 并把 StudyWiki.app 复制到临时 Applications → 验证从安装位置启动，而不是从只读挂载卷直接运行。
+  - 门禁读取 Info.plist → 核对 reverse-DNS identifier、可执行文件名与产品名 → 身份不一致立即失败。
+  - 门禁执行 `codesign --verify --deep --strict` → 资源封条不完整立即失败 → 不上传损坏产物。
+  - 门禁用标准 `open -n -g` 启动 → 10 秒内必须观察到新进程存活 → 成功后才结束并清理临时目录。
+architectural: |
+  新增 `scripts/verify-macos-package.mjs`，把 DMG 查找、应用定位、结构检查、plist 身份、codesign、标准启动和清理收敛为一条可测试的发布门禁。`verify-env-independence` 继续负责静态配置约束，新增共享的 bundle identifier 判定，避免配置检查与安装包检查对“合法身份”给出不同答案。
+
+  沿图 2：构建产物先挂载，再复制到隔离目录；结构、plist、签名与标准启动按失败成本从低到高排列，能在进入 Launch Services 前指出缺哪个 bundle 部件。无论成功或失败都执行 detach 与临时目录删除，失败不会留下挂载卷。
+
+  结构变化还包括 CI 接线：PR 的 `macos-package` lane 与 release 的 macOS lane 都在上传前调用同一脚本。原来的“产物非空”检查继续保留，但不再承担安装启动验证。
+architecturalFlowchart:
+  title: DMG 安装启动门禁
+  direction: LR
+  nodes:
+    - id: build
+      label: 构建 DMG
+      shape: stadium
+    - id: mount
+      label: 挂载隔离目录
+    - id: install
+      label: 复制 StudyWiki.app
+    - id: structure
+      label: 结构与信息检查
+    - id: sign
+      label: codesign 校验
+    - id: open
+      label: 标准 open 启动
+    - id: alive
+      label: 进程存活
+      shape: diamond
+    - id: cleanup
+      label: 清理临时目录
+      shape: rounded
+  edges:
+    - from: build
+      to: mount
+    - from: mount
+      to: install
+    - from: install
+      to: structure
+    - from: structure
+      to: sign
+    - from: sign
+      to: open
+    - from: open
+      to: alive
+      label: 10 秒内
+    - from: alive
+      to: cleanup
+      label: 是
+    - from: sign
+      to: cleanup
+      label: 失败
+  explanation: |
+    图把“构建成功”和“用户双击后能启动”拆成两段：先检查静态 bundle 结构，再检查签名与 Launch Services 启动；失败分支回到同一个清理终点，避免临时挂载卷泄漏。这样一眼能看出哪一步属于编译产物问题，哪一步属于安装身份问题。
+design: |
+  ### 问题与约束
+  - DMG 能生成、应用包内文件齐全，不代表 Finder 能启动；缺失资源封条时 `codesign` 会失败，标准打开可能返回 `kLSNoExecutableErr`。
+  - bundle identifier 以 `.app` 结尾会与 macOS 应用包扩展名冲突，必须由静态配置门禁和安装包检查共同拒绝。
+  - 发布机不一定有开发者证书；无证书时仍需产出可被 Launch Services 识别的应用包。
+
+  ### 候选方案
+  - 只检查 DMG 非空：实现最省事，但无法发现签名封条和应用身份问题。
+  - 直接运行 `Contents/MacOS/study-wiki`：可验证二进制，却绕过 Finder 与 Launch Services 的标准路径。
+  - 强制真实开发者证书：身份最正式，但无证书分发场景会直接失去产物。
+  - 隔离安装 + ad-hoc 签名 + 标准 `open` 冒烟：覆盖真实双击路径，允许无证书分发，代价是 macOS CI 时间增加。
+
+  ### 选型与理由
+  选择隔离安装与标准启动验证。`Info.plist`、`_CodeSignature/CodeResources` 和可执行文件先做结构检查，失败信息能直接指出缺失部件；随后才做 `codesign` 和 `open`，避免把 Launch Services 的模糊错误当成唯一信号。ad-hoc identity 写成 `-`，在没有开发者证书时仍形成完整封条。
+
+  ### 关键权衡与边界
+  - 该门禁只在 macOS 执行，不能替代 Windows/Linux 安装器冒烟。
+  - 标准 `open` 验证的是“新进程出现并存活 10 秒”，不覆盖应用内功能；应用功能仍由 Computer Use 与其他测试验证。
+  - 若未来启用真实开发者签名，只需替换 identity，不必改变安装与启动链路。
+
+  ### 落地映射：功能点 → 变更文件
+  #### bundle 身份与标准启动验证
+
+  沿图「bundle 身份与标准启动验证」：静态配置先拒绝非法 identifier，发布脚本再在安装后的 app 上读取 plist、校验签名并走标准 `open`。共享判定函数让配置门禁与安装包门禁对 bundle 身份使用同一规则。
+
+  ```text
+  scripts/
+    ├─ verify-env-independence.mjs 配置侧：reverse-DNS、禁止 .app 结尾
+    ├─ verify-env-independence.spec.mjs 身份规则回归
+    ├─ verify-macos-package.mjs    DMG 安装、结构、签名与标准启动
+    └─ verify-macos-package.spec.mjs DMG/应用定位与结构检查
+  .github/workflows/
+    ├─ ci.yml      PR macOS lane 构建并执行安装冒烟
+    └─ release.yml release macOS lane 在上传前执行同一门禁
+  src-tauri/tauri.conf.json  dev.studywiki.desktop + ad-hoc signingIdentity
+  docs/release-checklist.*   发布前人工检查与机械门禁入口
+  ```
+designFlowcharts:
+  - feature: bundle 身份与标准启动验证
+    title: bundle 身份与标准启动验证
+    direction: LR
+    nodes:
+      - id: config
+        label: tauri.conf.json
+        shape: stadium
+      - id: identity
+        label: 身份规则
+      - id: plist
+        label: Info.plist 对照
+      - id: codesign
+        label: codesign 校验
+      - id: open
+        label: 标准 open
+      - id: process
+        label: 进程存活
+        shape: diamond
+      - id: pass
+        label: 允许上传
+        shape: rounded
+      - id: fail
+        label: 中止发布
+        shape: rounded
+    edges:
+      - from: config
+        to: identity
+      - from: identity
+        to: plist
+        label: 合法 identifier
+      - from: plist
+        to: codesign
+        label: 一致
+      - from: codesign
+        to: open
+        label: 封条完整
+      - from: open
+        to: process
+      - from: process
+        to: pass
+        label: 是
+      - from: process
+        to: fail
+        label: 否
+      - from: identity
+        to: fail
+        label: 非法
+    explanation: |
+      图把配置身份、安装包身份、签名与启动验证串成同一判定链：配置合法只是入口，安装包里的 Info.plist 还必须一致，签名和标准启动再逐级加深验证。最终只有进程存活才允许上传，任何一个前置条件失败都直接到中止终点。
+codeMap:
+  - group: 安装包门禁
+    attention: must-read
+    why: 结构、身份、签名与标准启动共同决定用户双击后能否打开。
+    files:
+      - path: scripts/verify-macos-package.mjs
+        note: macOS DMG 安装启动门禁：定位、挂载、复制、结构、plist、codesign、open 与清理。
+        changes:
+          - snippet: |
+              export function collectBundleErrors(app) {
+                const required = [
+                  "Contents/Info.plist",
+                  "Contents/MacOS/study-wiki",
+                  "Contents/Resources/icon.icns",
+                  "Contents/_CodeSignature/CodeResources",
+                ];
+                return required
+                  .filter((relative) => !existsSync(path.join(app, relative)))
+                  .map((relative) => `缺少 ${relative}`);
+              }
+            note: |
+              结构检查先于 codesign，明确列出缺失的 bundle 部件；资源封条文件也作为必需结构，避免等到签名验证才得到模糊错误。
+          - snippet: |
+              const plistPath = path.join(installedApp, "Contents/Info.plist");
+              const plistJson = await run("/usr/bin/plutil", ["-convert", "json", "-o", "-", plistPath]);
+              const identity = plistIdentityErrors(JSON.parse(plistJson.stdout), conf.identifier);
+              if (identity.length > 0) throw new Error(`安装包身份不一致：\n  ${identity.join("\n  ")}`);
+
+              await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", installedApp]);
+              await verifyStandardLaunch(installedApp);
+            note: |
+              安装后的 plist 必须与构建配置一致，随后才验证签名和标准启动。检查对象是复制到临时 Applications 的 app，而不是挂载卷上的只读副本。
+          - snippet: |
+              await run("/usr/bin/open", ["-n", "-g", installedApp]);
+              const deadline = Date.now() + 10_000;
+              while (Date.now() < deadline) {
+                const fresh = (await pidsFor(binary)).filter((pid) => !before.has(pid));
+                if (fresh.length > 0) {
+                  await sleep(750);
+                  const alive = (await pidsFor(binary)).filter((pid) => fresh.includes(pid));
+                  if (alive.length === 0) throw new Error("应用进程在 Launch Services 启动后立即退出");
+                  for (const pid of alive) process.kill(pid, "SIGTERM");
+                  return;
+                }
+                await sleep(250);
+              }
+              throw new Error("标准 open 未在 10 秒内启动应用进程");
+            note: |
+              标准启动用 `open -n -g`，记录启动前 PID 集合，只把新增进程当作本次启动结果；出现后再观察 750ms，避免捕获到启动即崩溃的假阳性。
+      - path: scripts/verify-env-independence.mjs
+        note: 静态配置的身份规则：reverse-DNS 且禁止 `.app` 结尾。
+        changes:
+          - snippet: |
+              export function isStableBundleIdentifier(identifier) {
+                return typeof identifier === "string"
+                  && /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/i.test(identifier)
+                  && !identifier.toLowerCase().endsWith(".app");
+              }
+            note: |
+              配置与安装包共用同一身份判定：至少两层点分段、字母开头，并显式拒绝 `.app` 后缀，避免 bundle id 与应用扩展名混淆。
+  - group: CI 接线与发布说明
+    attention: skim
+    why: 工作流只负责在正确平台调用门禁，失败传播由命令退出码保证。
+    files:
+      - path: .github/workflows/ci.yml
+        note: PR macOS lane 构建 DMG 并执行安装启动门禁。
+      - path: .github/workflows/release.yml
+        note: release macOS lane 在上传前执行同一门禁。
+      - path: src-tauri/tauri.conf.json
+        note: `dev.studywiki.desktop` 与 `signingIdentity: "-"`。
+      - path: docs/release-checklist.md
+        note: 发布检查清单登记安装启动门禁。
+      - path: scripts/verify-macos-package.spec.mjs
+        note: DMG 查找、应用定位、结构检查的单元测试。
+  - group: m2 流程收口与 PR62 检视记录
+    attention: skim
+    why: 这些文件只对齐已完成 issue 的状态、迁移决策记录并保存检视证据，不改变运行时。
+    files:
+      - path: .agents/flow/issues/m2-02-agent-host.md
+        note: #29 改为 done，并把 ADR 指向 implemented Note。
+      - path: .agents/flow/issues/m2-02-agent-host.en.md
+        note: #29 英文镜像，状态与 ADR 路径同步。
+      - path: .agents/flow/issues/m2-04-llm-wiki.md
+        note: #31 改为 done，并扩展 scope 覆盖 review 记录与根 .gitignore。
+      - path: .agents/flow/issues/m2-04-llm-wiki.en.md
+        note: #31 英文镜像，scope 与状态同步。
+      - path: .agents/flow/issues/m2-agent-ui-v2.md
+        note: #52 改为 done，反映实现已合并。
+      - path: .agents/flow/issues/m2-agent-ui-v2.en.md
+        note: #52 英文镜像。
+      - path: .agents/flow/issues/m2-shell-rails-v2.md
+        note: #53 改为 done，反映实现已合并。
+      - path: .agents/flow/issues/m2-shell-rails-v2.en.md
+        note: #53 英文镜像。
+      - path: .agents/flow/issues/m2-macos-package-gate.md
+        note: #55 改为 done，反映安装启动门禁已合并。
+      - path: .agents/flow/issues/m2-macos-package-gate.en.md
+        note: #55 英文镜像。
+      - path: .agents/flow/milestones/m2-ai-agent-host.md
+        note: m2 里程碑在全部 issue 完成后置为 done。
+      - path: .agents/flow/milestones/m2-ai-agent-host.en.md
+        note: m2 里程碑英文镜像。
+      - path: .agents/notes/implemented/architecture/2026-10-01-agent-host-streaming.md
+        note: #29 的 owning Note 从 proposed 迁到 implemented。
+      - path: .agents/notes/implemented/architecture/2026-10-01-agent-host-streaming.en.md
+        note: 上述 Note 的英文镜像。
+      - path: .agents/plans/2026-10-19-m2-closeout.md
+        note: 本次收口的任务清单、验证命令和交付顺序。
+      - path: .gitignore
+        note: 忽略本地 smoke HTML、截图与报告目录。
+      - path: plans/2026-10-18-pr62-review.md
+        note: PR #62 的架构、文件级分析和分流结论。
+reviewGuide:
+  order:
+    - 先读 `verify-macos-package.mjs` 的 `verifyPackage`：确认挂载、复制、检查与清理顺序。
+    - 再读 `collectBundleErrors` 与 `plistIdentityErrors`：确认失败信息指向具体 bundle 部件。
+    - 接着读 `verifyStandardLaunch`：确认只把新增 PID 当作本次启动证据。
+    - 然后读 `verify-env-independence.mjs`：配置侧和安装包侧共享身份规则。
+    - 最后读两条 workflow：PR 与 release 都必须在上传前失败即中止。
+  risks:
+    - 如果 `open` 后只检查任意 study-wiki 进程存在，已有实例会掩盖本次启动失败；当前实现用启动前 PID 集合做差。
+    - 如果失败路径跳过 detach，CI 会残留挂载卷并影响后续步骤；清理在 finally 中执行。
+    - 如果 ad-hoc 签名被误换成无签名，结构文件可能存在但资源封条不完整，`codesign --deep --strict` 必须继续作为硬门禁。
+  acceptance:
+    - item: 配置门禁拒绝 `.app` 结尾或非 reverse-DNS identifier
+      evidence: scripts/verify-env-independence.spec.mjs
+    - item: 门禁覆盖 DMG 查找、应用定位、结构与 plist 身份
+      evidence: scripts/verify-macos-package.spec.mjs
+    - item: 安装后的 app 能通过 codesign 与标准 open 启动
+      evidence: `pnpm verify:macos-package <dmg>`；PR #54 的 macOS CI
+    - item: PR 与 release macOS lane 在上传前执行门禁
+      evidence: .github/workflows/ci.yml、.github/workflows/release.yml
+verification:
+  - 2026-10-13：历史 PR #54 的 macOS CI 通过，产物通过 codesign 与标准启动冒烟。
+  - 2026-10-19：npm_config_cache=/tmp/sw-npm-cache pnpm exec vitest run（三张变更页的 8 个定向文件）— 通过，94/94。
+touches:
+  - file:scripts/verify-macos-package.mjs
+  - file:scripts/verify-macos-package.spec.mjs
+  - file:scripts/verify-env-independence.mjs
+  - file:scripts/verify-env-independence.spec.mjs
+  - file:.github/workflows/ci.yml
+  - file:.github/workflows/release.yml
+  - file:src-tauri/tauri.conf.json
+  - file:docs/release-checklist.md

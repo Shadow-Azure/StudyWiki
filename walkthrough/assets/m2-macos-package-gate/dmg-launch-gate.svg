@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 440" role="img" aria-labelledby="title desc">
+  <title id="title">DMG 安装启动门禁</title>
+  <desc id="desc">从构建 DMG 到隔离安装、身份与签名检查、标准 open 启动和清理的顺序。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5454d4"/>
+    </marker>
+  </defs>
+  <rect x="26" y="48" width="150" height="70" rx="14" fill="#f6f8fa" stroke="#5454d4" stroke-width="2"/>
+  <text x="101" y="88" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">构建 DMG</text>
+  <rect x="218" y="48" width="150" height="70" rx="14" fill="#fff" stroke="#5454d4" stroke-width="2"/>
+  <text x="293" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">挂载到隔离目录</text>
+  <text x="293" y="102" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#57606a">只读 + nobrowse</text>
+  <rect x="410" y="48" width="170" height="70" rx="14" fill="#fff" stroke="#5454d4" stroke-width="2"/>
+  <text x="495" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">复制 StudyWiki.app</text>
+  <text x="495" y="102" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#57606a">脱离挂载卷运行</text>
+  <rect x="622" y="48" width="170" height="70" rx="14" fill="#fff" stroke="#5454d4" stroke-width="2"/>
+  <text x="707" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">结构 / plist / 签名</text>
+  <text x="707" y="102" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#57606a">身份与资源封条</text>
+  <rect x="834" y="48" width="140" height="70" rx="14" fill="#f0fff4" stroke="#2da44e" stroke-width="2"/>
+  <text x="904" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">标准 open 启动</text>
+  <text x="904" y="102" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#57606a">确认进程存活</text>
+  <line x1="176" y1="83" x2="208" y2="83" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="368" y1="83" x2="400" y2="83" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="580" y1="83" x2="612" y2="83" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="792" y1="83" x2="824" y2="83" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <path d="M904 118 C904 180 101 180 101 118" fill="none" stroke="#cf222e" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <text x="502" y="172" text-anchor="middle" font-family="system-ui, sans-serif" font-size="14" fill="#cf222e">任一步失败：先 detach，再删除临时目录</text>
+
+  <rect x="80" y="230" width="230" height="78" rx="14" fill="#eef0ff" stroke="#5454d4" stroke-width="2"/>
+  <text x="195" y="263" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">dev.studywiki.desktop</text>
+  <text x="195" y="286" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">reverse-DNS，不以 .app 结尾</text>
+  <rect x="385" y="230" width="230" height="78" rx="14" fill="#fff" stroke="#5454d4" stroke-width="2"/>
+  <text x="500" y="263" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">ad-hoc identity</text>
+  <text x="500" y="286" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">写入完整资源封条</text>
+  <rect x="690" y="230" width="230" height="78" rx="14" fill="#f0fff4" stroke="#2da44e" stroke-width="2"/>
+  <text x="805" y="263" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#24292f">PR / release macOS lane</text>
+  <text x="805" y="286" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">上传前失败即中止</text>
+  <line x1="310" y1="269" x2="375" y2="269" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="615" y1="269" x2="680" y2="269" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+</svg>

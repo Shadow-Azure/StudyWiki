@@ -6,9 +6,10 @@ English | [中文](m2-macos-package-gate.md)
 kind: issue
 milestone: m2
 priority: P1
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m2-macos-package-gate.*
+  - walkthrough/assets/m2-macos-package-gate/**
   - .agents/flow/milestones/m2-ai-agent-host.*
   - .github/workflows/ci.yml
   - .github/workflows/release.yml
