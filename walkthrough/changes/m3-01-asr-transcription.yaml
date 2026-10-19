@@ -212,7 +212,13 @@ codeMap:
                   // 文件名进 header：转义引号与换行，杜绝 multipart 头注入。
                   let file_name: String = file_name
                       .chars()
-                      .map(|c| if c == '"' || c == '\r' || c == '\n' { '_' } else { c })
+                      .map(|c| {
+                          if c == '"' || c == '\r' || c == '\n' {
+                              '_'
+                          } else {
+                              c
+                          }
+                      })
                       .collect();
                   for (name, value) in fields {
                       out.extend_from_slice(
@@ -232,7 +238,10 @@ codeMap:
                   root_check: &dyn Fn(&str) -> bool,
               ) -> Result<TranscriptionResult, LlmError> {
                   if ep.kind != "asr" {
-                      return Err(LlmError::new("INVALID_CONFIG", "转录只接受 kind=asr 的 endpoint"));
+                      return Err(LlmError::new(
+                          "INVALID_CONFIG",
+                          "转录只接受 kind=asr 的 endpoint",
+                      ));
                   }
                   if !root_check(&req.path) {
                       return Err(LlmError::new(
@@ -240,13 +249,8 @@ codeMap:
                           format!("转录文件不在库根内：{}", req.path),
                       ));
                   }
-                  match ep.protocol.as_deref() {
-                      Some("chat") => run_transcribe_chat(agent, ep, req),
-                      _ => run_transcribe(agent, ep, req, root_check),
-                  }
-              }
             note: |
-                transcribe_checked 先拒非 asr endpoint，再拒库根外路径，最后按 protocol 分叉；这两道门禁在任何网络请求之前。
+                transcribe_checked 先拒非 asr endpoint，再拒库根外路径；这两道门禁在任何网络请求之前，protocol 分叉在通过门禁之后。
           - snippet: |
               let data_url = format!(
                   "data:{mime};base64,{}",

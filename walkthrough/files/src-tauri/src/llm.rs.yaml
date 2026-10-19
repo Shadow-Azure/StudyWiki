@@ -31,7 +31,7 @@ segments:
       /// 转录 multipart 的边界标记（固定值即可：body 内容由本函数独家组装，不存在注入面）。
       const MULTIPART_BOUNDARY: &str = "swasr7f3a9d21c4e8b6f0a5c3d2e190";
     note: |
-      这里声明 LLM 层的网络预算：探测 10 秒、chat 300 秒、流式 600 秒、转录 30 分钟，以及附件单件 20 MB、聚合 100 MB。转录单独放宽超时，是因为长视频识别与聊天生成的时间尺度不同；body 仍由 Rust 独家组装，固定 multipart 边界不构成注入面。
+      这里声明 LLM 层的网络预算：探测 10 秒、chat 300 秒、流式 600 秒、转录 30 分钟，以及附件单件 20 MB、聚合 100 MB。转录单独放宽超时，body 仍由 Rust 独家组装。
   - snippet: |
       /// 归一错误：code 为全链路共享词表（前端路由层另有 MODEL_* 三码；
       /// INTERNAL 仅由 async 命令的后台任务 JoinError 产生，正常路径不可达）。
@@ -170,7 +170,7 @@ segments:
       /// 中止登记表：streamId 置位即停读（进程级单例）。
       pub type AbortRegistry = Arc<Mutex<std::collections::HashSet<String>>>;
     note: |
-      这里定义 LlmError 与 chat/流式的 wire 形状：工具声明、消息、请求、响应、用量与流式请求。错误码是全链路共享词表，前端只按 code 路由，不解析 ureq 细节。
+      这里定义 LlmError 与 chat/流式的 wire 形状：工具声明、消息、请求、响应、用量与流式请求。
   - snippet: |
       pub fn abort_registry() -> &'static AbortRegistry {
           static R: OnceLock<AbortRegistry> = OnceLock::new();
@@ -266,7 +266,7 @@ segments:
           }
       }
     note: |
-      这里维护流式中止登记与媒体类型映射。图片/音频按扩展名出 mime，input_audio 只认 wav/mp3，超出格式的内容在请求构建前就报 UNSUPPORTED_CONTENT。
+      这里维护流式中止登记与媒体类型映射。图片/音频按扩展名出 mime，input_audio 只认 wav/mp3。
   - snippet: |
       fn upstream_content_part(part: &ContentPart) -> serde_json::Value {
           let media = |source: &MediaSource| match source {
@@ -412,7 +412,7 @@ segments:
           })
       }
     note: |
-      这里把前端多模态 part 转成上游 OpenAI 兼容 JSON，并在构建请求前做路径授权与内联媒体大小门禁。文本、图片、音频走同一 messages 形状，避免各命令各自拼 wire。
+      这里把前端多模态 part 转成上游 JSON，并在构建请求前做路径授权与内联媒体大小门禁。
   - snippet: |
       fn build_chat_body(
           req: &ChatRequest,
@@ -570,7 +570,7 @@ segments:
           ureq::AgentBuilder::new().timeout(CHAT_TIMEOUT).build()
       }
     note: |
-      这里组装非流式 chat body，并集中声明厂商预设、URL 拼接、鉴权头与传输错误映射。预设现在带 kind/protocol：chat 模板用于对话，speaches 与 mimo-asr 是 asr 模板，后者显式走聊天口 input_audio；baseUrl 仍只存在于 Rust。
+      这里组装非流式 chat body，并集中声明厂商预设、URL 拼接、鉴权头与传输错误映射。预设带 kind/protocol，speaches 与 mimo-asr 是 asr 模板。
   - snippet: |
       fn probe_with(agent: &ureq::Agent, ep: &Endpoint) -> Result<u64, LlmError> {
           let url = join_url(&ep.base_url, "models");
@@ -718,7 +718,7 @@ segments:
       #[derive(Debug, serde::Deserialize)]
       #[serde(rename_all = "camelCase")]
     note: |
-      这里执行探测、附件大小门禁、媒体能力检查与非流式 chat，并按 id 解析 endpoint。所有联网动作先过预算与能力门禁，错误在映射层归一成稳定 code。
+      这里执行探测、附件大小门禁、媒体能力检查与非流式 chat，并按 id 解析 endpoint。
   - snippet: |
       pub struct TranscribeRequest {
           pub endpoint_id: String,
@@ -757,7 +757,13 @@ segments:
           // 文件名进 header：转义引号与换行，杜绝 multipart 头注入。
           let file_name: String = file_name
               .chars()
-              .map(|c| if c == '"' || c == '\r' || c == '\n' { '_' } else { c })
+              .map(|c| {
+                  if c == '"' || c == '\r' || c == '\n' {
+                      '_'
+                  } else {
+                      c
+                  }
+              })
               .collect();
           for (name, value) in fields {
               out.extend_from_slice(
@@ -783,7 +789,9 @@ segments:
 
       /// 转录专用 agent：30 分钟超时。
       fn transcribe_agent() -> ureq::Agent {
-          ureq::AgentBuilder::new().timeout(TRANSCRIBE_TIMEOUT).build()
+          ureq::AgentBuilder::new()
+              .timeout(TRANSCRIBE_TIMEOUT)
+              .build()
       }
 
       /// 门禁后的转录入口：kind 必须 asr；path 必须在库根内；按 protocol 分叉。
@@ -794,7 +802,10 @@ segments:
           root_check: &dyn Fn(&str) -> bool,
       ) -> Result<TranscriptionResult, LlmError> {
           if ep.kind != "asr" {
-              return Err(LlmError::new("INVALID_CONFIG", "转录只接受 kind=asr 的 endpoint"));
+              return Err(LlmError::new(
+                  "INVALID_CONFIG",
+                  "转录只接受 kind=asr 的 endpoint",
+              ));
           }
           if !root_check(&req.path) {
               return Err(LlmError::new(
@@ -872,7 +883,10 @@ segments:
               .send_bytes(body.to_string().as_bytes())
               .map_err(map_transport)?;
           let wire: WireChat = serde_json::from_reader(resp.into_reader()).map_err(|e| {
-              LlmError::new("BAD_RESPONSE", format!("响应不是合法 chat/completions 回包：{e}"))
+              LlmError::new(
+                  "BAD_RESPONSE",
+                  format!("响应不是合法 chat/completions 回包：{e}"),
+              )
           })?;
           let choice = wire
               .choices
@@ -927,8 +941,12 @@ segments:
               .set("Content-Length", &total.to_string())
               .send(body)
               .map_err(map_transport)?;
-          let wire: WireTranscription = serde_json::from_reader(resp.into_reader())
-              .map_err(|e| LlmError::new("BAD_RESPONSE", format!("转录响应不是合法 verbose_json：{e}")))?;
+          let wire: WireTranscription = serde_json::from_reader(resp.into_reader()).map_err(|e| {
+              LlmError::new(
+                  "BAD_RESPONSE",
+                  format!("转录响应不是合法 verbose_json：{e}"),
+              )
+          })?;
           Ok(TranscriptionResult {
               text: wire.text,
               segments: wire.segments,
@@ -940,7 +958,7 @@ segments:
       /// 曾无法区分）：apiKeyDirty false/缺省且空 apiKey = 保留已存 key（安全默认，
       /// 避免"改个名字顺手清掉密钥"）；dirty true = 按传入值更新，空即显式清空。
     note: |
-      这里是 ASR 转录核心：统一的 TranscriptionResult 承载 text + segments；transcriptions 路用 multipart 流式上传原文件，chat 路把 wav/mp3 编码成 data URL + format 送 input_audio。路由按 endpoint.protocol 分叉，verbose_json 缺少 segments 时降级为空数组而不是报错。
+      这里是 ASR 转录核心：统一 TranscriptionResult；transcriptions 路 multipart 流式上传，chat 路发 input_audio；文件名进 header 前转义引号与换行，verbose_json 缺 segments 时降级为空数组。
   - snippet: |
       fn upsert_into(s: &mut Settings, mut e: Endpoint) -> Result<(), LlmError> {
           config::validate_endpoint(&e).map_err(|m| LlmError::new("INVALID_CONFIG", m))?;
@@ -1140,7 +1158,7 @@ segments:
           .map_err(|e| LlmError::new("INTERNAL", format!("转录后台任务异常终止：{e}")))?
       }
     note: |
-      这里是非流式设置写面与命令入口：upsert 先校验、按 dirty 标记保留或替换 key；列表只回脱敏投影。llm_transcribe 用 async + spawn_blocking，把 30 分钟的阻塞传输放到 worker 线程，避免冻结窗口事件循环。
+      这里是非流式设置写面与命令入口：upsert 按 dirty 保留或替换 key；transcribe 命令用 spawn_blocking 把长传输放到 worker 线程。
   - snippet: |
       struct AbortGuard<'a>(&'a AbortRegistry, String);
 
@@ -1251,7 +1269,7 @@ segments:
           Ok(())
       }
     note: |
-      这里管理流式回合：RAII 中止登记、SSE 读取、checkpoint 回灌与 channel 交付；llm_chat_abort 只置位，不直接杀线程。
+      这里管理流式回合：RAII 中止登记、SSE 读取、checkpoint 回灌与 channel 交付；llm_chat_abort 只置位。
   - snippet: |
       mod tests {
           use super::*;
@@ -2351,4 +2369,4 @@ segments:
           }
       }
     note: |
-      这里用本地 TCP 桩覆盖探测、chat、流式、取消、附件上限、请求转换、endpoint CRUD 与转录双协议。测试同时钉住 verbose_json 缺 segments、chat 路请求体形状与越界路径拒绝。
+      这里用本地 TCP 桩覆盖探测、chat、流式、取消、附件上限、端点 CRUD、转录双协议与文件名转义。
