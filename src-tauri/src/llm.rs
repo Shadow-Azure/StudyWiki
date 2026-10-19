@@ -1022,6 +1022,7 @@ mod tests {
             kind: "chat".into(),
             base_url: base_url.into(),
             api_key: key.into(),
+            protocol: None,
             api_key_dirty: false,
             models: vec![ModelEntry {
                 id: "m1".into(),
