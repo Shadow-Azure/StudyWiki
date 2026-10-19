@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { executeTool, isUnauthorized, MAX_APPROVAL_PREVIEW_CHARACTERS, TOOL_DECLARATIONS,
   type ToolRunContext, type ApprovalOutcome, type ApprovalRequest } from "../src/plugins/agent-core/tools";
+import { parseTimestampedLines } from "../src/plugins/agent-core/transcribe";
 
 function ctxWith(
   host: Partial<ToolRunContext["host"]>,
@@ -177,5 +178,81 @@ describe("tools", () => {
   it("isUnauthorized 识别稳定前缀", () => {
     expect(isUnauthorized(new Error("UNAUTHORIZED_PATH|/x"))).toBe(true);
     expect(isUnauthorized(new Error("其他错误"))).toBe(false);
+  });
+});
+
+describe("transcribe 工具", () => {
+  const hookOk = {
+    probeSize: async () => 2048,
+    run: async () => ({ text: "全文", segments: [
+      { start: 0, end: 4.2, text: "今天我们讲二叉树" },
+      { start: 4.2, end: 9.8, text: "它的定义是" },
+    ] }),
+  };
+
+  it("审批→执行→格式化落盘→摘要", async () => {
+    const writes: string[] = [];
+    const ctx = ctxWith({ writeText: async (p, c) => { writes.push(`${p}\n${c}`); } });
+    ctx.transcribe = hookOk;
+    const r = await executeTool({ id: "t1", name: "transcribe",
+      argumentsText: JSON.stringify({ path: "/lib/courses/lecture-01.mp4", language: "zh" }) }, ctx);
+    expect(ctx.asked).toEqual(["transcribe"]);
+    expect(writes).toHaveLength(1);
+    const newline = writes[0]!.indexOf("\n");
+    const path = writes[0]!.slice(0, newline);
+    const content = writes[0]!.slice(newline + 1);
+    expect(path).toBe("/lib/.study-wiki/raw/courses/lecture-01/transcript.md");
+    expect(content).toContain("source: courses/lecture-01.mp4");
+    expect(content).toContain("timestamps: segment");
+    expect(content).toContain("[00:00:00] 今天我们讲二叉树");
+    expect(content).toContain("[00:00:04] 它的定义是");
+    expect(r.content).toContain("2 段");
+  });
+
+  it("审批拒绝不上传", async () => {
+    let ran = false;
+    const ctx = ctxWith({}, { decision: "deny", reason: "不要上传" });
+    ctx.transcribe = { probeSize: async () => 1, run: async () => { ran = true; return { text: "", segments: [] }; } };
+    const r = await executeTool({ id: "t1", name: "transcribe",
+      argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
+    expect(ran).toBe(false);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("不要上传");
+  });
+
+  it("无时间戳回包降级单段并标注 timestamps: none", async () => {
+    const writes: string[] = [];
+    const ctx = ctxWith({ writeText: async (p, c) => { writes.push(c); } });
+    ctx.transcribe = { probeSize: async () => 1, run: async () => ({ text: "一整段没有分段的文本", segments: [] }) };
+    await executeTool({ id: "t1", name: "transcribe", argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
+    expect(writes[0]).toContain("timestamps: none");
+    expect(writes[0]).toContain("一整段没有分段的文本");
+    expect(writes[0]).not.toContain("[00:00:");
+  });
+
+  it("chat 路文本按 80% 覆盖规则解析；不足则降级", async () => {
+    const good = "[00:00:00] 第一句\n[00:00:04] 第二句\n[00:00:09] 第三句";
+    const parsed = parseTimestampedLines(good);
+    expect(parsed).toHaveLength(3);
+    const writes: string[] = [];
+    const ctx = ctxWith({ writeText: async (_p, c) => { writes.push(c); } });
+    ctx.transcribe = { probeSize: async () => 1, run: async () => ({ text: `好的，以下是转录：\n[00:00:00] 短`, segments: [] }) };
+    await executeTool({ id: "t1", name: "transcribe", argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
+    expect(writes[0]).toContain("timestamps: none");
+  });
+
+  it("未注入 transcribe hook 时明确报错（配置被删的会话中途场景）", async () => {
+    const ctx = ctxWith({});
+    const r = await executeTool({ id: "t1", name: "transcribe", argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("未配置 ASR");
+  });
+
+  it("扩展名白名单预检", async () => {
+    const ctx = ctxWith({});
+    ctx.transcribe = hookOk;
+    const r = await executeTool({ id: "t1", name: "transcribe", argumentsText: JSON.stringify({ path: "/lib/a.txt" }) }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("不支持");
   });
 });

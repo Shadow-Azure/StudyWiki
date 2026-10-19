@@ -1,6 +1,13 @@
 import type { GrepRequest, GrepResult } from "../../host/files";
 import type { ToolDeclaration } from "../../host/llm";
 import type { AgentToolCall } from "./types";
+import {
+  MEDIA_EXTENSIONS,
+  formatTranscript,
+  parseTimestampedLines,
+  transcriptOutputPath,
+  type TranscribeHook,
+} from "./transcribe";
 
 /** Host-side file operations and dynamic read authorization used by agent tools. */
 export interface AgentHost {
@@ -31,7 +38,7 @@ export interface ApprovalRequest {
   /** Stable request id, normally the model tool-call id. */
   id: string;
   /** Approval family used to route and render the card. */
-  kind: "write" | "edit" | "read-outside";
+  kind: "write" | "edit" | "read-outside" | "transcribe";
   /** Originating tool name. */
   tool: string;
   /** Absolute target path. */
@@ -60,6 +67,8 @@ export interface ToolRunContext {
   host: AgentHost;
   /** Approval gate; tool execution awaits one decision before acting. */
   ask: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+  /** ASR hook; absent when this turn has no ASR endpoint configured. */
+  transcribe?: TranscribeHook;
 }
 
 /** One completed tool result serialized back to the model. */
@@ -178,6 +187,8 @@ export async function executeTool(call: AgentToolCall, ctx: ToolRunContext): Pro
         return await executeWrite(call, args, ctx);
       case "edit":
         return await executeEdit(call, args, ctx);
+      case "transcribe":
+        return await executeTranscribe(call, args, ctx);
       default:
         return { content: `未知工具：${call.name}`, isError: true };
     }
@@ -357,6 +368,63 @@ async function executeEdit(call: AgentToolCall, args: Record<string, unknown>, c
 
   await ctx.host.writeText(path, next);
   return { content: `已编辑 ${path}（替换 ${count} 处）` };
+}
+
+async function executeTranscribe(
+  call: AgentToolCall,
+  args: Record<string, unknown>,
+  ctx: ToolRunContext,
+): Promise<ToolResult> {
+  const path = requiredString(args, "path");
+  if (typeof path !== "string") return path;
+  const language = optionalString(args, "language");
+  const model = optionalString(args, "model");
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (!MEDIA_EXTENSIONS.has(ext)) {
+    return { content: `不支持的媒体格式：${ext}（支持 mp4/mkv/mov/webm/mp3/wav/m4a/flac/ogg）`, isError: true };
+  }
+  if (!isWithinRoot(path, ctx.root)) return { content: "transcribe 拒绝：文件不在库根内。", isError: true };
+  if (!ctx.transcribe) {
+    return { content: "当前未配置 ASR endpoint，转录不可用：请在设置中添加 kind=asr 的 endpoint。", isError: true };
+  }
+  const size = await ctx.transcribe.probeSize(path);
+  const output = transcriptOutputPath(ctx.root, path);
+  const sizeMb = (size / 1024 / 1024).toFixed(1);
+  const detail = `文件：${path}\n大小：${sizeMb} MB\n产物：${output}\n说明：文件将完整上传到用户配置的 ASR endpoint 进行语音识别。`;
+  const approval = await askApproval(ctx, {
+    id: call.id,
+    kind: "transcribe",
+    tool: "transcribe",
+    path,
+    summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）`,
+    preview: createTextPreview(detail, detail.length, 4),
+  });
+  if (!approval.ok) return approval.result;
+  if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝转录");
+  const result = await ctx.transcribe.run({
+    path,
+    ...(language ? { language } : {}),
+    ...(model ? { model } : {}),
+  });
+  const rel = path.slice(ctx.root.length + 1);
+  const fileName = path.split("/").pop() ?? path;
+  const content = formatTranscript({
+    sourceRel: rel,
+    fileName,
+    model: model ?? "default",
+    language: language ?? "auto",
+    generatedAt: new Date().toISOString(),
+    result,
+  });
+  await ctx.host.writeText(output, content);
+  const parsedCount = parseTimestampedLines(result.text).length;
+  const segmentCount = result.segments.length || parsedCount;
+  const degraded = result.segments.length === 0 && !content.includes("timestamps: segment");
+  return {
+    content: degraded
+      ? `已生成 ${output}（无时间戳，单段全文；可用 read 查看）`
+      : `已生成 ${output}：${segmentCount} 段（可用 read/grep 查看内容）`,
+  };
 }
 
 async function readWithUpgrade<T>(

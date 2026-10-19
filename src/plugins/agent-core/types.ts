@@ -62,7 +62,7 @@ export type SessionLine =
       type: "approval";
       id: string;
       /** 审批请求族，恢复历史决定卡时保留写/编辑/越界读语义。 */
-      kind: "write" | "edit" | "read-outside";
+      kind: "write" | "edit" | "read-outside" | "transcribe";
       tool: string;
       path: string;
       decider: "human" | "guardian";
