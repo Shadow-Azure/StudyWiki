@@ -1,6 +1,6 @@
 # Agent Note: agent 宿主流式推理链路与 chat 槽位
 
-Status: proposed
+Status: implemented
 
 [English](2026-10-01-agent-host-streaming.en.md) | 中文
 

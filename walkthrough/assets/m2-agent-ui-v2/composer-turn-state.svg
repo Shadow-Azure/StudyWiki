@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" role="img" aria-labelledby="title desc">
+  <title id="title">Agent composer 与回合状态</title>
+  <desc id="desc">上方是输入区 normal、approval、decided 三态循环，下方是回合运行与收尾状态。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#5454d4"/>
+    </marker>
+  </defs>
+  <text x="28" y="38" font-family="system-ui, sans-serif" font-size="18" font-weight="600" fill="#24292f">输入区状态</text>
+  <rect x="35" y="62" width="170" height="64" rx="14" fill="#f6f8fa" stroke="#5454d4" stroke-width="2"/>
+  <text x="120" y="99" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#24292f">normal</text>
+  <rect x="365" y="62" width="170" height="64" rx="14" fill="#fff5f5" stroke="#cf222e" stroke-width="2"/>
+  <text x="450" y="99" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#24292f">approval</text>
+  <rect x="695" y="62" width="170" height="64" rx="14" fill="#f0fff4" stroke="#2da44e" stroke-width="2"/>
+  <text x="780" y="99" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#24292f">decided</text>
+  <line x1="205" y1="94" x2="355" y2="94" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="280" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">审批到达</text>
+  <line x1="535" y1="94" x2="685" y2="94" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="610" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">批准 / 拒绝</text>
+  <path d="M780 126 C780 176 120 176 120 132" fill="none" stroke="#5454d4" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="450" y="172" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">400ms 后恢复草稿，再展示下一条审批</text>
+  <path d="M450 126 C450 186 180 194 140 132" fill="none" stroke="#cf222e" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <text x="245" y="206" font-family="system-ui, sans-serif" font-size="13" fill="#cf222e">aborted：清空审批并恢复 normal</text>
+
+  <text x="28" y="260" font-family="system-ui, sans-serif" font-size="18" font-weight="600" fill="#24292f">回合收尾</text>
+  <rect x="35" y="284" width="170" height="64" rx="14" fill="#f6f8fa" stroke="#57606a" stroke-width="2"/>
+  <text x="120" y="321" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#24292f">running</text>
+  <rect x="365" y="284" width="170" height="64" rx="14" fill="#f0fff4" stroke="#2da44e" stroke-width="2"/>
+  <text x="450" y="321" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#24292f">settled</text>
+  <rect x="695" y="284" width="170" height="64" rx="14" fill="#fff8f0" stroke="#bf8700" stroke-width="2"/>
+  <text x="780" y="321" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" fill="#24292f">aborted / error</text>
+  <line x1="205" y1="316" x2="355" y2="316" stroke="#2da44e" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="280" y="304" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">turn-end</text>
+  <line x1="205" y1="332" x2="685" y2="332" stroke="#bf8700" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="445" y="350" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#57606a">停止 / 失败：收组后清理输入区审批</text>
+</svg>

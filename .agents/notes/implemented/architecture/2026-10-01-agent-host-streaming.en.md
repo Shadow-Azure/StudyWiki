@@ -1,6 +1,6 @@
 # Agent Note: Agent host streaming inference pipeline and chat slot
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-10-01-agent-host-streaming.md)
 
