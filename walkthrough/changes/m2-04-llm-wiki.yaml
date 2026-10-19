@@ -2,7 +2,7 @@ kind: change
 issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
-  files: 90
+  files: 93
   additions: 7814
   deletions: 1380
 feature: |
@@ -1489,6 +1489,20 @@ codeMap:
                     }
             note: |
               未声明服务继续教学拒绝，错误文案改成「依赖声明」口径；已声明服务按名称换取受限包装，门面依旧不是沙箱。
+  - group: 讲解元数据工具
+    attention: skim
+    why: |
+      这些文件只影响变更页的讲解质量与审计，不改变产品运行时行为。
+    files:
+      - path: .agents/skills/walkthrough-change-metadata-gen/SKILL.md
+        note: |
+          把 snippet/note 的成对生成、唯一锚点和 note 去重加入硬约束与交付自检。
+      - path: .agents/skills/walkthrough-change-metadata-gen/references/code-map-guide.md
+        note: |
+          细化逐段注解的成对生成纪律，明确孤立括号、纯注释和可复用说明都属于失败产出。
+      - path: .agents/skills/walkthrough-change-metadata-gen/scripts/audit-code-map.mjs
+        note: |
+          机械审计重复 note、无代码语义的 snippet 和多处命中的歧义锚点，作为技能自检入口。
   - group: 测试与验证
     attention: skim
     why: |
@@ -1683,4 +1697,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: c9d4c97
+skill_gen_commit_id: eaba102
