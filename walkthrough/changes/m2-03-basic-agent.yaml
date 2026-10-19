@@ -1,6 +1,6 @@
 kind: change
 issue: m2-03-basic-agent
-skill_gen_commit_id: eaba102
+skill_gen_commit_id: 9e95c02
 title: #51 基础 agent 插件
 scale:
   files: 99

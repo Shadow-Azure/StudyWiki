@@ -2,7 +2,7 @@ kind: change
 issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
-  files: 96
+  files: 93
   additions: 7814
   deletions: 1380
 feature: |
@@ -1697,4 +1697,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: eaba102
+skill_gen_commit_id: 9e95c02
