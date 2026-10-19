@@ -2,7 +2,7 @@ kind: change
 issue: m2-04-llm-wiki
 title: llm-wiki 知识层（#31）
 scale:
-  files: 93
+  files: 96
   additions: 7814
   deletions: 1380
 feature: |

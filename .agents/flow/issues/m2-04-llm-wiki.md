@@ -29,6 +29,7 @@ scope:
   - walkthrough/files/**
   - walkthrough/features/**
   - walkthrough/changes/**
+  - .agents/skills/walkthrough-change-metadata-gen/**
   - .agents/notes/**
 adr:
   - ../../notes/implemented/architecture/2026-10-18-llm-wiki.md
@@ -40,6 +41,8 @@ github:
 ## 背景
 
 llm-wiki 是构建在 agent 上的编译式知识层（raw 不可变 + wiki 由 LLM 维护 + schema），是知识复利的关键能力。
+
+范围包含 walkthrough 元数据工具：该工具只影响检视页逐段注解的生成与审计质量，不改变 llm-wiki 运行时。
 
 ## 目标
 

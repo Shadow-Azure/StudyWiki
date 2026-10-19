@@ -29,6 +29,7 @@ scope:
   - walkthrough/files/**
   - walkthrough/features/**
   - walkthrough/changes/**
+  - .agents/skills/walkthrough-change-metadata-gen/**
   - .agents/notes/**
 adr:
   - ../../notes/implemented/architecture/2026-10-18-llm-wiki.md
@@ -40,6 +41,8 @@ github:
 ## Background
 
 llm-wiki is the compiled knowledge layer built on the agent (immutable raw + an LLM-maintained wiki + a schema), the key capability for compounding knowledge.
+
+The scope includes the walkthrough metadata tool: it affects only the generation and audit quality of review-page annotations, not the llm-wiki runtime.
 
 ## Goals
 
