@@ -789,16 +789,86 @@ fn transcribe_checked(
     }
 }
 
-/// 过渡桩：聊天口转录在 Task 5 接线；此前明确报错，不静默走错协议。
+/// chat 路转录指令：要求逐行 [HH:MM:SS] 输出，只输出转录行。
+const TRANSCRIBE_CHAT_INSTRUCTION: &str =
+    "请将音频转录为逐行文本，每行格式严格为 [HH:MM:SS] 空格 文本；只输出转录行，不要任何解释、标题或开场白。";
+
+/// chat 路：音频 base64 进 input_audio（wav/mp3、20MB 上限，与附件同门禁语义）。
 fn run_transcribe_chat(
-    _agent: &ureq::Agent,
-    _ep: &Endpoint,
-    _req: &TranscribeRequest,
+    agent: &ureq::Agent,
+    ep: &Endpoint,
+    req: &TranscribeRequest,
 ) -> Result<TranscriptionResult, LlmError> {
-    Err(LlmError::new(
-        "UNSUPPORTED_CONTENT",
-        "聊天口转录尚未接线：请先把 endpoint protocol 改为 transcriptions",
-    ))
+    let ext = std::path::Path::new(&req.path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        _ => {
+            return Err(LlmError::new(
+                "UNSUPPORTED_CONTENT",
+                format!(
+                    "聊天口转录仅支持 wav/mp3：{ext}（视频与无损格式请改用 transcriptions 协议的 endpoint）"
+                ),
+            ))
+        }
+    };
+    let bytes = std::fs::read(&req.path)
+        .map_err(|e| LlmError::new("UNSUPPORTED_CONTENT", format!("转录文件读取失败：{e}")))?;
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(LlmError::new(
+            "UNSUPPORTED_CONTENT",
+            format!(
+                "转录文件超过大小上限 {MAX_ATTACHMENT_BYTES} 字节（聊天口与附件同限；请改用 transcriptions 协议的 endpoint）"
+            ),
+        ));
+    }
+    let data_url = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    );
+    let instruction = match &req.language {
+        Some(language) => format!("{TRANSCRIBE_CHAT_INSTRUCTION}语种：{language}。"),
+        None => TRANSCRIBE_CHAT_INSTRUCTION.to_string(),
+    };
+    let body = serde_json::json!({
+        "model": req.model,
+        "stream": false,
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": instruction },
+                { "type": "input_audio", "input_audio": {
+                    "data": data_url,
+                    "format": audio_format(mime)?,
+                }},
+            ],
+        }],
+    });
+    let url = join_url(&ep.base_url, "chat/completions");
+    let resp = with_auth(agent.post(&url), ep)
+        .set("Content-Type", "application/json")
+        .send_bytes(body.to_string().as_bytes())
+        .map_err(map_transport)?;
+    let wire: WireChat = serde_json::from_reader(resp.into_reader()).map_err(|e| {
+        LlmError::new("BAD_RESPONSE", format!("响应不是合法 chat/completions 回包：{e}"))
+    })?;
+    let choice = wire
+        .choices
+        .first()
+        .ok_or_else(|| LlmError::new("BAD_RESPONSE", "choices 为空"))?;
+    let text = choice
+        .message
+        .content
+        .as_str()
+        .ok_or_else(|| LlmError::new("BAD_RESPONSE", "content 不是字符串"))?
+        .to_string();
+    Ok(TranscriptionResult {
+        text,
+        segments: Vec::new(),
+    })
 }
 
 /// transcriptions 路：multipart 流式上传原文件（视频容器原样，依赖服务端解码）。
@@ -1404,6 +1474,65 @@ mod tests {
         ep2.kind = "asr".into();
         let err2 = transcribe_checked(&transcribe_agent(), &ep2, &req, &|_| false).unwrap_err();
         assert_eq!(err2.code, "UNAUTHORIZED_PATH");
+    }
+
+    #[test]
+    fn transcribe_chat_route_body_and_result() {
+        let (url, rx) = mock_server(
+            200,
+            r#"{"choices":[{"message":{"content":"[00:00:00] 你好"},"finish_reason":"stop"}]}"#,
+        );
+        let mut ep = ep(&url, "");
+        ep.kind = "asr".into();
+        ep.protocol = Some("chat".into());
+        let dir = std::env::temp_dir().join(format!("sw-asr-chat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let media = dir.join("a.wav");
+        std::fs::write(&media, b"RIFFfake").unwrap();
+        let req = TranscribeRequest {
+            endpoint_id: ep.id.clone(),
+            model: "mimo-v2.5-asr".into(),
+            path: media.to_string_lossy().to_string(),
+            language: Some("zh".into()),
+        };
+        let result = run_transcribe_chat(&chat_agent(), &ep, &req).unwrap();
+        assert_eq!(result.text, "[00:00:00] 你好");
+        assert!(result.segments.is_empty());
+        let sent = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(sent.contains(r#""type":"input_audio""#));
+        assert!(sent.contains("data:audio/wav;base64,"));
+        assert!(sent.contains(r#""format":"wav""#));
+        assert!(sent.contains("[HH:MM:SS]"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn transcribe_chat_rejects_unsupported_ext_and_oversize() {
+        let mut ep = ep("http://127.0.0.1:1/v1", "");
+        ep.kind = "asr".into();
+        ep.protocol = Some("chat".into());
+        let req = TranscribeRequest {
+            endpoint_id: ep.id.clone(),
+            model: "mimo-v2.5-asr".into(),
+            path: "/tmp/a.mp4".into(),
+            language: None,
+        };
+        let err = run_transcribe_chat(&chat_agent(), &ep, &req).unwrap_err();
+        assert_eq!(err.code, "UNSUPPORTED_CONTENT");
+        let dir = std::env::temp_dir().join(format!("sw-asr-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.wav");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+        let big_req = TranscribeRequest {
+            endpoint_id: ep.id.clone(),
+            model: "mimo-v2.5-asr".into(),
+            path: big.to_string_lossy().to_string(),
+            language: None,
+        };
+        let big_err = run_transcribe_chat(&chat_agent(), &ep, &big_req).unwrap_err();
+        assert_eq!(big_err.code, "UNSUPPORTED_CONTENT");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
