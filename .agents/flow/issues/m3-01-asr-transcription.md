@@ -6,10 +6,11 @@
 kind: issue
 milestone: m3
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - src/plugins/**
   - src/host/**
+  - src-tauri/**
   - docs/plugins/*
   - docs/architecture.*
 adr:
