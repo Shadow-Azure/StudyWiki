@@ -27,7 +27,11 @@ export const TRANSCRIBE_DECLARATION: ToolDeclaration = {
 /** 允许转录的扩展名（宽松预检；chat 路的 wav/mp3 限制由 Rust 侧硬门禁）。 */
 export const MEDIA_EXTENSIONS = new Set(["mp4", "mkv", "mov", "webm", "mp3", "wav", "m4a", "flac", "ogg"]);
 
-/** 秒 → HH:MM:SS（floor 到整数秒，与 wiki 时间戳区间格式同源）。 */
+/**
+ * 秒 → HH:MM:SS（floor 到整数秒，与 wiki 时间戳区间格式同源）。
+ * @param seconds 秒数；负数按 0 处理。
+ * @returns 两位补零的 HH:MM:SS。
+ */
 export function formatTimestamp(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const h = Math.floor(total / 3600);
@@ -36,7 +40,11 @@ export function formatTimestamp(seconds: number): string {
   return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
-/** 解析 chat 路文本的 `[HH:MM:SS] 文本` 行；不含匹配行时返回空数组。 */
+/**
+ * 解析 chat 路文本的 `[HH:MM:SS] 文本` 行；不含匹配行时返回空数组。
+ * @param text 模型返回的纯文本。
+ * @returns 按出现顺序的起始秒与正文；不匹配行被忽略。
+ */
 export function parseTimestampedLines(text: string): { start: number; text: string }[] {
   const out: { start: number; text: string }[] = [];
   for (const line of text.split("\n")) {
@@ -48,7 +56,12 @@ export function parseTimestampedLines(text: string): { start: number; text: stri
   return out;
 }
 
-/** 产物落点：.study-wiki/raw/<源库相对路径去扩展名>/transcript.md。 */
+/**
+ * 产物落点：.study-wiki/raw/<源库相对路径去扩展名>/transcript.md。
+ * @param root 已授权库根的绝对路径。
+ * @param sourcePath 库根内源媒体绝对路径。
+ * @returns transcript.md 的绝对路径。
+ */
 export function transcriptOutputPath(root: string, sourcePath: string): string {
   const rel = sourcePath.startsWith(`${root}/`) ? sourcePath.slice(root.length + 1) : sourcePath;
   const noExt = rel.replace(/\.[^./\\]+$/u, "");
@@ -71,7 +84,11 @@ export interface TranscriptInput {
   result: TranscriptionResult;
 }
 
-/** 确定性格式化 transcript.md：segments 优先；纯文本按 ≥3 行且覆盖 ≥80% 规则解析；否则降级单段。 */
+/**
+ * 确定性格式化 transcript.md：segments 优先；纯文本按 ≥3 行且覆盖 ≥80% 规则解析；否则降级单段。
+ * @param input 源元数据与转录结果。
+ * @returns 带 frontmatter 的 Markdown 全文。
+ */
 export function formatTranscript(input: TranscriptInput): string {
   let segments = input.result.segments;
   let timestampMode = "segment";

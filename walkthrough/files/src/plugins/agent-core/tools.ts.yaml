@@ -1,13 +1,23 @@
 kind: file-page
 source: src/plugins/agent-core/tools.ts
-summary: agent-core 四工具执行、审批请求契约与越权读升级
+summary: agent-core 工具执行（文件四件套 + transcribe 转录）、审批请求契约与越权读升级
 segments:
   - snippet: |
       import type { GrepRequest, GrepResult } from "../../host/files";
       import type { ToolDeclaration } from "../../host/llm";
       import type { AgentToolCall } from "./types";
+      import {
+        MEDIA_EXTENSIONS,
+        formatTranscript,
+        parseTimestampedLines,
+        transcriptOutputPath,
+        type TranscribeHook,
+      } from "./transcribe";
 
       /** Host-side file operations and dynamic read authorization used by agent tools. */
+    note: |
+      这里引入宿主文件/LLM 类型与 transcribe 纯函数。工具层只依赖宿主 facade，不直接触达 Tauri。
+  - snippet: |
       export interface AgentHost {
         /** Read one already-authorized text file as a whole string. */
         readText(path: string): Promise<string>;
@@ -36,7 +46,7 @@ segments:
         /** Stable request id, normally the model tool-call id. */
         id: string;
         /** Approval family used to route and render the card. */
-        kind: "write" | "edit" | "read-outside";
+        kind: "write" | "edit" | "read-outside" | "transcribe";
         /** Originating tool name. */
         tool: string;
         /** Absolute target path. */
@@ -65,6 +75,8 @@ segments:
         host: AgentHost;
         /** Approval gate; tool execution awaits one decision before acting. */
         ask: (req: ApprovalRequest) => Promise<ApprovalOutcome>;
+        /** ASR hook; absent when this turn has no ASR endpoint configured. */
+        transcribe?: TranscribeHook;
       }
 
       /** One completed tool result serialized back to the model. */
@@ -77,7 +89,7 @@ segments:
 
       /** Upstream declarations for the four built-in agent file tools. */
     note: |
-      工具层契约集中声明宿主能力、审批预览、审批请求、执行上下文和结果。写与编辑的审批发生在磁盘变化前，失败结果始终是模型可读文本。
+      这里声明工具执行契约：宿主能力、审批预览、审批族（含 transcribe）、执行上下文与结果。transcribe 的 hook 可选，缺省表示本回合没有 ASR 配置。
   - snippet: |
       export const TOOL_DECLARATIONS: ToolDeclaration[] = [
         {
@@ -141,7 +153,9 @@ segments:
           },
         },
       ];
-
+    note: |
+      这里列出对模型公开的四个文件工具声明，参数 schema 封闭，避免模型传多余字段。
+  - snippet: |
       const UNAUTHORIZED_PREFIX = "UNAUTHORIZED_PATH|";
       const MAX_READ_LINES = 2000;
       const MAX_READ_BYTES = 200 * 1024;
@@ -157,9 +171,7 @@ segments:
         "woff", "woff2", "ttf", "otf", "eot",
         "bin", "exe", "dll", "so", "dylib",
       ]);
-    note: |
-      四个内置工具的参数声明给模型稳定接口，读与搜索有规模上限，写和编辑要求完整参数。常量进一步固定截断、预览和二进制扩展名边界。
-  - snippet: |
+
       /** Recognize the stable Rust authorization rejection marker across Error and coded rejects. */
       /** @param e Rejected value to inspect. @returns True when the rejection carries the stable prefix. */
       export function isUnauthorized(e: unknown): boolean {
@@ -188,6 +200,8 @@ segments:
               return await executeWrite(call, args, ctx);
             case "edit":
               return await executeEdit(call, args, ctx);
+            case "transcribe":
+              return await executeTranscribe(call, args, ctx);
             default:
               return { content: `未知工具：${call.name}`, isError: true };
           }
@@ -196,7 +210,7 @@ segments:
         }
       }
     note: |
-      isUnauthorized 识别 Rust 侧稳定拒绝标记，executeTool 统一解析参数并分发工具。解析失败、未知工具和运行时异常都转为带 isError 的结果，不会打断回合。
+      这里定义二进制拒收表、审批预览上限和 executeTool 分派。transcribe 与文件工具共用同一审批与错误包装路径。
   - snippet: |
       async function executeRead(id: string, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
         const path = requiredString(args, "path");
@@ -235,9 +249,7 @@ segments:
         if (!search.ok) return search.result;
         return formatGrepResult(search.value);
       }
-    note: |
-      read 和 grep 在执行前校验参数并排除二进制读取，随后共用越界读升级。搜索请求把可选过滤条件逐步填入，输出统一截断为模型可读文本。
-  - snippet: |
+
       async function executeWrite(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
         const path = requiredString(args, "path");
         if (typeof path !== "string") return path;
@@ -258,8 +270,9 @@ segments:
         await ctx.host.writeText(path, content);
         return { content: `已写入 ${path}` };
       }
-
-      /** Bound one approval payload while preserving head and tail context. */
+    note: |
+      这里实现 read/grep/write：读走授权与分页，写先审批再原子落盘；所有失败都转成模型可读的 isError 文本。
+  - snippet: |
       function createTextPreview(
         text: string,
         totalCharacters: number,
@@ -280,9 +293,7 @@ segments:
           : `${text.slice(0, sideLength)}\n${marker}\n${text.slice(-sideLength)}`;
         return { text: bounded, omitted: true, totalCharacters, totalLines };
       }
-    note: |
-      write 先确认目标在库根内，再带完整文本预览请求审批，只有明确允许后才写盘。审批预览有字符上限，超长内容保留头尾并声明省略。
-  - snippet: |
+
       /** Build a first-hunk edit preview with surrounding unchanged lines. */
       function buildEditPreview(
         current: string | null,
@@ -330,9 +341,7 @@ segments:
         const lines = value.split(/\r\n|\r|\n/);
         return value.endsWith("\n") || value.endsWith("\r") ? lines.length - 1 : lines.length;
       }
-    note: |
-      编辑预览尽量生成第一个替换 hunk 和上下文，找不到原文时退回增删对照。多个匹配时显示位置数量，并让审批界面知道预览并不完整。
-  - snippet: |
+
       async function executeEdit(call: AgentToolCall, args: Record<string, unknown>, ctx: ToolRunContext): Promise<ToolResult> {
         const path = requiredString(args, "path");
         if (typeof path !== "string") return path;
@@ -377,7 +386,66 @@ segments:
         return { content: `已编辑 ${path}（替换 ${count} 处）` };
       }
     note: |
-      edit 先做路径和参数检查，再请求审批；预览读取失败不会提前暴露授权错误。批准后重新读原文，按匹配数量决定唯一替换或全部替换，最后才写回。
+      这里生成审批预览并实现 edit：编辑前读取原文做对照，零/多匹配不替换，批准后按 old/new 语义写回。
+  - snippet: |
+      async function executeTranscribe(
+        call: AgentToolCall,
+        args: Record<string, unknown>,
+        ctx: ToolRunContext,
+      ): Promise<ToolResult> {
+        const path = requiredString(args, "path");
+        if (typeof path !== "string") return path;
+        const language = optionalString(args, "language");
+        const model = optionalString(args, "model");
+        const ext = path.split(".").pop()?.toLowerCase() ?? "";
+        if (!MEDIA_EXTENSIONS.has(ext)) {
+          return { content: `不支持的媒体格式：${ext}（支持 mp4/mkv/mov/webm/mp3/wav/m4a/flac/ogg）`, isError: true };
+        }
+        if (!isWithinRoot(path, ctx.root)) return { content: "transcribe 拒绝：文件不在库根内。", isError: true };
+        if (!ctx.transcribe) {
+          return { content: "当前未配置 ASR endpoint，转录不可用：请在设置中添加 kind=asr 的 endpoint。", isError: true };
+        }
+        const size = await ctx.transcribe.probeSize(path);
+        const output = transcriptOutputPath(ctx.root, path);
+        const sizeMb = (size / 1024 / 1024).toFixed(1);
+        const detail = `文件：${path}\n大小：${sizeMb} MB\n产物：${output}\n说明：文件将完整上传到用户配置的 ASR endpoint 进行语音识别。`;
+        const approval = await askApproval(ctx, {
+          id: call.id,
+          kind: "transcribe",
+          tool: "transcribe",
+          path,
+          summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）`,
+          preview: createTextPreview(detail, detail.length, 4),
+        });
+        if (!approval.ok) return approval.result;
+        if (approval.value.decision === "deny") return denialResult(approval.value, "用户拒绝转录");
+        const result = await ctx.transcribe.run({
+          path,
+          ...(language ? { language } : {}),
+          ...(model ? { model } : {}),
+        });
+        const rel = path.slice(ctx.root.length + 1);
+        const fileName = path.split("/").pop() ?? path;
+        const content = formatTranscript({
+          sourceRel: rel,
+          fileName,
+          model: model ?? "default",
+          language: language ?? "auto",
+          generatedAt: new Date().toISOString(),
+          result,
+        });
+        await ctx.host.writeText(output, content);
+        const parsedCount = parseTimestampedLines(result.text).length;
+        const segmentCount = result.segments.length || parsedCount;
+        const degraded = result.segments.length === 0 && !content.includes("timestamps: segment");
+        return {
+          content: degraded
+            ? `已生成 ${output}（无时间戳，单段全文；可用 read 查看）`
+            : `已生成 ${output}：${segmentCount} 段（可用 read/grep 查看内容）`,
+        };
+      }
+    note: |
+      这里实现 transcribe：先做扩展名与库根预检，再用文件大小做审批卡，批准后调用 hook 转录，最后用纯函数格式化并写入 raw 产物路径。审批拒绝时不会上传。
   - snippet: |
       async function readWithUpgrade<T>(
         ctx: ToolRunContext,
@@ -434,9 +502,7 @@ segments:
           ? { content: `grep 失败（${code}）：${errorMessage(e)}`, isError: true }
           : { content: `读取失败：${errorMessage(e)}`, isError: true };
       }
-    note: |
-      readWithUpgrade 把越界拒绝升级为审批请求，允许后按文件或目录授权并重试一次。普通读错误、grep 错误码和审批异常都转成可读失败结果。
-  - snippet: |
+
       function formatReadContent(text: string, offset: number, limit: number): ToolResult {
         const lines = text.split(/\r\n|\r|\n/);
         if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
@@ -487,9 +553,7 @@ segments:
         if (truncated) content += notice;
         return { content };
       }
-    note: |
-      读取和搜索输出统一带行号或列表结构，并按 UTF-8 字节预算截断。截断提示预留空间，让模型明确知道结果不完整。
-  - snippet: |
+
       function requiredString(args: Record<string, unknown>, key: string): string | ToolResult {
         const value = args[key];
         if (typeof value !== "string") return { content: `${key} 必须是字符串。`, isError: true };
@@ -595,4 +659,4 @@ segments:
         return typeof value === "object" && value !== null && !Array.isArray(value);
       }
     note: |
-      参数辅助函数、路径比较和错误描述集中收尾。路径按分隔符分段比较并拒绝 ..，从而防止用相对片段绕过库根边界。
+      这里保留越界读升级与通用参数/路径工具函数；转义、深路径和 JSON 参数错误在这里统一收口。

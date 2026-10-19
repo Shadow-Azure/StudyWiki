@@ -1,15 +1,19 @@
 kind: file-page
 source: src/plugins/llm-settings/index.ts
-summary: llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）
+summary: llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（含 asr 协议）（写面仅内置插件）
 segments:
   - snippet: |
+      import type { Context } from "cordis";
+      import { labelButton } from "../../ui/dom";
+      import { activeLayers } from "../../ui/active-layer";
+      import type { EndpointInput, LlmPreset, RedactedEndpoint } from "../../host/llm";
+      import { blankDraft, CUSTOM_VENDOR, instantiatePreset, validateDraft, type EndpointDraft } from "./model";
+
       /** Plugin id in the manifest and the static module table. */
       export const name = "llm-settings";
       /** Service keys awaited before apply runs. */
       export const inject = ["llm", "slots"];
-    note: |
-      插件契约声明需要 LLM 门面和槽位服务。写配置只能经内置插件的 ctx.llm 面，这里因此成为模型设置的唯一前端写入口。
-  - snippet: |
+
       /** 厂商徽标显示名（仅展示层；key 对齐 Rust 预设 vendor，未收录回退"自定义"）。 */
       const VENDOR_LABELS: Record<string, string> = {
         zhipu: "智谱",
@@ -31,14 +35,15 @@ segments:
         if (chars.length <= 7) return "****";
         return `${chars.slice(0, 4).join("")}…${chars.slice(-2).join("")}`;
       }
-    note: |
-      vendor 显示表和 keyPreview 只服务界面：未登记厂商回退为自定义，key 掩码与 Rust 投影同形，避免把持久密钥当作普通表单字符串展示。
-  - snippet: |
+
       /** 模型配置面板（第七内置插件）：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/探测。
        * 预设表来自 Rust llm_list_presets（baseUrl 不进前端源码）；key 明文仅内存持有，
        * 保存经 ctx.llm（写面仅内置插件可用）；探测/错误归一码原样内联展示。
        * @param ctx Host context（llm/slots injected）。
        * @returns Teardown removing the Activity Rail button. */
+    note: |
+      这里放厂商显示名、key 掩码与 vendor 标签；设置面板不直接读明文 key，只消费脱敏投影。
+  - snippet: |
       export function apply(ctx: Context): () => void {
         return ctx.slots.register("activity.left", (el) => {
           const btn = labelButton("sparkle", "", { className: "btn btn-ghost icon-btn activity-item", ariaLabel: "模型" });
@@ -48,9 +53,7 @@ segments:
           return () => btn.remove();
         });
       }
-    note: |
-      apply 只注册 Activity Rail 的模型按钮；每次点击打开面板，插件自身不常驻大块 DOM。返回的按钮移除由槽位统一处理。
-  - snippet: |
+
       /** 模型能力勾选组：name 即保存载荷能力值，text 为面板显示文案。 */
       const CAPABILITY_CHECKS = [
         { value: "vision", text: "vision" },
@@ -59,6 +62,9 @@ segments:
       ] as const;
 
       /** 面板本体：模态覆盖层（Esc 可关），每次动作后整体重渲染。 */
+    note: |
+      这里注册 Activity Rail 入口，并把开关映射到面板挂载/卸载。
+  - snippet: |
       async function openPanel(ctx: Context): Promise<void> {
         document.querySelector(".llm-panel")?.remove();
         const overlay = document.createElement("div");
@@ -198,10 +204,12 @@ segments:
         };
 
         await renderList();
-    note: |
-      能力勾选表和 openPanel 构成列表态：面板先登记窗口级浮层，随后并行读端点与预设，聚合成厂商筛选、默认模型与卡片列表。整体重渲染让保存、删除、探测后的状态由服务端事实重建，错误则内联在面板内。
-  - snippet: |
+      }
+
       /** endpoint 卡片：厂商徽标 + id 片 + mono baseUrl + 状态徽章 + 探测（延迟/归一码）/编辑/删除。 */
+    note: |
+      这里拉取 endpoint 与预设表，渲染列表、默认模型行与探测/编辑/删除操作。写面只经 ctx.llm 的内置方法。
+  - snippet: |
       function endpointRow(ctx: Context, e: RedactedEndpoint, rerender: () => Promise<void>): HTMLElement {
         const card = document.createElement("div");
         card.className = "llm-card";
@@ -270,6 +278,7 @@ segments:
               kind: e.kind === "asr" ? "asr" : "chat",
               baseUrl: e.baseUrl,
               apiKey: "",
+              ...(e.protocol === "chat" ? { protocol: "chat" as const } : {}),
               models: e.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
             };
             void renderForm(ctx, presets, rerender, draft, e);
@@ -292,10 +301,11 @@ segments:
         card.append(main, actions);
         return card;
       }
-    note: |
-      endpointRow 是一张卡片的完整动作面：厂商徽标、id、baseUrl、模型数和密钥状态只读展示；探测把延迟或归一错误写回本卡反馈，编辑重建草稿，删除先经服务删除再重渲染。局部反馈避免一个失败污染整个面板。
-  - snippet: |
+
       /** 表单态：厂商预设置顶（决定其余字段的第一选择）→ 字段回填 → 模型行编辑 → 校验保存。 */
+    note: |
+      这里渲染单条 endpoint 行：编辑时把 RedactedEndpoint 投影成草稿（含 asr protocol），删除与探测各自有独立反馈。
+  - snippet: |
       async function renderForm(
         ctx: Context,
         presets: LlmPreset[],
@@ -341,16 +351,42 @@ segments:
         const kindLabel = fieldLabel("类型");
         const kind = document.createElement("select");
         kind.name = "kind";
-        for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
+        for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写）"]] as const) {
           const opt = document.createElement("option");
           opt.value = value;
           opt.textContent = text;
           kind.append(opt);
         }
         kind.value = draft.kind;
-        kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
         kindField.append(kindLabel, kind);
-        top.append(vendorField, kindField);
+        const protocolField = document.createElement("div");
+        protocolField.className = "llm-field";
+        const protocolLabel = fieldLabel("ASR 协议");
+        const protocol = document.createElement("select");
+        protocol.name = "protocol";
+        for (const [value, text] of [
+          ["transcriptions", "转录接口 /v1/audio/transcriptions（默认）"],
+          ["chat", "聊天接口 input_audio（MiMo ASR 等）"],
+        ] as const) {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = text;
+          protocol.append(opt);
+        }
+        protocolField.append(protocolLabel, protocol);
+        const syncProtocol = (): void => {
+          protocolField.hidden = draft.kind !== "asr";
+          protocol.value = draft.protocol === "chat" ? "chat" : "transcriptions";
+        };
+        protocol.addEventListener("change", () => {
+          draft.protocol = protocol.value === "chat" ? "chat" : undefined;
+        });
+        kind.addEventListener("change", () => {
+          draft.kind = kind.value === "asr" ? "asr" : "chat";
+          if (draft.kind === "chat") draft.protocol = undefined;
+          syncProtocol();
+        });
+        top.append(vendorField, kindField, protocolField);
         form.append(top);
         if (!initial) {
           const hint = document.createElement("p");
@@ -538,6 +574,7 @@ segments:
               ? blankDraft()
               : instantiatePreset(presets.find((p) => p.vendor === vendor.value)!);
           kind.value = draft.kind;
+          syncProtocol();
           drawFields();
         };
         vendor.addEventListener("change", refreshFields);
@@ -564,6 +601,7 @@ segments:
           const keyDirty = !initial || !endpoint?.hasKey || editedKey !== null;
           const payload: EndpointInput = {
             ...draft,
+            protocol: draft.protocol ?? null,
             // 新增态原样传（空 key 合法）；编辑态未动掩码 = 保留（空 + 无 dirty）。
             apiKey: keyDirty || !initial ? draft.apiKey : "",
           };
@@ -575,14 +613,18 @@ segments:
         });
 
         vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
-        if (initial) drawFields();
+        if (initial) {
+          syncProtocol();
+          drawFields();
+        }
         else refreshFields();
         box.append(title, form);
       }
-    note: |
-      renderForm 是新增/编辑共用的表单状态机。厂商决定初始字段，编辑态锁 id 和厂商；模型行、能力勾选与 key 展示在动态区整体重建。提交时从 DOM 和闭包合并草稿，校验后用 apiKeyDirty 区分“保留旧密钥”与“明文替换”，最后交 ctx.llm 保存。
-  - snippet: |
+
       /** 行内反馈槽（缺失时建一个），供默认模型行等复用。 */
+    note: |
+      这里是新增/编辑表单：厂商预设置顶，kind 切到 asr 时才显示协议下拉，transcriptions 存 undefined，chat 显式存 chat；提交前跑与 Rust 同规则的 validateDraft，再 upsert。
+  - snippet: |
       function feedbackOf(row: HTMLElement): HTMLElement {
         let el = row.querySelector<HTMLElement>(".llm-probe-result");
         if (!el) {
@@ -598,9 +640,7 @@ segments:
         l.textContent = text;
         return l;
       }
-    note: |
-      两个小工厂让行内反馈和 label 的形状统一。反馈槽惰性创建，避免每张卡一开始就挂空状态节点。
-  - snippet: |
+
       /** 归一错误展示：带 code 的错误（Rust/宿主 LlmError）显示 code + message；其余原样转文案。 */
       function errorMessage(e: unknown): string {
         const shape = e as { code?: unknown; message?: unknown };
@@ -610,4 +650,4 @@ segments:
         return e instanceof Error ? e.message : String(e);
       }
     note: |
-      错误展示优先识别 Rust/宿主 LlmError 的稳定 code，把“可归因的失败码 + message”一起交给用户；普通异常才退回字符串。UI 不重新猜测网络错误语义。
+      这里提供行内反馈槽、字段标签和错误文本归一，保持表单错误可定位。

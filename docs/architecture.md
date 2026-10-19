@@ -18,7 +18,7 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   host/excel.ts                     Excel 服务：ExcelJS workbook 解析/序列化 + 解析失败稳定文案 + 1_000_000 声明维度单元格上限（binary files 桥接可注入）
   host/files.ts                     文件服务：树/读写/选目录/asset URL + fs://changed 桥接（deps 可注入）（→ emitter.ts、types.ts）
   host/llm-stream.ts                LLM 流式契约：chunk 词表、partial 快照组装器、FIFO 异步 chunk 队列与流句柄形状（→ llm.ts）
-  host/llm.ts                       LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）（→ llm-stream.ts）
+  host/llm.ts                       LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream/transcribe，能力门禁，deps 可注入）（→ llm-stream.ts）
   host/plugins.ts                   宿主插件包服务：安装/导入/列出/移除 + 清单读写 + loadModule（apiVersion 支持集 + 形状校验，deps 可注入）（→ external.ts、manifest.ts、types.ts）
   host/slots.ts                     类型化 UI 槽位注册表：注册序渲染、各自容器、反订阅移除 + API v1 topbar.left → activity.left 归一化（mount 归 shell 插件）
   host/windows.ts                   窗口服务：label/建窗/root 查询/守卫先行换根/确认框/聚合并显式销毁的关窗守卫（deps 可注入）（→ workspace.ts）
@@ -35,9 +35,10 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/agent-core/index.ts       agent-core cordis 插件：注入三宿主面并提供 ctx.agent，卸载中止全部会话（→ service.ts）
   plugins/agent-core/loop.ts        agent-core 回合状态机：wire 组装、快照事件、串行工具回灌与半截不落账（→ llm-stream.ts、llm.ts、types.ts）
   plugins/agent-core/prompt.ts      agent-core 系统提示组装：角色、工具纪律、授权边界、模式句与当前上下文（→ types.ts）
-  plugins/agent-core/service.ts     agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction 与生命周期（→ files.ts、llm.ts、workspace.ts、approval.ts、loop.ts、prompt.ts、session.ts、tools.ts、types.ts）
+  plugins/agent-core/service.ts     agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction、动态工具挂载与生命周期（→ files.ts、llm.ts、workspace.ts、approval.ts、loop.ts、prompt.ts、session.ts、tools.ts、transcribe.ts、types.ts）
   plugins/agent-core/session.ts     agent-core JSONL 会话编解码、崩溃尾容错与压缩视图（→ types.ts）
-  plugins/agent-core/tools.ts       agent-core 四工具执行、审批请求契约与越权读升级（→ files.ts、llm.ts、types.ts）
+  plugins/agent-core/tools.ts       agent-core 工具执行（文件四件套 + transcribe 转录）、审批请求契约与越权读升级（→ files.ts、llm.ts、transcribe.ts、types.ts）
+  plugins/agent-core/transcribe.ts  agent-core 转录工具：声明、HH:MM:SS 格式化、80% 覆盖解析规则与 raw 产物落点（→ llm.ts）
   plugins/agent-core/types.ts       agent-core 消息、批准与会话日志类型契约（→ llm.ts）
   plugins/app-agent/attachments.ts  app-agent 附件纯函数：粘贴/拖拽 File → inline 图片/音频附件（base64 + MIME），其他类型拒收，超 20 MB 硬上限在读取字节前拒绝
   plugins/app-agent/index.ts        app-agent 右栏插件：会话状态机、历史/模型浮层、流式回合、审批接管 composer、错误 toast、附件 composer 与清理（→ llm-stream.ts、llm.ts、loop.ts、service.ts、tools.ts、types.ts、attachments.ts、render.ts、active-layer.ts）
@@ -58,8 +59,8 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   plugins/doc-markdown/mode.ts      doc-markdown 纯函数：文档状态机（open/edit/saved/toggle/dirty）
   plugins/doc-markdown/preview.ts   doc-markdown 兼容 re-export：消费方保留原导入路径并使用宿主共享 markdown 渲染器（→ markdown.ts）
   plugins/doc-video/index.ts        doc-video 插件：活动文件视频查看器（video controls + asset protocol 播放 + 加载/错误态与播放快捷键；file-opened 挂渲染，kind 不符清空）（→ viewer.ts）
-  plugins/llm-settings/index.ts     llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（写面仅内置插件）（→ llm.ts、model.ts、active-layer.ts、dom.ts）
-  plugins/llm-settings/model.ts     llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）
+  plugins/llm-settings/index.ts     llm-settings 插件：Activity Rail 入口 + 厂商预设实例化 + endpoint 列表/编辑/删除/探测面板（含 asr 协议）（写面仅内置插件）（→ llm.ts、model.ts、active-layer.ts、dom.ts）
+  plugins/llm-settings/model.ts     llm-settings 纯函数：预设 → 表单草稿（含 asr kind/protocol）+ 中文点名字段校验（空 apiKey 合法）
   plugins/plugin-manager/index.ts   plugin-manager 插件：Activity Rail 入口 + 插件管理面板（安装/导入/启停/重载/版本回退/移除六动作本窗即时生效，写清单供他窗重启跟随）（→ activate.ts、manifest.ts、model.ts、active-layer.ts、dom.ts）
   plugins/plugin-manager/model.ts   plugin-manager 纯函数：面板行四源合一投影（boot 坏行 > 扫描 problem > 目录缺失 + 运行态/失败徽章）+ 清单追加/开关/移除纯变换（→ plugins.ts、manifest.ts）
   plugins/view-filetree/index.ts    view-filetree 插件：侧栏文件树 UI（展开折叠/点开文档/other 触发不支持态/手动刷新/fs 变更重读）（→ tree.ts、types.ts、dom.ts、icons.ts）
@@ -73,10 +74,10 @@ src/                                前端（TypeScript + Vite，无 UI 框架�
   ui/markdown.ts                    宿主共享 markdown-it 渲染器：html/linkify/typographer 全关，doc-markdown 与 chat 共用同一安全策略
   ui/viewer.ts                      共享查看器小件：错误条/加载态/窗口标题规则 + 各文档查看器共用的 Mod-S 键位绑定（→ types.ts、dom.ts、icons.ts）
 src-tauri/                          Rust 壳
-  config.rs                         用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
+  config.rs                         用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验（含 asr protocol）
   grep.rs                           agent grep 原生命令：sidecar ripgrep 裸 argv spawn + rg --json 流式解析 + raw/timeout/limit 预算与 SEARCH_* 错误词表
   lib.rs                            tauri::Builder 总装 + 文件命令（路径根域校验）+ raw binary IPC 命令与 MockRuntime 测试装配 + 窗口/插件命令注册 + 窗口事件接线（→ config.rs、grep.rs、llm.rs、llm_stream.rs、native_close.rs、plugins.rs、probe.rs、windows.rs）
-  llm.rs                            LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口 + 附件大小门禁（单件 20 MB / 聚合 100 MB）（唯一联网点，ureq rustls）
+  llm.rs                            LLM 薄能力层命令面：厂商预设 + endpoint CRUD + 探测 + 多模态请求构建 + 流式/非流式 chat 出口 + 音视频转录出口（multipart / 聊天口 input_audio）+ 附件大小门禁（单件 20 MB / 聚合 100 MB）（唯一联网点，ureq rustls）
   llm_stream.rs                     流式 chat SSE 解析：跨读聚合行、delta 词表、usage/finish 排序与回调停止缝
   main.rs                           入口壳（Windows 隐藏控制台）（→ lib.rs）
   native_close.rs                   macOS 原生关窗/退出拦截：_close/performClose/close 与 NSApplication terminate: selector hook + 红点 target/action 改接前端聚合守卫
@@ -107,7 +108,7 @@ export type FileNode = {
 
 数据流：树读取——选文件夹→`read_tree` 定 kind→view-filetree 渲染；打开——`workspace.openFile` 过守卫后按 kind 分派：markdown、excel、视频各走专用面，other 由 shell 提示；保存广播 `fs://changed`；换根先守卫确认再 Rust 授权登记；建窗由 Rust 创建，新窗 bootstrap 领 root 后激活插件；外置插件安装/启停/重载/回退/移除经 plugin-manager，`ext:` 走唯一 blob 缝（细节见 [dynamic.md](plugins/dynamic.md)）；LLM 推理由插件发起，宿主路由 endpoint 并做能力门禁，Rust 只读配置与传输 HTTPS；流式经 Channel，`llm_chat_abort` 置停。
 
-Agent 回合：`ctx.agent` 经 `ctx.llm.chatStream` 带 tools；`tool_calls` 串行，四工具经 `ctx.files`，写先审批、越界读授权后重试（契约见 [agent.md](plugins/agent.md)）。
+Agent 回合：`ctx.agent` 经 `ctx.llm.chatStream` 带 tools；`tool_calls` 串行，文件四工具经 `ctx.files`，`transcribe` 经 `ctx.llm.transcribe`（无带模型的 asr endpoint 不挂载），写入与转录先审批、越界读授权后重试（契约见 [agent.md](plugins/agent.md)）。
 
 llm-wiki：`ctx.wiki` 判态并物化 `.study-wiki/index.yaml`；wiki 页由 agent 维护，schema 入 prompt。
 
@@ -124,6 +125,7 @@ llm-wiki：`ctx.wiki` 判态并物化 `.study-wiki/index.yaml`；wiki 页由 age
 - **系统 webview 做渲染与视频解码**（WKWebView/WebView2/webkit2gtk）：体积与依赖取舍，见 [environment-independence.md](environment-independence.md)。
 - **`~/.studywiki` 为用户配置根**：三端同形，老 `app_config_dir` 数据启动一次性迁移（幂等可重入）。
 - **密钥明文存 settings.json + 0600**：与 Claude Code/Codex/dsh 同水位；命令面只进不出（list 脱敏），外置插件白名单不含写操作。
+- **asr endpoint 的 `protocol` 只认 `transcriptions`/`chat`**：缺省 transcriptions；chat kind 携带即 `INVALID_CONFIG`。
 - **Rust 为薄能力层（持久化+egress）**：模型路由与 agent 循环均在前端（对照 dsh：native 只做能力隔离）；厂商预设 baseUrl 只存在于 Rust 侧。
 - **agent loop 住 agent-core cordis 插件**：`ctx.agent` 服务化；app-agent 只管 UI，m2-04 经 `inject: ['agent']` 消费。
 - **grep 走 ripgrep sidecar**：构建期由 npm 包落位平台二进制；Rust 裸 argv spawn + `rg --json` 解析，运行零下载。

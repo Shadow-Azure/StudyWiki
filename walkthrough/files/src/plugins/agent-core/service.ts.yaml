@@ -1,6 +1,6 @@
 kind: file-page
 source: src/plugins/agent-core/service.ts
-summary: agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction 与生命周期
+summary: agent-core 会话服务：注册表、JSONL 持久化、审批接线、compaction、动态工具挂载与生命周期
 segments:
   - snippet: |
       import type { ContentPart, LlmService } from "../../host/llm";
@@ -11,6 +11,7 @@ segments:
       import { buildSystemPrompt } from "./prompt";
       import { encodeLine, effectiveMessages, parseSession, sessionTitle } from "./session";
       import { executeTool, TOOL_DECLARATIONS, type ApprovalOutcome, type ApprovalRequest } from "./tools";
+      import { TRANSCRIBE_DECLARATION } from "./transcribe";
       import type { AgentMessage, ApprovalMode, SessionHeader, SessionLine } from "./types";
 
       /** 会话列表中的一条元数据；正文与事件由 {@link AgentSession.messages} 按需加载。 */
@@ -147,6 +148,9 @@ segments:
        * @param deps Host facades and optional compaction threshold.
        * @returns Registry-backed agent service with lifecycle cleanup.
        */
+    note: |
+      这里声明会话对外投影、prompt 段注册、服务接口与依赖。deps.llm 同时承担 chat 与转录音频路由，deps.files 提供工具读写与 probe；服务本身不 import Tauri。
+  - snippet: |
       export function createAgentService(deps: AgentServiceDeps): AgentService {
         const threshold = deps.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
         const sessions = new Map<string, { internal: InternalSession; session: AgentSession }>();
@@ -257,6 +261,9 @@ segments:
             }),
             log: (line) => void persist(internal, line),
           });
+    note: |
+      这里装配会话工厂：以库根和会话文件路径恢复历史，维护事件/审批订阅、持久化队列与 root 漂移状态。所有恢复只重放已完成事件。
+  - snippet: |
           const session: AgentSession = {
             get id() { return internal.id; },
             get mode() { return internal.mode; },
@@ -308,6 +315,7 @@ segments:
                   if (section !== null && section.trim()) extraSections.push(section);
                 }
                 await compactIfNeeded(internal);
+                const asrAvailable = await deps.llm.hasAsrCapability();
                 await runTurn(
                   effectiveMessages(internal.lines),
                   {
@@ -321,6 +329,12 @@ segments:
                         authorizeRead: (path) => deps.files.authorizeReadPath(path),
                       },
                       ask: (request) => internal.gate.ask(request),
+                      ...(asrAvailable ? {
+                        transcribe: {
+                          probeSize: async (path) => (await deps.files.probeSourceFile(path)).size,
+                          run: (request) => deps.llm.transcribe(request),
+                        },
+                      } : {}),
                     }),
                     systemPrompt: () => buildSystemPrompt({
                       root: internal.currentRoot,
@@ -330,7 +344,7 @@ segments:
                       now: new Date().toISOString(),
                       extraSections,
                     }),
-                    tools: TOOL_DECLARATIONS,
+                    tools: asrAvailable ? [...TOOL_DECLARATIONS, TRANSCRIBE_DECLARATION] : TOOL_DECLARATIONS,
                     model: internal.model ?? undefined,
                     persist: (line) => void persist(internal, line),
                     emit: (event) => emit(internal, event),
@@ -366,10 +380,9 @@ segments:
               internal.pendingApprovals.delete(requestId);
               internal.pendingApprovalRequests.delete(requestId);
               resolve(outcome);
-            },
-          };
-          sessions.set(header.id, { internal, session });
-          return { internal, session };
+    note: |
+      这里实现 AgentSession 的 send：每回合先读 AGENTS.md、收集 prompt 段并 compaction，然后按 hasAsrCapability 动态决定工具清单与 transcribe 挂点。没有 asr endpoint 时文件四工具原样运行；有则追加 transcribe，并把 probeSize/run 接到宿主 facade。
+  - snippet: |
         }
 
         async function compactIfNeeded(session: InternalSession): Promise<void> {
@@ -496,8 +509,9 @@ segments:
             sessions.clear();
           },
         };
-      }
-
+    note: |
+      这里收尾回合后的 compaction、删除/清理、模式与模型切换、审批应答与 dispose。审批门在会话销毁时全部关闭，避免悬挂 UI 请求。
+  - snippet: |
       function lastPersistedMode(lines: SessionLine[]): ApprovalMode {
         for (let index = lines.length - 1; index >= 0; index -= 1) {
           const line = lines[index];
@@ -523,4 +537,4 @@ segments:
         return error instanceof Error ? error.message : String(error);
       }
     note: |
-      agent-core 服务在一个文件内闭合会话持久化、审批接线、prompt 贡献段、模型/模式切换、压缩与生命周期清理。写队列保证 JSONL 事件顺序，坏会话文件只影响自身，dispose 会中止全部会话。
+      这里是模式回放与错误文本的单行工具，保证恢复历史时模式取最后一次显式记录，错误消息不泄露堆栈。

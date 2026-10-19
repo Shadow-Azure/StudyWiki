@@ -253,7 +253,7 @@ codeMap:
               // 链接是唯一的出站锚点（链向 flow issue 登记的 github.url，仅导航不加载资源）。
               // 架构组成树直接按 code-map manifest 渲染两列
               // 文本树（目录顺序复用 gen-code-map 的 SCAN_ROOTS，不在构建器里重复扫描/推导依赖）。
-              
+
               import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
               import { execFileSync } from "node:child_process";
               import path from "node:path";
@@ -668,7 +668,7 @@ codeMap:
                   return null;
                 }
               }
-              
+
               const ATTENTION_BADGES = { "must-read": "必读", skim: "可扫读", skip: "可跳过" };
             note: |
               变更页头部的 Issue 链接从 flow issue 登记的 github.url 解析，登记缺失降级为纯文本徽章；attention 徽章集中定义，未知值由 schema 先行拦截。

@@ -1,0 +1,515 @@
+kind: change
+issue: m3-01-asr-transcription
+skill_gen_commit_id: 8e723ec
+title: #32 音视频转录（ASR 工具）
+scale:
+  files: 24
+  additions: 2593
+  deletions: 27
+feature: |
+  用户在 agent 面板说“帮我把这个视频转录成文字”。agent 调用 transcribe 工具；工具先检查扩展名与库根，再弹出审批卡，写明文件、大小和产物路径。
+
+  批准后，Rust 按 endpoint 的 protocol 选择 multipart 转录口或聊天口 input_audio，把请求发给用户配置的 ASR endpoint；返回的文本由前端代码确定性格式化，写到 .study-wiki/raw/<源>/transcript.md。模型只收到“已生成、共 N 段”的摘要，需要细节时再用 read/grep 回查。
+
+  ![ASR 转录数据流](../assets/m3-01-asr-transcription/asr-flow.svg)
+
+  *图 1：从用户请求到 transcript.md 的完整链路；Rust 只负责传输，时间戳由代码生成。*
+userFlow:
+  - 用户打开带视频的库，在 agent 面板输入“把这个视频转录成文字”。
+  - agent 选择 transcribe；工具确认文件在库根内且扩展名可转录，并读取文件大小。
+  - composer 接管为审批卡：显示路径、大小、产物位置，并说明文件会上传到所选 ASR endpoint。
+  - 用户批准后，Rust 按 endpoint.protocol 上传；transcriptions 路原样传视频容器，chat 路只收 wav/mp3 并编码为 data URL。
+  - 前端把 segments 或逐行时间戳格式化并写入 .study-wiki/raw/<源>/transcript.md，模型收到段数摘要。
+  - 用户继续问“第 15 分钟讲了什么”，agent 用 read/grep 读取 transcript.md 回查。
+architectural: |
+  配置层给 endpoint 增可选 protocol；宿主 LlmService 只做 asr 路由；agent-core 每回合按 hasAsrCapability 决定是否挂 transcribe；Rust 是唯一联网点，按 protocol 分叉 multipart 与 input_audio。聊天路由继续只认 kind=chat，转录只认 kind=asr，两种 wire 形状不在路由层混用。
+
+  沿图 1：用户请求进入 agent 工具，审批后才到 Rust；Rust 持有 key 并选择 wire 形状；endpoint 返回后，格式化与落盘回到 TS，模型看不到原始全文。
+
+  结构变化是新增一条 transcribe 通道和一个 protocol 字段；语义变化是无 ASR 配置时工具不进入声明清单，agent 行为与 m2 一致；配置删除后下一回合自动收回，历史 wire 调用返回明确错误。
+architecturalFlowchart:
+  title: ASR 转录数据流
+  explanation: 图 1 强调“审批前不联网、时间戳不由模型生成”两条边界：请求先过工具预检与审批，Rust 再按 protocol 分叉传输，返回文本由代码格式化后才落盘。
+  direction: LR
+  nodes:
+    - id: user
+      label: 用户请求
+      shape: rounded
+    - id: tool
+      label: transcribe 工具
+      shape: rect
+    - id: approval
+      label: 审批卡
+      shape: diamond
+    - id: rust
+      label: Rust 传输
+      shape: rect
+    - id: tx
+      label: transcriptions 口
+      shape: rect
+    - id: chat
+      label: 聊天口 input_audio
+      shape: rect
+    - id: asr
+      label: ASR endpoint
+      shape: rect
+    - id: fmt
+      label: 确定性格式化
+      shape: rect
+    - id: file
+      label: transcript.md
+      shape: rounded
+  edges:
+    - from: user
+      to: tool
+      label: 发起转录
+    - from: tool
+      to: approval
+      label: 预检通过
+    - from: approval
+      to: rust
+      label: 批准后
+    - from: rust
+      to: tx
+      label: protocol 缺省
+    - from: rust
+      to: chat
+      label: protocol=chat
+    - from: tx
+      to: asr
+      label: multipart
+    - from: chat
+      to: asr
+      label: data URL
+    - from: asr
+      to: fmt
+      label: text/segments
+    - from: fmt
+      to: file
+      label: 写入 raw
+design: |
+  ### 双协议统一结果
+
+  Rust 对两条 wire 都返回 TranscriptionResult：text 是全文，segments 是可选的时间戳段。transcriptions 路把 verbose_json 的 segments 原样带出；chat 路回的是纯文本，segments 固定为空，由前端按确定性规则解析。
+
+  ### 动态挂载与一次审批
+
+  宿主每回合先问 hasAsrCapability：没有带模型的 kind=asr endpoint 就不把 transcribe 放进工具声明，模型无法选择它。有 ASR 时，工具先做扩展名与库根预检，再用文件大小生成审批卡；一次批准同时覆盖上传与产物落盘，拒绝时不会发出任何网络请求。
+
+  ### 确定性产物格式化
+
+  segments 非空时逐段写 [HH:MM:SS] 文本；segments 为空时，只有匹配行 ≥3 且覆盖 ≥80% 才采信聊天口文本，否则整体降级 timestamps: none。落点固定为 .study-wiki/raw/<源去扩展名>/transcript.md，模型只收到段数摘要。
+designFlowcharts:
+  - feature: 双协议统一结果
+    title: 两条 wire 汇入同一结果
+    explanation: 转录口给出 verbose_json segments，聊天口只给文本；两者在 Rust 侧归一成 text + segments，空 segments 是合法状态，交给上层决定是否降级。
+    direction: LR
+    nodes:
+      - id: ledger
+        label: endpoint protocol
+      - id: tx
+        label: transcriptions
+      - id: chat
+        label: chat audio
+      - id: normalize
+        label: TranscriptionResult
+      - id: down
+        label: 前端决定时间戳
+    edges:
+      - from: ledger
+        to: tx
+        label: 缺省
+      - from: ledger
+        to: chat
+        label: chat
+      - from: tx
+        to: normalize
+        label: text+segments
+      - from: chat
+        to: normalize
+        label: text+空 segments
+      - from: normalize
+        to: down
+        label: 交付
+  - feature: 动态挂载与一次审批
+    title: 工具挂载与审批边界
+    explanation: 每回合用 hasAsrCapability 组工具清单；transcribe 的审批发生在任何上传之前，批准后同一次决定覆盖上传与写文件。
+    direction: LR
+    nodes:
+      - id: caps
+        label: hasAsrCapability
+      - id: list
+        label: 工具声明
+      - id: agent
+        label: 模型选择
+      - id: approval
+        label: 审批
+      - id: upload
+        label: 上传+落盘
+    edges:
+      - from: caps
+        to: list
+        label: 有 asr → 追加
+      - from: list
+        to: agent
+        label: 声明可见
+      - from: agent
+        to: approval
+        label: 调用 transcribe
+      - from: approval
+        to: upload
+        label: 批准
+      - from: approval
+        to: list
+        label: 拒绝
+  - feature: 确定性产物格式化
+    title: 时间戳格式化与降级
+    explanation: segments 优先；聊天口文本要过“匹配行 ≥3 且覆盖 ≥80%”才会被当作时间戳，否则整篇降级，避免半截时间戳文件。
+    direction: LR
+    nodes:
+      - id: result
+        label: TranscriptionResult
+      - id: has
+        label: segments 非空
+      - id: parse
+        label: 逐行解析
+      - id: cover
+        label: ≥3 行且 ≥80%
+      - id: write
+        label: 写 transcript.md
+      - id: none
+        label: timestamps: none
+    edges:
+      - from: result
+        to: has
+        label: 是
+      - from: result
+        to: parse
+        label: 否
+      - from: parse
+        to: cover
+        label: 解析结果
+      - from: cover
+        to: write
+        label: 通过
+      - from: cover
+        to: none
+        label: 不足
+      - from: has
+        to: write
+        label: 逐段写
+codeMap:
+  - group: 传输层
+    attention: must-read
+    why: 唯一联网点决定协议分叉、key 边界与长任务超时。
+    files:
+      - path: src-tauri/src/llm.rs
+        note: Rust 转录命令：multipart 构造、protocol 分叉与聊天口请求体。
+        changes:
+          - snippet: |
+              fn build_multipart_head(fields: &[(&str, &str)], file_name: &str) -> (Vec<u8>, &'static str) {
+                  let mut out = Vec::new();
+                  for (name, value) in fields {
+                      out.extend_from_slice(
+                          format!(
+                              "--{MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                          )
+                          .as_bytes(),
+                      );
+                  }
+                  out.extend_from_slice(
+                      format!(
+                          "--{MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                      )
+                      .as_bytes(),
+                  );
+                  (out, MULTIPART_BOUNDARY)
+              }
+
+              /// multipart 收尾。
+            note: |
+                multipart 头按固定边界逐字段拼接，file part 带文件名；body 由 head + 文件流 + tail 组成，200MB 视频不会被整体读入内存。
+          - snippet: |
+              fn transcribe_checked(
+                  agent: &ureq::Agent,
+                  ep: &Endpoint,
+                  req: &TranscribeRequest,
+                  root_check: &dyn Fn(&str) -> bool,
+              ) -> Result<TranscriptionResult, LlmError> {
+                  if ep.kind != "asr" {
+                      return Err(LlmError::new("INVALID_CONFIG", "转录只接受 kind=asr 的 endpoint"));
+                  }
+                  if !root_check(&req.path) {
+                      return Err(LlmError::new(
+                          "UNAUTHORIZED_PATH",
+                          format!("转录文件不在库根内：{}", req.path),
+                      ));
+                  }
+                  match ep.protocol.as_deref() {
+                      Some("chat") => run_transcribe_chat(agent, ep, req),
+                      _ => run_transcribe(agent, ep, req, root_check),
+                  }
+              }
+            note: |
+                transcribe_checked 先拒非 asr endpoint，再拒库根外路径，最后按 protocol 分叉；这两道门禁在任何网络请求之前。
+          - snippet: |
+              let data_url = format!(
+                  "data:{mime};base64,{}",
+                  base64::engine::general_purpose::STANDARD.encode(&bytes)
+              );
+              let instruction = match &req.language {
+                  Some(language) => format!("{TRANSCRIBE_CHAT_INSTRUCTION}语种：{language}。"),
+                  None => TRANSCRIBE_CHAT_INSTRUCTION.to_string(),
+              };
+              let body = serde_json::json!({
+                  "model": req.model,
+                  "stream": false,
+                  "messages": [{
+                      "role": "user",
+                      "content": [
+                          { "type": "text", "text": instruction },
+                          { "type": "input_audio", "input_audio": {
+            note: |
+                聊天口先做 wav/mp3 与 20MB 门禁，再把字节编码成 data URL；超限或视频会明确提示改用 transcriptions 协议。
+          - snippet: |
+                  let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+                  let file_name = std::path::Path::new(&req.path)
+                      .file_name()
+                      .map(|n| n.to_string_lossy().to_string())
+                      .unwrap_or_else(|| "audio.bin".into());
+                  let mut fields: Vec<(&str, &str)> = vec![
+                      ("model", req.model.as_str()),
+                      ("response_format", "verbose_json"),
+                      ("timestamp_granularities[]", "segment"),
+                  ];
+                  if let Some(language) = &req.language {
+                      fields.push(("language", language.as_str()));
+                  }
+                  let (head, boundary) = build_multipart_head(&fields, &file_name);
+                  let tail = multipart_tail();
+                  let total = head.len() as u64 + file_len + tail.len() as u64;
+                  let body = std::io::Cursor::new(head)
+                      .chain(file)
+                      .chain(std::io::Cursor::new(tail));
+                  let url = join_url(&ep.base_url, "audio/transcriptions");
+                  let resp = with_auth(agent.post(&url), ep)
+                      .set(
+            note: |
+                transcriptions 路流式发送原文件，并显式请求 verbose_json + segment 粒度；时间戳是协议契约，不靠提示词。
+      - path: src/host/llm.ts
+        note: 宿主只做 asr 路由：多候选不隐式选择。
+        changes:
+          - snippet: |
+                async #routeAsr(model?: string): Promise<{ endpointId: string; model: string }> {
+                  const settings = await this.listEndpoints();
+                  const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+                  if (model) {
+                    const owners = asr.filter((e) => e.models.some((m) => m.id === model));
+                    if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
+                    if (owners.length > 1) {
+                      throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
+                    }
+                    return { endpointId: owners[0]!.id, model };
+                  }
+                  const candidates = asr.flatMap((e) => e.models.map((m) => ({ endpointId: e.id, model: m.id })));
+                  if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
+                  if (candidates.length > 1) {
+                    throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);
+                  }
+                  return candidates[0]!;
+                }
+
+                /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
+            note: |
+                #routeAsr 只筛 kind=asr 且有模型的 endpoint；点名模型多归属或多候选未点名都报 MODEL_AMBIGUOUS，没有配置报 MODEL_UNKNOWN。
+  - group: 工具层
+    attention: must-read
+    why: 审批时机、格式化规则和产物落点是验收的核心。
+    files:
+      - path: src/plugins/agent-core/tools.ts
+        note: transcribe 工具：预检、审批、执行与摘要。
+        changes:
+          - snippet: |
+                if (!isWithinRoot(path, ctx.root)) return { content: "transcribe 拒绝：文件不在库根内。", isError: true };
+                if (!ctx.transcribe) {
+                  return { content: "当前未配置 ASR endpoint，转录不可用：请在设置中添加 kind=asr 的 endpoint。", isError: true };
+                }
+                const size = await ctx.transcribe.probeSize(path);
+                const output = transcriptOutputPath(ctx.root, path);
+                const sizeMb = (size / 1024 / 1024).toFixed(1);
+                const detail = `文件：${path}\n大小：${sizeMb} MB\n产物：${output}\n说明：文件将完整上传到用户配置的 ASR endpoint 进行语音识别。`;
+                const approval = await askApproval(ctx, {
+                  id: call.id,
+                  kind: "transcribe",
+                  tool: "transcribe",
+                  path,
+                  summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）`,
+                  preview: createTextPreview(detail, detail.length, 4),
+                });
+            note: |
+                审批请求单列 transcribe 族，载荷含文件、大小与产物路径；批准之前不会调用 hook，因此不会上传。
+          - snippet: |
+                });
+                const rel = path.slice(ctx.root.length + 1);
+                const fileName = path.split("/").pop() ?? path;
+                const content = formatTranscript({
+                  sourceRel: rel,
+                  fileName,
+                  model: model ?? "default",
+                  language: language ?? "auto",
+                  generatedAt: new Date().toISOString(),
+                  result,
+                });
+                await ctx.host.writeText(output, content);
+                const parsedCount = parseTimestampedLines(result.text).length;
+                const segmentCount = result.segments.length || parsedCount;
+                const degraded = result.segments.length === 0 && !content.includes("timestamps: segment");
+                return {
+                  content: degraded
+                    ? `已生成 ${output}（无时间戳，单段全文；可用 read 查看）`
+                    : `已生成 ${output}：${segmentCount} 段（可用 read/grep 查看内容）`,
+                };
+            note: |
+                执行完转录后由代码格式化并写入 raw 路径；degraded 由产物是否真的含时间戳段决定，摘要只回段数。
+      - path: src/plugins/agent-core/transcribe.ts
+        note: 确定性格式化与解析规则。
+        changes:
+          - snippet: |
+              export function formatTimestamp(seconds: number): string {
+                const total = Math.max(0, Math.floor(seconds));
+                const h = Math.floor(total / 3600);
+                const m = Math.floor((total % 3600) / 60);
+                const s = total % 60;
+                return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+              }
+
+              /**
+               * 解析 chat 路文本的 `[HH:MM:SS] 文本` 行；不含匹配行时返回空数组。
+               * @param text 模型返回的纯文本。
+               * @returns 按出现顺序的起始秒与正文；不匹配行被忽略。
+               */
+              export function parseTimestampedLines(text: string): { start: number; text: string }[] {
+                const out: { start: number; text: string }[] = [];
+                for (const line of text.split("\n")) {
+                  const match = line.match(/^\[(\d{1,3}):(\d{2}):(\d{2})\]\s+(.+)$/u);
+                  if (!match) continue;
+                  const [, h, m, s, body] = match;
+                  out.push({ start: Number(h) * 3600 + Number(m) * 60 + Number(s), text: body!.trim() });
+                }
+                return out;
+              }
+
+              /**
+               * 产物落点：.study-wiki/raw/<源库相对路径去扩展名>/transcript.md。
+            note: |
+                秒转 HH:MM:SS 向下取整；parseTimestampedLines 只接受行首 [HH:MM:SS] 文本，不把闲聊当成时间戳。
+          - snippet: |
+              export function formatTranscript(input: TranscriptInput): string {
+                let segments = input.result.segments;
+                let timestampMode = "segment";
+                if (segments.length === 0) {
+                  const parsed = parseTimestampedLines(input.result.text);
+                  const covered = parsed.reduce((sum, p) => sum + p.text.length, 0);
+                  if (parsed.length >= 3 && covered >= input.result.text.length * 0.8) {
+                    segments = parsed.map((p, i) => ({ start: p.start, end: parsed[i + 1]?.start ?? p.start, text: p.text }));
+                  } else {
+                    timestampMode = "none";
+                  }
+                }
+                const header = [
+                  "---",
+                  `source: ${input.sourceRel}`,
+                  `model: ${input.model}`,
+                  `language: ${input.language}`,
+                  `generated: ${input.generatedAt}`,
+                  `timestamps: ${timestampMode}`,
+                  "---",
+                  "",
+                  `# 转录：${input.fileName}`,
+                  "",
+                ].join("\n");
+                if (timestampMode === "none") return `${header}${input.result.text.trim()}\n`;
+                const lines = segments.map((seg) => `[${formatTimestamp(seg.start)}] ${seg.text.trim()}`);
+                return `${header}${lines.join("\n")}\n`;
+              }
+            note: |
+                formatTranscript 先信任 segments；聊天口文本必须满足行数与覆盖率双条件，否则整体降级 timestamps:none，绝不写半截时间戳。
+  - group: 配置与界面
+    attention: skim
+    why: protocol 的校验和表单预填决定用户能否正确接线。
+    files:
+      - path: src-tauri/src/config.rs
+        note: protocol 仅允许 transcriptions/chat 且仅限 kind=asr；chat kind 携带即 INVALID_CONFIG，旧配置缺省为 None。
+      - path: src/plugins/llm-settings/model.ts
+        note: 草稿与 PresetLike 增 protocol；instantiatePreset 按预设 kind 预填，validateDraft 与 Rust 同规则。
+      - path: src/plugins/llm-settings/index.ts
+        note: kind 切到 asr 才显示协议下拉；transcriptions 存 undefined，提交时统一为 null。
+      - path: src/plugins/app-agent/render.ts
+        note: 审批动词与详情说明增加 transcribe 族，明确“上传到所选 ASR endpoint”。
+  - group: 测试与文档
+    attention: skim
+    why: 行为边界由测试钉住，文档解释接线方式。
+    files:
+      - path: tests/agent-tools.test.ts
+        note: 审批拒绝不上传、无时间戳降级、80% 覆盖规则、缺 hook 与会话中途删配置。
+      - path: tests/agent-service.test.ts
+        note: 无 asr endpoint 时工具清单不含 transcribe，有则包含。
+      - path: tests/host-llm.test.ts
+        note: asr 路由、MODEL_AMBIGUOUS/UNKNOWN 与 hasAsrCapability。
+      - path: tests/llm-settings.test.ts
+        note: 预设 kind/protocol 预填、校验与提交载荷。
+      - path: docs/plugins/agent.md
+        note: transcribe 工具、动态挂载与审批族说明。
+      - path: docs/architecture.md
+        note: 命令目录与 asr protocol 决策。
+touches:
+  - file:src-tauri/src/config.rs
+  - file:src-tauri/src/llm.rs
+  - file:src-tauri/src/lib.rs
+  - file:src/host/llm.ts
+  - file:src/plugins/agent-core/transcribe.ts
+  - file:src/plugins/agent-core/tools.ts
+  - file:src/plugins/agent-core/service.ts
+  - file:src/plugins/agent-core/types.ts
+  - file:src/plugins/app-agent/render.ts
+  - file:src/plugins/llm-settings/model.ts
+  - file:src/plugins/llm-settings/index.ts
+  - file:src/preview.ts
+  - file:docs/plugins/agent.md
+  - file:docs/plugins/contract.md
+  - file:docs/architecture.md
+  - file:docs/commands.md
+  - file:scripts/code-map.manifest.json
+  - file:tests/agent-tools.test.ts
+  - file:tests/agent-service.test.ts
+  - file:tests/host-llm.test.ts
+  - file:tests/llm-settings.test.ts
+  - file:tests/app-agent-render.test.ts
+reviewGuide:
+  order:
+    - src-tauri/src/llm.rs
+    - src/plugins/agent-core/tools.ts
+    - src/plugins/agent-core/transcribe.ts
+    - src/host/llm.ts
+    - src/plugins/llm-settings/index.ts
+  risks:
+    - transcribe 的审批必须发生在任何网络请求之前；如果以后把探测大小改成远程调用或在审批前读文件，隐私边界会被破坏。
+    - 聊天口的时间戳是模型输出，不是协议契约；80% 规则只能降低误判，不能保证语义正确，重要结论仍应回看原文。
+    - probeSourceFile 为拿大小会计算 SHA-256，大视频在审批前会多读一遍；这是当前实现的性能代价。
+    - 多条 asr endpoint 且未指定 model 会报 MODEL_AMBIGUOUS，不会自动选第一条；设置面板应引导用户给模型命名。
+  acceptance:
+    - item: 配置 asr endpoint 后 agent 能转录库内音视频，产物含 [HH:MM:SS] 段
+      evidence: tests/agent-tools.test.ts 与 tests/host-llm.test.ts
+    - item: 无 asr 配置时工具不挂载，会话中途删除配置不崩溃
+      evidence: tests/agent-service.test.ts 与 tests/agent-tools.test.ts
+    - item: transcriptions 与 chat 两种协议分别发送 multipart / input_audio
+      evidence: src-tauri/src/llm.rs 单测
+    - item: Rust/TS 全量测试、分层、环境无关性与文档门禁绿
+      evidence: pnpm test、cargo test、verify:layering、verify:env-independence、verify:docs
+verification:
+  - pnpm test（vitest，792 通过）
+  - cargo test（Rust，131 通过）
+  - pnpm verify:layering
+  - pnpm verify:env-independence
+  - pnpm verify:commands
+  - pnpm verify:walkthrough

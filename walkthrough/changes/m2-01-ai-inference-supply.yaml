@@ -143,6 +143,7 @@ codeMap:
                       llm::agent_set_default_approval_mode,
                       llm::llm_chat,
                       llm::llm_chat_stream,
+                      llm::llm_transcribe,
                       llm::llm_chat_abort
                   ])
               }
@@ -300,45 +301,6 @@ codeMap:
                       .ok_or_else(|| LlmError::new("ENDPOINT_UNKNOWN", format!("endpoint 不存在：{id}")))
               }
 
-              /// upsert 本体：先校验（INVALID_CONFIG），再按 id 替换或追加。
-              /// key 语义由 dirty 标记区分（编辑表单回填掩码，\“没动\”与\“删空\”在 wire 上
-              /// 曾无法区分）：apiKeyDirty false/缺省且空 apiKey = 保留已存 key（安全默认，
-              /// 避免"改个名字顺手清掉密钥"）；dirty true = 按传入值更新，空即显式清空。
-              fn upsert_into(s: &mut Settings, mut e: Endpoint) -> Result<(), LlmError> {
-                  config::validate_endpoint(&e).map_err(|m| LlmError::new("INVALID_CONFIG", m))?;
-                  if let Some(slot) = s.endpoints.iter_mut().find(|x| x.id == e.id) {
-                      if !e.api_key_dirty && e.api_key.is_empty() {
-                          e.api_key = slot.api_key.clone();
-                      }
-                      *slot = e;
-                  } else {
-                      s.endpoints.push(e);
-                  }
-                  Ok(())
-              }
-
-              /// 按 id 返回完整 apiKey 明文（编辑态眼睛揭示用；纯函数便于测试）。
-              fn reveal_key(s: &Settings, id: &str) -> Result<String, LlmError> {
-                  Ok(find_endpoint(s, id)?.api_key)
-              }
-
-              /// 默认模型本体：Some(id) 须是任一 endpoint 已声明模型（INVALID_CONFIG）；None 清除。
-              fn set_default_into(s: &mut Settings, model: Option<String>) -> Result<(), LlmError> {
-                  if let Some(id) = &model {
-                      let known = s
-                          .endpoints
-                          .iter()
-                          .any(|e| e.models.iter().any(|m| &m.id == id));
-                      if !known {
-                          return Err(LlmError::new("INVALID_CONFIG", format!("未知模型：{id}")));
-                      }
-                  }
-                  s.default_model = model;
-                  Ok(())
-              }
-
-              /// 返回厂商预设表（前端唯一拿 baseUrl 的通道）。
-
             note: |
                 本次变更加入了探测、附件大小门禁和 endpoint CRUD 前置校验，把协议合法性与密钥边界集中在 Rust 唯一联网层。
 
@@ -436,6 +398,27 @@ codeMap:
                   return { endpointId: owners[0].id, model: resolved, entry };
                 }
 
+                /** 解析转录模型归属：只路由 asr 类 endpoint，chat 配置不得误入转录命令。
+                 * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
+                async #routeAsr(model?: string): Promise<{ endpointId: string; model: string }> {
+                  const settings = await this.listEndpoints();
+                  const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+                  if (model) {
+                    const owners = asr.filter((e) => e.models.some((m) => m.id === model));
+                    if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
+                    if (owners.length > 1) {
+                      throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
+                    }
+                    return { endpointId: owners[0]!.id, model };
+                  }
+                  const candidates = asr.flatMap((e) => e.models.map((m) => ({ endpointId: e.id, model: m.id })));
+                  if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
+                  if (candidates.length > 1) {
+                    throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);
+                  }
+                  return candidates[0]!;
+                }
+
                 /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
                  * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）/
                  *   tools 不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
@@ -516,16 +499,42 @@ codeMap:
                 const kindLabel = fieldLabel("类型");
                 const kind = document.createElement("select");
                 kind.name = "kind";
-                for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写，预留）"]] as const) {
+                for (const [value, text] of [["chat", "chat（LLM/VLM）"], ["asr", "asr（转写）"]] as const) {
                   const opt = document.createElement("option");
                   opt.value = value;
                   opt.textContent = text;
                   kind.append(opt);
                 }
                 kind.value = draft.kind;
-                kind.addEventListener("change", () => (draft.kind = kind.value === "asr" ? "asr" : "chat"));
                 kindField.append(kindLabel, kind);
-                top.append(vendorField, kindField);
+                const protocolField = document.createElement("div");
+                protocolField.className = "llm-field";
+                const protocolLabel = fieldLabel("ASR 协议");
+                const protocol = document.createElement("select");
+                protocol.name = "protocol";
+                for (const [value, text] of [
+                  ["transcriptions", "转录接口 /v1/audio/transcriptions（默认）"],
+                  ["chat", "聊天接口 input_audio（MiMo ASR 等）"],
+                ] as const) {
+                  const opt = document.createElement("option");
+                  opt.value = value;
+                  opt.textContent = text;
+                  protocol.append(opt);
+                }
+                protocolField.append(protocolLabel, protocol);
+                const syncProtocol = (): void => {
+                  protocolField.hidden = draft.kind !== "asr";
+                  protocol.value = draft.protocol === "chat" ? "chat" : "transcriptions";
+                };
+                protocol.addEventListener("change", () => {
+                  draft.protocol = protocol.value === "chat" ? "chat" : undefined;
+                });
+                kind.addEventListener("change", () => {
+                  draft.kind = kind.value === "asr" ? "asr" : "chat";
+                  if (draft.kind === "chat") draft.protocol = undefined;
+                  syncProtocol();
+                });
+                top.append(vendorField, kindField, protocolField);
                 form.append(top);
                 if (!initial) {
                   const hint = document.createElement("p");
@@ -713,6 +722,7 @@ codeMap:
                       ? blankDraft()
                       : instantiatePreset(presets.find((p) => p.vendor === vendor.value)!);
                   kind.value = draft.kind;
+                  syncProtocol();
                   drawFields();
                 };
                 vendor.addEventListener("change", refreshFields);
@@ -739,6 +749,7 @@ codeMap:
                   const keyDirty = !initial || !endpoint?.hasKey || editedKey !== null;
                   const payload: EndpointInput = {
                     ...draft,
+                    protocol: draft.protocol ?? null,
                     // 新增态原样传（空 key 合法）；编辑态未动掩码 = 保留（空 + 无 dirty）。
                     apiKey: keyDirty || !initial ? draft.apiKey : "",
                   };
@@ -750,7 +761,10 @@ codeMap:
                 });
 
                 vendor.value = initial ? CUSTOM_VENDOR : presets[0]?.vendor ?? CUSTOM_VENDOR;
-                if (initial) drawFields();
+                if (initial) {
+                  syncProtocol();
+                  drawFields();
+                }
                 else refreshFields();
                 box.append(title, form);
               }
@@ -769,9 +783,10 @@ codeMap:
                 return {
                   id: p.vendor,
                   name: p.name,
-                  kind: "chat",
+                  kind: p.kind === "asr" ? "asr" : "chat",
                   baseUrl: p.baseUrl,
                   apiKey: "",
+                  ...(p.kind === "asr" && p.protocol === "chat" ? { protocol: "chat" as const } : {}),
                   models: p.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
                 };
               }
@@ -788,6 +803,12 @@ codeMap:
                 if (!d.name.trim()) return "name 不能为空";
                 if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
                   return "baseUrl 必须以 http:// 或 https:// 开头";
+                }
+                if (d.protocol !== undefined && d.protocol !== "transcriptions" && d.protocol !== "chat") {
+                  return "protocol 只允许 transcriptions 或 chat";
+                }
+                if (d.kind === "chat" && d.protocol !== undefined) {
+                  return "protocol 只允许出现在 kind=asr 的 endpoint 上";
                 }
                 if (d.models.length === 0) return "至少要有一个模型";
                 const seen = new Set<string>();
