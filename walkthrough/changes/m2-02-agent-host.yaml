@@ -468,6 +468,18 @@ codeMap:
                 segments: TranscriptionSegment[];
               }
 
+              /** Resolved ASR destination shown in the approval card and bound to the upload. */
+              export interface AsrTarget {
+                /** Endpoint id sent to Rust. */
+                endpointId: string;
+                /** Human-facing endpoint name for the approval card. */
+                endpointName: string;
+                /** Model id sent as the upstream `model` field. */
+                model: string;
+                /** Wire protocol that Rust will use. */
+                protocol: "transcriptions" | "chat";
+              }
+
               /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
                * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
                * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */

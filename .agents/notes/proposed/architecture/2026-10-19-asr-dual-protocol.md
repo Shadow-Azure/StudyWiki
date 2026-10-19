@@ -27,4 +27,5 @@ m3-01 要落地 ASR 转录，但 OpenAI 兼容 ASR 存在两种 wire 形状：�
 
 - settings.json 兼容：protocol 为可缺省字段，版本号不动。
 - chat 路 input_audio 采用 MiMo 文档形（data 为 data URL + format 双带），与仓内聊天附件的 raw base64 形不同——附件路不变。
+- 审批前的大小探测走轻量 `file_size`（只 stat，不算哈希）；审批卡展示 endpoint 名称、模型与协议，批准后的上传绑定同一个 target。
 - m3-03 的 raw 索引、m3-04 的本地 ASR 辅助不受本期约束。

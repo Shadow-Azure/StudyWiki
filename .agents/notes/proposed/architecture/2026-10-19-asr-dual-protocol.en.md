@@ -27,4 +27,5 @@ m3-01 delivers ASR transcription, but OpenAI-compatible ASR comes in two wire sh
 
 - settings.json stays compatible: protocol is optional and the version number does not change.
 - The chat route's input_audio follows the MiMo documented shape (data as a data URL plus a format field), unlike the repo's chat attachment raw-base64 shape — the attachment path is unchanged.
+- The pre-approval size probe uses a lightweight `file_size` (stat only, no hashing); the approval card shows the endpoint name, model and protocol, and the upload after approval is bound to the same target.
 - The m3-03 raw index and m3-04 local ASR assistance are not constrained by this cycle.

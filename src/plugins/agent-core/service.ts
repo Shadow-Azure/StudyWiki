@@ -320,7 +320,8 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
                 ask: (request) => internal.gate.ask(request),
                 ...(asrAvailable ? {
                   transcribe: {
-                    probeSize: async (path) => (await deps.files.probeSourceFile(path)).size,
+                    probeSize: (path) => deps.files.fileSize(path),
+                    pick: (model) => deps.llm.resolveAsrTarget(model),
                     run: (request) => deps.llm.transcribe(request),
                   },
                 } : {}),

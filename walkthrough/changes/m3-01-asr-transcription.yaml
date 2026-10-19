@@ -7,7 +7,7 @@ scale:
   additions: 2593
   deletions: 27
 feature: |
-  用户在 agent 面板说“帮我把这个视频转录成文字”。agent 调用 transcribe 工具；工具先检查扩展名与库根，再弹出审批卡，写明文件、大小和产物路径。
+  用户在 agent 面板说“帮我把这个视频转录成文字”。agent 调用 transcribe 工具；工具先检查扩展名与库根、解析目标 endpoint，再弹出审批卡，写明文件、大小、endpoint 名称与模型、产物路径。
 
   批准后，Rust 按 endpoint 的 protocol 选择 multipart 转录口或聊天口 input_audio，把请求发给用户配置的 ASR endpoint；返回的文本由前端代码确定性格式化，写到 .study-wiki/raw/<源>/transcript.md。模型只收到“已生成、共 N 段”的摘要，需要细节时再用 read/grep 回查。
 
@@ -295,18 +295,24 @@ codeMap:
         note: 宿主只做 asr 路由：多候选不隐式选择。
         changes:
           - snippet: |
-                async #routeAsr(model?: string): Promise<{ endpointId: string; model: string }> {
+              async #routeAsr(model?: string): Promise<AsrTarget> {
                   const settings = await this.listEndpoints();
                   const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+                  const project = (e: RedactedEndpoint, modelId: string): AsrTarget => ({
+                      endpointId: e.id,
+                      endpointName: e.name,
+                      model: modelId,
+                      protocol: e.protocol === "chat" ? "chat" : "transcriptions",
+                  });
                   if (model) {
                     const owners = asr.filter((e) => e.models.some((m) => m.id === model));
                     if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
                     if (owners.length > 1) {
                       throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
                     }
-                    return { endpointId: owners[0]!.id, model };
+                      return project(owners[0]!, model);
                   }
-                  const candidates = asr.flatMap((e) => e.models.map((m) => ({ endpointId: e.id, model: m.id })));
+                  const candidates = asr.flatMap((e) => e.models.map((m) => project(e, m.id)));
                   if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
                   if (candidates.length > 1) {
                     throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);
@@ -316,7 +322,7 @@ codeMap:
 
                 /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
             note: |
-                #routeAsr 只筛 kind=asr 且有模型的 endpoint；点名模型多归属或多候选未点名都报 MODEL_AMBIGUOUS，没有配置报 MODEL_UNKNOWN。
+                #routeAsr 只筛 kind=asr 且有模型的 endpoint，并把 endpoint 名称、模型与协议投影成 AsrTarget；点名模型多归属或多候选未点名都报 MODEL_AMBIGUOUS，没有配置报 MODEL_UNKNOWN。
   - group: 工具层
     attention: must-read
     why: 审批时机、格式化规则和产物落点是验收的核心。
@@ -325,24 +331,28 @@ codeMap:
         note: transcribe 工具：预检、审批、执行与摘要。
         changes:
           - snippet: |
-                if (!isWithinRoot(path, ctx.root)) return { content: "transcribe 拒绝：文件不在库根内。", isError: true };
-                if (!ctx.transcribe) {
-                  return { content: "当前未配置 ASR endpoint，转录不可用：请在设置中添加 kind=asr 的 endpoint。", isError: true };
-                }
+                const target = await ctx.transcribe.pick(model);
                 const size = await ctx.transcribe.probeSize(path);
                 const output = transcriptOutputPath(ctx.root, path);
                 const sizeMb = (size / 1024 / 1024).toFixed(1);
-                const detail = `文件：${path}\n大小：${sizeMb} MB\n产物：${output}\n说明：文件将完整上传到用户配置的 ASR endpoint 进行语音识别。`;
+                const protocol = target.protocol === "chat" ? "聊天口 input_audio" : "转录口 /v1/audio/transcriptions";
+                const detail = [
+                  `文件：${path}`,
+                  `大小：${sizeMb} MB`,
+                  `Endpoint：${target.endpointName}（${target.model} · ${protocol}）`,
+                  `产物：${output}`,
+                  "说明：文件将完整上传到上述 endpoint 进行语音识别。",
+                ].join("\n");
                 const approval = await askApproval(ctx, {
                   id: call.id,
                   kind: "transcribe",
                   tool: "transcribe",
                   path,
-                  summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）`,
+                  summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）→ ${target.endpointName}`,
                   preview: createTextPreview(detail, detail.length, 4),
                 });
             note: |
-                审批请求单列 transcribe 族，载荷含文件、大小与产物路径；批准之前不会调用 hook，因此不会上传。
+                审批请求单列 transcribe 族：先解析并写入 endpoint 名称、模型与协议，再用轻量 fileSize 取大小；批准之前不会调用 run，因此不会上传。批准后 run 绑定同一个 target。
           - snippet: |
                 });
                 const rel = path.slice(ctx.root.length + 1);
@@ -435,6 +445,10 @@ codeMap:
     files:
       - path: src-tauri/src/config.rs
         note: protocol 仅允许 transcriptions/chat 且仅限 kind=asr；chat kind 携带即 INVALID_CONFIG，旧配置缺省为 None。
+      - path: src-tauri/src/lib.rs
+        note: 注册 file_size 命令；审批前只 stat 文件大小，不做内容哈希。
+      - path: src/host/files.ts
+        note: FilesService 增 fileSize，代理 file_size；transcribe 的 probeSize 改走这里。
       - path: src/plugins/llm-settings/model.ts
         note: 草稿与 PresetLike 增 protocol；instantiatePreset 按预设 kind 预填，validateDraft 与 Rust 同规则。
       - path: src/plugins/llm-settings/index.ts
@@ -462,6 +476,7 @@ touches:
   - file:src-tauri/src/llm.rs
   - file:src-tauri/src/lib.rs
   - file:src/host/llm.ts
+  - file:src/host/files.ts
   - file:src/plugins/agent-core/transcribe.ts
   - file:src/plugins/agent-core/tools.ts
   - file:src/plugins/agent-core/service.ts
@@ -490,7 +505,7 @@ reviewGuide:
   risks:
     - transcribe 的审批必须发生在任何网络请求之前；如果以后把探测大小改成远程调用或在审批前读文件，隐私边界会被破坏。
     - 聊天口的时间戳是模型输出，不是协议契约；80% 规则只能降低误判，不能保证语义正确，重要结论仍应回看原文。
-    - probeSourceFile 为拿大小会计算 SHA-256，大视频在审批前会多读一遍；这是当前实现的性能代价。
+    - 审批卡展示的 endpoint/模型会绑定到实际上传；批准后若该 endpoint 或模型被删改，transcribe 报 MODEL_UNKNOWN，不会悄悄换目标。
     - 多条 asr endpoint 且未指定 model 会报 MODEL_AMBIGUOUS，不会自动选第一条；设置面板应引导用户给模型命名。
   acceptance:
     - item: 配置 asr endpoint 后 agent 能转录库内音视频，产物含 [HH:MM:SS] 段

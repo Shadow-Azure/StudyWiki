@@ -19,6 +19,16 @@ describe("files agent facades", () => {
       .rejects.toEqual({ code: "SEARCH_INVALID_PATTERN", message: "bad regex" });
   });
 
+  it("fileSize 走轻量 file_size 命令，不请求哈希", async () => {
+    let seen: [string, unknown] | undefined;
+    const f = filesWith(async (cmd, args) => {
+      seen = [cmd, args];
+      return 2048;
+    });
+    await expect(f.fileSize("/lib/a.mp4")).resolves.toBe(2048);
+    expect(seen).toEqual(["file_size", { path: "/lib/a.mp4" }]);
+  });
+
   it("agent session storage commands use the user-level per-root session domain", async () => {
     const calls: [string, unknown][] = [];
     const f = filesWith(async (cmd, args) => { calls.push([cmd, args]); });

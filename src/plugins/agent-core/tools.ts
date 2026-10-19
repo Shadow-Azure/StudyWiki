@@ -387,16 +387,24 @@ async function executeTranscribe(
   if (!ctx.transcribe) {
     return { content: "当前未配置 ASR endpoint，转录不可用：请在设置中添加 kind=asr 的 endpoint。", isError: true };
   }
+  const target = await ctx.transcribe.pick(model);
   const size = await ctx.transcribe.probeSize(path);
   const output = transcriptOutputPath(ctx.root, path);
   const sizeMb = (size / 1024 / 1024).toFixed(1);
-  const detail = `文件：${path}\n大小：${sizeMb} MB\n产物：${output}\n说明：文件将完整上传到用户配置的 ASR endpoint 进行语音识别。`;
+  const protocol = target.protocol === "chat" ? "聊天口 input_audio" : "转录口 /v1/audio/transcriptions";
+  const detail = [
+    `文件：${path}`,
+    `大小：${sizeMb} MB`,
+    `Endpoint：${target.endpointName}（${target.model} · ${protocol}）`,
+    `产物：${output}`,
+    "说明：文件将完整上传到上述 endpoint 进行语音识别。",
+  ].join("\n");
   const approval = await askApproval(ctx, {
     id: call.id,
     kind: "transcribe",
     tool: "transcribe",
     path,
-    summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）`,
+    summary: `上传转录 ${path.split("/").pop()}（${sizeMb} MB）→ ${target.endpointName}`,
     preview: createTextPreview(detail, detail.length, 4),
   });
   if (!approval.ok) return approval.result;
@@ -404,7 +412,7 @@ async function executeTranscribe(
   const result = await ctx.transcribe.run({
     path,
     ...(language ? { language } : {}),
-    ...(model ? { model } : {}),
+    target,
   });
   const rel = path.slice(ctx.root.length + 1);
   const fileName = path.split("/").pop() ?? path;

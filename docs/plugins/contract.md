@@ -24,7 +24,7 @@ export function apply(ctx) {
 
 `inject` 是 Cordis 依赖声明：决定插件等待哪些服务、何时启动，不授予权限。ctx 门面只暴露声明过的服务，但这是使用面，不是授权或沙箱；插件仍与宿主同进程运行。
 
-书面外置 API 为 `files`/`windows`/`workspace`/`slots`/`plugins`/`llm`；`llm` 可调用 `listEndpoints`/`probe`/`chat`/`chatStream`；`transcribe` 与 `hasAsrCapability` 是内置 agent 独占的 llm 成员，不在外置承诺内。`agent`/`wiki` 是内置内部服务，不在承诺内；当前无独立服务名 allowlist，声明它们可能触达实现对象，但这只是实现细节，不是稳定 API 或权限。收紧暴露面应另设 allowlist 与成员白名单。
+书面外置 API 为 `files`/`windows`/`workspace`/`slots`/`plugins`/`llm`；`llm` 可调用 `listEndpoints`/`probe`/`chat`/`chatStream`；`transcribe`、`resolveAsrTarget` 与 `hasAsrCapability` 是内置 agent 独占的 llm 成员，不在外置承诺内。`agent`/`wiki` 是内置内部服务，不在承诺内；当前无独立服务名 allowlist，声明它们可能触达实现对象，但这只是实现细节，不是稳定 API 或权限。收紧暴露面应另设 allowlist 与成员白名单。
 
 读未声明属性会抛错并提示补声明；`then`/`toJSON`/`toString`/`valueOf` 未声明时缺席。ctx 与服务顶层只读；服务方法返回的 cordis Context（含 Promise 解出值）被拒绝。声明但未提供的服务会等待，2 秒审计失败后点名。
 

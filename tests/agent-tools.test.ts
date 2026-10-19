@@ -182,8 +182,13 @@ describe("tools", () => {
 });
 
 describe("transcribe 工具", () => {
+  const target = {
+    endpointId: "nas", endpointName: "NAS", model: "whisper-large-v3",
+    protocol: "transcriptions" as const,
+  };
   const hookOk = {
     probeSize: async () => 2048,
+    pick: async () => target,
     run: async () => ({ text: "全文", segments: [
       { start: 0, end: 4.2, text: "今天我们讲二叉树" },
       { start: 4.2, end: 9.8, text: "它的定义是" },
@@ -197,6 +202,9 @@ describe("transcribe 工具", () => {
     const r = await executeTool({ id: "t1", name: "transcribe",
       argumentsText: JSON.stringify({ path: "/lib/courses/lecture-01.mp4", language: "zh" }) }, ctx);
     expect(ctx.asked).toEqual(["transcribe"]);
+    expect(ctx.requests[0]?.preview?.text).toContain("NAS");
+    expect(ctx.requests[0]?.preview?.text).toContain("whisper-large-v3");
+    expect(ctx.requests[0]?.summary).toContain("NAS");
     expect(writes).toHaveLength(1);
     const newline = writes[0]!.indexOf("\n");
     const path = writes[0]!.slice(0, newline);
@@ -212,7 +220,8 @@ describe("transcribe 工具", () => {
   it("审批拒绝不上传", async () => {
     let ran = false;
     const ctx = ctxWith({}, { decision: "deny", reason: "不要上传" });
-    ctx.transcribe = { probeSize: async () => 1, run: async () => { ran = true; return { text: "", segments: [] }; } };
+    ctx.transcribe = { probeSize: async () => 1, pick: async () => target,
+      run: async () => { ran = true; return { text: "", segments: [] }; } };
     const r = await executeTool({ id: "t1", name: "transcribe",
       argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
     expect(ran).toBe(false);
@@ -223,7 +232,8 @@ describe("transcribe 工具", () => {
   it("无时间戳回包降级单段并标注 timestamps: none", async () => {
     const writes: string[] = [];
     const ctx = ctxWith({ writeText: async (p, c) => { writes.push(c); } });
-    ctx.transcribe = { probeSize: async () => 1, run: async () => ({ text: "一整段没有分段的文本", segments: [] }) };
+    ctx.transcribe = { probeSize: async () => 1, pick: async () => target,
+      run: async () => ({ text: "一整段没有分段的文本", segments: [] }) };
     await executeTool({ id: "t1", name: "transcribe", argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
     expect(writes[0]).toContain("timestamps: none");
     expect(writes[0]).toContain("一整段没有分段的文本");
@@ -236,7 +246,8 @@ describe("transcribe 工具", () => {
     expect(parsed).toHaveLength(3);
     const writes: string[] = [];
     const ctx = ctxWith({ writeText: async (_p, c) => { writes.push(c); } });
-    ctx.transcribe = { probeSize: async () => 1, run: async () => ({ text: `好的，以下是转录：\n[00:00:00] 短`, segments: [] }) };
+    ctx.transcribe = { probeSize: async () => 1, pick: async () => target,
+      run: async () => ({ text: `好的，以下是转录：\n[00:00:00] 短`, segments: [] }) };
     await executeTool({ id: "t1", name: "transcribe", argumentsText: JSON.stringify({ path: "/lib/a.mp4" }) }, ctx);
     expect(writes[0]).toContain("timestamps: none");
   });

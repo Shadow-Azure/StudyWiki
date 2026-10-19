@@ -1,11 +1,13 @@
-import type { ToolDeclaration, TranscriptionResult } from "../../host/llm";
+import type { AsrTarget, ToolDeclaration, TranscriptionResult } from "../../host/llm";
 
 /** 转录执行挂点：由宿主装配（探测大小 + 调 LlmService.transcribe）。 */
 export interface TranscribeHook {
   /** 探测文件字节数（审批卡展示用）。 */
   probeSize(path: string): Promise<number>;
-  /** 执行转录；路由与传输错误原样抛出。 */
-  run(req: { path: string; language?: string; model?: string }): Promise<TranscriptionResult>;
+  /** 解析要上传的 endpoint、模型与协议（本地路由，不发生上传）。 */
+  pick(model?: string): Promise<AsrTarget>;
+  /** 用审批卡展示过的 target 执行转录；路由与传输错误原样抛出。 */
+  run(req: { path: string; language?: string; target: AsrTarget }): Promise<TranscriptionResult>;
 }
 
 /** transcribe 工具的上游声明。 */

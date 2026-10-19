@@ -24,7 +24,7 @@ The tool list is assembled per turn: `transcribe` is mounted only when a kind=as
 
 ## Approval modes
 
-The durable default approval mode for new sessions is settings `agentApprovalMode` (default ask); in-session switches write only the session log. Approvals cover in-boundary write/edit, outside read/grep and transcription uploads. `transcribe` is its own family: the card names the file, size and output path and states that the file will be uploaded to the selected ASR endpoint. `ask` waits for a human; `auto` uses the session model for independent history-free guardian review under a shared 90-second deadline and 3-attempt cap; JSON wrappers are extracted, parse failures and transient 408/429/5xx back off within that deadline, valid denials do not retry; expiry aborts and settles cancellation before timeout/final failure deny. Abort records pending items `unavailable`; decisions and reasons enter the log.
+The durable default approval mode for new sessions is settings `agentApprovalMode` (default ask); in-session switches write only the session log. Approvals cover in-boundary write/edit, outside read/grep and transcription uploads. `transcribe` is its own family: the card names the file, size, endpoint and model, and output path; the upload is bound to that target. `ask` waits for a human; `auto` uses the session model for independent history-free guardian review under a shared 90-second deadline and 3-attempt cap; JSON wrappers are extracted, parse failures and transient 408/429/5xx back off within that deadline, valid denials do not retry; expiry aborts and settles cancellation before timeout/final failure deny. Abort records pending items `unavailable`; decisions and reasons enter the log.
 
 ## Session format
 

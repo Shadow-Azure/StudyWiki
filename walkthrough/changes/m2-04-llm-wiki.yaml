@@ -1398,6 +1398,7 @@ codeMap:
                   read_tree,
                   read_text_file,
                   probe_source_file,
+                  file_size,
                   grep_files,
             note: |
               invoke 面注册 probe_source_file，插件仍无法直接触达系统。

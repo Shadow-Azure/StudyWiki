@@ -108,6 +108,7 @@ codeMap:
                       read_tree,
                       read_text_file,
                       probe_source_file,
+                      file_size,
                       grep_files,
                       write_text_file,
                       read_binary_file,
@@ -400,18 +401,24 @@ codeMap:
 
                 /** 解析转录模型归属：只路由 asr 类 endpoint，chat 配置不得误入转录命令。
                  * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
-                async #routeAsr(model?: string): Promise<{ endpointId: string; model: string }> {
+                async #routeAsr(model?: string): Promise<AsrTarget> {
                   const settings = await this.listEndpoints();
                   const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+                  const project = (e: RedactedEndpoint, modelId: string): AsrTarget => ({
+                    endpointId: e.id,
+                    endpointName: e.name,
+                    model: modelId,
+                    protocol: e.protocol === "chat" ? "chat" : "transcriptions",
+                  });
                   if (model) {
                     const owners = asr.filter((e) => e.models.some((m) => m.id === model));
                     if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
                     if (owners.length > 1) {
                       throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
                     }
-                    return { endpointId: owners[0]!.id, model };
+                    return project(owners[0]!, model);
                   }
-                  const candidates = asr.flatMap((e) => e.models.map((m) => ({ endpointId: e.id, model: m.id })));
+                  const candidates = asr.flatMap((e) => e.models.map((m) => project(e, m.id)));
                   if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
                   if (candidates.length > 1) {
                     throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);

@@ -32,7 +32,7 @@ segments:
         }
       }
     note: |
-      这里定义 LLM facade 的依赖缝与归一错误。invoke 是唯一 IPC 接缝，测试注入假实现即可覆盖路由；LlmError 保留稳定 code，前端只按 code 分支。
+      这里定义 LLM facade 的依赖缝与归一错误。invoke 是唯一 IPC 接缝，测试注入假实现即可覆盖路由；LlmError 保留稳定 code。
   - snippet: |
       export interface ModelEntry {
         /** Model id sent as the OpenAI-compatible `model` field. */
@@ -168,8 +168,24 @@ segments:
         /** Timestamped segments, possibly empty. */
         segments: TranscriptionSegment[];
       }
+
+      /** Resolved ASR destination shown in the approval card and bound to the upload. */
+      export interface AsrTarget {
+        /** Endpoint id sent to Rust. */
+        endpointId: string;
+        /** Human-facing endpoint name for the approval card. */
+        endpointName: string;
+        /** Model id sent as the upstream `model` field. */
+        model: string;
+        /** Wire protocol that Rust will use. */
+        protocol: "transcriptions" | "chat";
+      }
+
+      /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
+       * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
+       * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */
     note: |
-      这里集中声明 endpoint/模型/预设投影、消息与工具 wire 形状，以及转录结果。RedactedEndpoint 与 LlmPreset 带 protocol，TranscriptionResult 的 segments 允许空数组，表示上游没有契约时间戳。
+      这里集中声明 endpoint/模型/预设投影、消息与工具 wire 形状、转录结果与 AsrTarget。AsrTarget 把审批卡展示的 endpoint 名称、模型与协议固定下来，后续上传绑定同一目标。
   - snippet: |
       export class LlmService {
         readonly #deps: LlmDeps;
@@ -238,8 +254,9 @@ segments:
         }
 
         /** 解析模型归属 endpoint：只路由 chat 类 endpoint，asr 配置不得误入推理命令。
+         * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
     note: |
-      这里装配 LlmService 并给设置面提供薄命令包装：列表只回脱敏投影，upsert/remove/probe/revealKey 都是单条 invoke，不在前端解析 key 或拼 URL。
+      这里装配 LlmService 并给设置面提供薄命令包装：列表只回脱敏投影，upsert/remove/probe/revealKey 都是单条 invoke。
   - snippet: |
         async #route(model?: string): Promise<{ endpointId: string; model: string; entry: ModelEntry }> {
           const settings = await this.listEndpoints();
@@ -262,18 +279,24 @@ segments:
 
         /** 解析转录模型归属：只路由 asr 类 endpoint，chat 配置不得误入转录命令。
          * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
-        async #routeAsr(model?: string): Promise<{ endpointId: string; model: string }> {
+        async #routeAsr(model?: string): Promise<AsrTarget> {
           const settings = await this.listEndpoints();
           const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+          const project = (e: RedactedEndpoint, modelId: string): AsrTarget => ({
+            endpointId: e.id,
+            endpointName: e.name,
+            model: modelId,
+            protocol: e.protocol === "chat" ? "chat" : "transcriptions",
+          });
           if (model) {
             const owners = asr.filter((e) => e.models.some((m) => m.id === model));
             if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
             if (owners.length > 1) {
               throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
             }
-            return { endpointId: owners[0]!.id, model };
+            return project(owners[0]!, model);
           }
-          const candidates = asr.flatMap((e) => e.models.map((m) => ({ endpointId: e.id, model: m.id })));
+          const candidates = asr.flatMap((e) => e.models.map((m) => project(e, m.id)));
           if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
           if (candidates.length > 1) {
             throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);
@@ -304,12 +327,35 @@ segments:
           });
         }
 
-        /** 转录库根内音视频：Rust 侧按 endpoint protocol 分叉执行，本层只做 asr 路由。
-         * @throws LlmError 路由 MODEL_* 与传输词表原样透传。 */
-        async transcribe(req: { path: string; language?: string; model?: string }): Promise<TranscriptionResult> {
-          const { endpointId, model } = await this.#routeAsr(req.model);
+        /** 解析本次转录要用的 endpoint、模型与协议，供审批卡展示并绑定后续上传。
+         * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
+        resolveAsrTarget(model?: string): Promise<AsrTarget> {
+          return this.#routeAsr(model);
+        }
+
+        /** 转录库根内音视频：使用已解析并展示给用户的 target，Rust 按 protocol 分叉执行。
+         * @throws LlmError 目标 endpoint/模型在审批后消失时报 MODEL_UNKNOWN；传输词表原样透传。 */
+        async transcribe(req: {
+          path: string;
+          language?: string;
+          target: AsrTarget;
+        }): Promise<TranscriptionResult> {
+          const settings = await this.listEndpoints();
+          const endpoint = settings.endpoints.find((e) => e.id === req.target.endpointId);
+          if (!endpoint || endpoint.kind !== "asr" ||
+              !endpoint.models.some((m) => m.id === req.target.model)) {
+            throw new LlmError(
+              "MODEL_UNKNOWN",
+              `ASR endpoint 或模型已变更：${req.target.endpointId}/${req.target.model}`,
+            );
+          }
           return this.#call<TranscriptionResult>("llm_transcribe", {
-            req: { endpointId, model, path: req.path, ...(req.language ? { language: req.language } : {}) },
+            req: {
+              endpointId: req.target.endpointId,
+              model: req.target.model,
+              path: req.path,
+              ...(req.language ? { language: req.language } : {}),
+            },
           });
         }
 
@@ -320,6 +366,9 @@ segments:
         }
 
         /** Convert an abortable stream into the non-streaming result shape. */
+    note: |
+      这里解析模型归属并开放 chat 与转录两条路由。resolveAsrTarget 只做本地路由，返回展示用目标；transcribe 再校验目标仍存在，才发 llm_transcribe，避免审批后 endpoint 被换掉。
+  - snippet: |
         async #consumeChatStream(handle: ChatStreamHandle, signal: AbortSignal): Promise<ChatResult> {
           const abort = (): void => {
             void handle.abort().catch(() => {});
@@ -345,12 +394,6 @@ segments:
           }
         }
 
-        /** 流式 chat：模型路由与 tools/媒体能力门禁在本层，chunk 经 Tauri Channel 逐个交付。
-         * settled 在正常终结 resolve；传输失败或 error chunk 终结时以 LlmError 拒绝。
-         * @throws LlmError 路由 MODEL_*、tools 或媒体不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
-    note: |
-      这里解析模型归属并开放 chat 与转录两条路由。chat 只认 kind=chat；#routeAsr 只认 kind=asr，未点名且多候选时报 MODEL_AMBIGUOUS，没有配置时报 MODEL_UNKNOWN。transcribe 把 path/language 透传给 Rust，hasAsrCapability 决定工具是否挂载。
-  - snippet: |
         /** 流式 chat：模型路由与 tools/媒体能力门禁在本层，chunk 经 Tauri Channel 逐个交付。
          * settled 在正常终结 resolve；传输失败或 error chunk 终结时以 LlmError 拒绝。
          * @throws LlmError 路由 MODEL_*、tools 或媒体不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
@@ -420,4 +463,4 @@ segments:
           };
         }
     note: |
-      这里实现流式 chat：先做 tools/vision/audio 能力门禁，再创建 channel、维护中止与 settled 语义，把 chunk 逐个交给 UI，同时保留最终 finishReason 与 usage。
+      这里实现流式 chat：先做 tools/vision/audio 能力门禁，再创建 channel 并交付 chunk，保留最终 finishReason 与 usage。
