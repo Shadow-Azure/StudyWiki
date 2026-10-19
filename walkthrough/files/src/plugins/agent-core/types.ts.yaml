@@ -3,6 +3,8 @@ source: src/plugins/agent-core/types.ts
 summary: agent-core 消息、批准与会话日志类型契约
 segments:
   - snippet: |
+      import type { ContentPart } from "../../host/llm";
+
       /** 写操作批准模式：`ask` 先请求人批准，`auto` 由 guardian 规则代批。 */
       export type ApprovalMode = "ask" | "auto";
 
@@ -15,9 +17,7 @@ segments:
         /** 原样保留的 JSON 参数文本，解析由工具执行层负责。 */
         argumentsText: string;
       }
-    note: |
-      类型契约先固定审批模式与模型工具调用的基本形状。写审批只有人工请求和守门代批两种入口，工具调用保留原始参数文本，方便执行层统一解析与回指。
-  - snippet: |
+
       /** 一次模型回复的 token 用量。 */
       export interface TokenUsage {
         /** 输入上下文消耗。 */
@@ -26,9 +26,6 @@ segments:
         completionTokens: number;
       }
 
-    note: |
-      TokenUsage 把输入与输出消耗分开记录。它挂在助手消息上，供界面与压缩判断读取，而不是混入模型正文。
-  - snippet: |
       /** Agent 会话中的三种消息形态；用户内容可携带宿主多模态部件。 */
       export type AgentMessage =
         | { role: "user"; content: string | ContentPart[] }
@@ -47,9 +44,7 @@ segments:
             content: string;
             isError?: boolean;
           };
-    note: |
-      AgentMessage 用一个封闭联合表达用户、助手和工具三类历史消息。用户输入可以携带宿主多模态部件，助手消息保留推理、调用、用量与结束原因，工具消息用调用标识回指请求并可标记失败。
-  - snippet: |
+
       /** JSONL 会话头；`v: 1` 是当前解析器接受的唯一格式版本。 */
       export interface SessionHeader {
         /** 格式版本。 */
@@ -62,10 +57,11 @@ segments:
         title: string;
         /** 创建时间 ISO 字符串。 */
         createdAt: string;
-      }
     note: |
-      SessionHeader 是 JSONL 会话的身份记录。版本字段限定当前解析器只接受 v1，同时固定库根、标题和创建时间，便于跨启动识别与校验会话文件。
+      这里定义 agent 消息、工具调用、会话 header 与审批模式。消息形状与 loop/持久化/Wire 组装共享，改一处要同步换算。
   - snippet: |
+      }
+
       /** 会话日志中的一行事件；header 之外均为只追加的过程记录。 */
       export type SessionLine =
         | { type: "header"; header: SessionHeader }
@@ -74,7 +70,7 @@ segments:
             type: "approval";
             id: string;
             /** 审批请求族，恢复历史决定卡时保留写/编辑/越界读语义。 */
-            kind: "write" | "edit" | "read-outside";
+            kind: "write" | "edit" | "read-outside" | "transcribe";
             tool: string;
             path: string;
             decider: "human" | "guardian";
@@ -84,4 +80,4 @@ segments:
         | { type: "mode"; mode: ApprovalMode }
         | { type: "compaction"; summary: string; covered: number; createdAt: string };
     note: |
-      SessionLine 把追加日志分成消息、审批、模式和压缩四类事件。审批行保留写、编辑和越界读语义以及决定者与结果，模式行支持恢复界面状态，压缩行记录摘要和覆盖范围。
+      这里定义 JSONL 会话行：message/approval/mode/compaction。approval 的 kind 增加 transcribe 后，恢复历史时仍能渲染“上传转录”决定卡。

@@ -144,6 +144,13 @@ export class FilesService {
     return this.#deps.invoke("probe_source_file", { path, known }) as Promise<ProbeSample>;
   }
 
+  /** 轻量读取文件字节数（审批卡展示用），不计算哈希。
+   * @param path 绝对路径；库外路径与 `..` 组件被拒绝。
+   * @returns 文件字节数。 */
+  fileSize(path: string): Promise<number> {
+    return this.#deps.invoke("file_size", { path }) as Promise<number>;
+  }
+
   /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
   agentSessionPaths(root: string): Promise<string[]> {
     return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;

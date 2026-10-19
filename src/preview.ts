@@ -83,6 +83,8 @@ class PreviewLlm {
   removeEndpoint() { return Promise.resolve(); }
   revealKey() { return Promise.resolve("preview-key"); }
   probe() { return Promise.resolve(12); }
+  /** 预览桩没有 asr endpoint：agent 不挂载 transcribe。 */
+  hasAsrCapability() { return Promise.resolve(false); }
 
   /** 假流式桩：与 ChatStreamHandle 同形，内部喂宿主真实的 StreamAssembler（预览
    * 也走唯一组装点）；逐 chunk 延时出字，供检视流式渲染与停止交互。 */

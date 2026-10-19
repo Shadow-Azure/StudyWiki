@@ -103,13 +103,17 @@ function serviceWith(rootFiles: Record<string, string>, opts: {
   scripts: StreamChunk[][];
   chat?: (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string; finishReason: string }>;
   streamRequests?: Array<{ model?: string }>;
+  hasAsr?: boolean;
+  toolsSeen?: string[][];
 }) {
   const host = fakeHost(rootFiles);
   const scripted = scriptedChatStream(opts.scripts);
   const svc = createAgentService({
     llm: {
+      hasAsrCapability: async () => opts.hasAsr ?? false,
       chatStream: async (request) => {
         opts.streamRequests?.push({ ...(request.model === undefined ? {} : { model: request.model }) });
+        opts.toolsSeen?.push(request.tools?.map((tool) => tool.name) ?? []);
         return scripted(request);
       },
       chat: opts.chat ?? (async () => ({ content: "{\"approve\":true,\"reason\":\"ok\"}", finishReason: "stop" })),
@@ -130,7 +134,7 @@ describe("AgentService", () => {
     const scripts = [TEXT("第二回合")];
     const stream = blockedFirstThenScriptedChatStream(scripts);
     const svc = createAgentService({
-      llm: { chatStream: stream.chatStream } as never,
+      llm: { hasAsrCapability: async () => false, chatStream: stream.chatStream } as never,
       files: host.svc as never,
       workspace: { activeFile: null, root: "/lib" } as never,
     });
@@ -155,6 +159,7 @@ describe("AgentService", () => {
     const scripted = scriptedChatStream([TEXT("下一回合")]);
     const svc = createAgentService({
       llm: {
+        hasAsrCapability: async () => false,
         chatStream: async (request) => {
           calls.push(calls.length + 1);
           return scripted(request);
@@ -458,7 +463,7 @@ describe("AgentService", () => {
     const { svc } = fakeHost({ "/home/.study-wiki/sessions/lib-root/s1.jsonl": encodeHeader() });
     const captured: { system?: string } = {};
     const agent = createAgentService({
-      llm: { chatStream: capturePromptStream(captured) } as never,
+      llm: { hasAsrCapability: async () => false, chatStream: capturePromptStream(captured) } as never,
       files: svc as never,
       workspace: {
         root: "/lib",
@@ -495,5 +500,16 @@ describe("AgentService", () => {
     await session.send("third");
     expect(captured.system!).not.toContain("# A 替换段");
     expect(captured.system!).not.toContain("# A 段");
+  });
+
+  it("无 asr endpoint 时工具清单不含 transcribe；有则含", async () => {
+    const seen: string[][] = [];
+    for (const hasAsr of [false, true]) {
+      const { svc } = serviceWith({}, { scripts: [TEXT("hi")], hasAsr, toolsSeen: seen });
+      const session = await svc.openSession(null);
+      await session.send("问");
+    }
+    expect(seen[0]).not.toContain("transcribe");
+    expect(seen[1]).toContain("transcribe");
   });
 });

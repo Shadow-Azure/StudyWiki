@@ -2,7 +2,7 @@ kind: feature
 slug: llm-settings
 title: LLM endpoint 配置
 behavior: |
-  模型面板可从厂商预设实例化 endpoint，也可自定义 OpenAI 兼容地址；表单校验通过后经宿主服务交给 Rust 保存，apiKey 只在配置文件中保留并对外脱敏。用户可设默认模型、按需揭示明文并探测 GET /models。
+  模型面板可从厂商预设实例化 endpoint，也可自定义 OpenAI 兼容地址；kind=asr 的 endpoint 还可选转录口或聊天口协议。表单校验通过后经宿主服务交给 Rust 保存，apiKey 只在配置文件中保留并对外脱敏。用户可设默认模型、按需揭示明文并探测 GET /models。
 
 modules: [src/plugins/llm-settings/index.ts, src/plugins/llm-settings/model.ts, src/host/llm.ts, src-tauri/src/llm.rs, src-tauri/src/config.rs]
 steps:
@@ -15,6 +15,12 @@ steps:
           if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
             return "baseUrl 必须以 http:// 或 https:// 开头";
           }
+        if (d.protocol !== undefined && d.protocol !== "transcriptions" && d.protocol !== "chat") {
+          return "protocol 只允许 transcriptions 或 chat";
+        }
+        if (d.kind === "chat" && d.protocol !== undefined) {
+          return "protocol 只允许出现在 kind=asr 的 endpoint 上";
+        }
           if (d.models.length === 0) return "至少要有一个模型";
 
     note: |

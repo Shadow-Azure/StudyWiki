@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 320" role="img" aria-labelledby="title desc">
+  <title id="title">ASR 转录数据流</title>
+  <desc id="desc">用户请求经 agent 工具、审批、Rust 传输、ASR endpoint，最后由前端确定性格式化为 transcript.md。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b7a"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill: #f7fafc; stroke: #5b6b7a; stroke-width: 1.5; rx: 8; }
+    .accent { fill: #eaf4ff; stroke: #2b6cb0; }
+    .warn { fill: #fffaf0; stroke: #b7791f; }
+    .out { fill: #f0fff4; stroke: #2f855a; }
+    .label { font: 14px -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #1a202c; }
+    .sub { font: 12px -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #4a5568; }
+    .edge { stroke: #5b6b7a; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .edgeLabel { font: 11px -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #4a5568; }
+  </style>
+  <rect x="20" y="120" width="150" height="64" class="box"/>
+  <text x="95" y="148" text-anchor="middle" class="label">用户请求</text>
+  <text x="95" y="168" text-anchor="middle" class="sub">转录 lecture-01.mp4</text>
+
+  <rect x="210" y="120" width="170" height="64" class="box accent"/>
+  <text x="295" y="148" text-anchor="middle" class="label">agent transcribe</text>
+  <text x="295" y="168" text-anchor="middle" class="sub">校验扩展名与库根</text>
+
+  <rect x="420" y="120" width="150" height="64" class="box warn"/>
+  <text x="495" y="148" text-anchor="middle" class="label">审批卡</text>
+  <text x="495" y="168" text-anchor="middle" class="sub">文件 / 大小 / 产物</text>
+
+  <rect x="610" y="120" width="150" height="64" class="box accent"/>
+  <text x="685" y="148" text-anchor="middle" class="label">Rust 传输</text>
+  <text x="685" y="168" text-anchor="middle" class="sub">llm_transcribe</text>
+
+  <rect x="800" y="40" width="160" height="64" class="box"/>
+  <text x="880" y="68" text-anchor="middle" class="label">transcriptions</text>
+  <text x="880" y="88" text-anchor="middle" class="sub">multipart 原文件</text>
+
+  <rect x="800" y="200" width="160" height="64" class="box"/>
+  <text x="880" y="228" text-anchor="middle" class="label">chat input_audio</text>
+  <text x="880" y="248" text-anchor="middle" class="sub">wav/mp3 data URL</text>
+
+  <rect x="610" y="248" width="150" height="56" class="out"/>
+  <text x="685" y="272" text-anchor="middle" class="label">确定性格式化</text>
+  <text x="685" y="291" text-anchor="middle" class="sub">代码写时间戳</text>
+
+  <rect x="390" y="248" width="170" height="56" class="out"/>
+  <text x="475" y="272" text-anchor="middle" class="label">transcript.md</text>
+  <text x="475" y="291" text-anchor="middle" class="sub">.study-wiki/raw/...</text>
+
+  <path class="edge" d="M 170 152 L 210 152"/>
+  <path class="edge" d="M 380 152 L 420 152"/>
+  <path class="edge" d="M 570 152 L 610 152"/>
+  <path class="edge" d="M 760 140 L 800 90"/>
+  <path class="edge" d="M 760 165 L 800 215"/>
+  <path class="edge" d="M 880 200 L 700 248"/>
+  <path class="edge" d="M 880 104 L 720 248"/>
+  <path class="edge" d="M 610 276 L 560 276"/>
+
+  <text x="390" y="142" class="edgeLabel">决定</text>
+  <text x="585" y="146" class="edgeLabel">批准后</text>
+  <text x="770" y="105" class="edgeLabel">protocol 缺省</text>
+  <text x="770" y="205" class="edgeLabel">protocol=chat</text>
+  <text x="790" y="160" class="edgeLabel">verbose_json / 纯文本</text>
+</svg>

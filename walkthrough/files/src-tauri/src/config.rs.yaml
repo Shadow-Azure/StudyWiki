@@ -1,6 +1,6 @@
 kind: file-page
 source: src-tauri/src/config.rs
-summary: 用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验
+summary: 用户配置根 ~/.studywiki：解析/老域一次性迁移 + settings.json 模型/原子写 0600/脱敏投影/endpoint 校验（含 asr protocol）
 segments:
   - snippet: |
       //! 用户配置根（~/.studywiki）解析与老 app_config_dir 一次性迁移。
@@ -57,7 +57,8 @@ segments:
           pub capabilities: Vec<String>,
       }
 
-      /// 一条 endpoint 配置（chat = LLM/VLM 共用；asr = 转写，本期仅契约与探测）。
+      /// 一条 endpoint 配置（chat = LLM/VLM 共用；asr = 转写）。
+      /// protocol 仅 asr 有意义：None/transcriptions = 转录口；chat = 聊天口 input_audio。
       #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
       pub struct Endpoint {
           pub id: String,
@@ -67,6 +68,9 @@ segments:
           pub base_url: String,
           #[serde(rename = "apiKey", default)]
           pub api_key: String,
+        /// ASR 接线协议：transcriptions（缺省）或 chat；chat kind 携带属配置错误。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub protocol: Option<String>,
           /// 编辑态 dirty 标记（IPC 入线专用，绝不持久化）：true = apiKey 为显式新值
           /// 或显式清空；false/缺省 = 空 apiKey 表示保留已存 key（见 llm.rs upsert_into）。
           #[serde(default, rename = "apiKeyDirty", skip_serializing)]
@@ -135,6 +139,8 @@ segments:
           pub vendor: String,
           pub has_key: bool,
           pub key_preview: String,
+        /// ASR 接线协议投影（None = transcriptions 缺省）。
+        pub protocol: Option<String>,
           pub models: Vec<ModelEntry>,
       }
 
@@ -239,6 +245,7 @@ segments:
               vendor: "custom".into(),
               has_key: !e.api_key.is_empty(),
               key_preview: preview,
+        protocol: e.protocol.clone(),
               models: e.models.clone(),
           }
       }
@@ -257,6 +264,13 @@ segments:
           if e.kind != "chat" && e.kind != "asr" {
               return Err("kind 只允许 chat 或 asr".into());
           }
+      match e.protocol.as_deref() {
+          None | Some("transcriptions") | Some("chat") => {}
+          Some(other) => return Err(format!("protocol 只允许 transcriptions 或 chat：{other}")),
+      }
+      if e.kind == "chat" && e.protocol.is_some() {
+          return Err("protocol 只允许出现在 kind=asr 的 endpoint 上".into());
+      }
           if e.models.is_empty() {
               return Err("至少要有一个模型".into());
           }
@@ -326,6 +340,7 @@ segments:
                   kind: "chat".into(),
                   base_url: "https://api.deepseek.com/v1".into(),
                   api_key: "sk-1234567890abcdef".into(),
+            protocol: None,
                   api_key_dirty: false,
                   models: vec![ModelEntry {
                       id: "deepseek-v4-flash".into(),
@@ -453,6 +468,34 @@ segments:
               let mut no_key = sample_endpoint();
               no_key.api_key = String::new();
               assert!(!redact(&no_key).has_key);
+          }
+
+          #[test]
+          fn endpoint_protocol_roundtrips_and_defaults_to_none() {
+              let mut e = sample_endpoint();
+              e.kind = "asr".into();
+              e.protocol = Some("chat".into());
+              let json = serde_json::to_string(&e).unwrap();
+              let back: Endpoint = serde_json::from_str(&json).unwrap();
+              assert_eq!(back.protocol.as_deref(), Some("chat"));
+              let legacy: Endpoint =
+                  serde_json::from_str(&json.replace(r#","protocol":"chat""#, "")).unwrap();
+              assert_eq!(legacy.protocol, None);
+          }
+
+          #[test]
+          fn protocol_rejects_unknown_value_and_chat_kind() {
+              let mut bad = sample_endpoint();
+              bad.kind = "asr".into();
+              bad.protocol = Some("websocket".into());
+              assert!(validate_endpoint(&bad).is_err());
+              let mut chat = sample_endpoint();
+              chat.protocol = Some("chat".into());
+              assert!(validate_endpoint(&chat).is_err());
+              let mut ok = sample_endpoint();
+              ok.kind = "asr".into();
+              ok.protocol = Some("transcriptions".into());
+              assert!(validate_endpoint(&ok).is_ok());
           }
 
           #[test]

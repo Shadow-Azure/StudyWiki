@@ -655,6 +655,26 @@ segments:
           crate::probe::probe_file(std::path::Path::new(&path), known)
       }
 
+      /// 轻量返回文件字节数（审批卡展示用），不读取内容、不计算哈希。
+      fn file_len(path: &Path) -> Result<u64, String> {
+          fs::metadata(path)
+              .map(|m| m.len())
+              .map_err(|e| format!("stat {}: {e}", path.display()))
+      }
+
+      /// 审批前的大小探测：读域授权后只 stat，避免为大文件重复计算哈希。
+      #[tauri::command]
+      fn file_size<R: tauri::Runtime>(
+          window: tauri::Window<R>,
+          app: tauri::AppHandle<R>,
+          state: tauri::State<'_, std::sync::Mutex<windows::WindowRegistry>>,
+          path: String,
+      ) -> Result<u64, String> {
+          let config_root = config::app_studywiki_dir(&app)?;
+          ensure_authorized_read(&state, window.label(), &path, &config_root)?;
+          file_len(Path::new(&path))
+      }
+
       /// agent grep 工具：读域授权校验后 spawn sidecar ripgrep，边界含当前窗口读 grants。
       #[tauri::command]
       fn grep_files<R: tauri::Runtime>(
@@ -699,6 +719,7 @@ segments:
               read_tree,
               read_text_file,
               probe_source_file,
+              file_size,
               grep_files,
               write_text_file,
               read_binary_file,
@@ -734,6 +755,7 @@ segments:
               llm::agent_set_default_approval_mode,
               llm::llm_chat,
               llm::llm_chat_stream,
+          llm::llm_transcribe,
               llm::llm_chat_abort
           ])
       }
@@ -917,6 +939,17 @@ segments:
               assert!(ensure_agent_session_file(&home, &home.join("other").join("s.jsonl")).is_err());
               std::fs::remove_dir_all(&home).ok();
           }
+
+      #[test]
+      fn file_len_reports_bytes_without_hashing() {
+          let dir = std::env::temp_dir().join(format!("sw-file-len-{}", std::process::id()));
+          std::fs::create_dir_all(&dir).unwrap();
+          let p = dir.join("a.bin");
+          std::fs::write(&p, b"12345").unwrap();
+          assert_eq!(file_len(&p).unwrap(), 5);
+          assert!(file_len(&dir.join("missing")).is_err());
+          std::fs::remove_dir_all(&dir).ok();
+      }
 
           #[test]
           fn legacy_library_sessions_migrate_into_user_domain() {

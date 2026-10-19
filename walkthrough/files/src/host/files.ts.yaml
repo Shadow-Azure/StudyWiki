@@ -19,8 +19,7 @@ segments:
         context?: number;
         limit?: number;
       }
-    note: import 和 GrepRequest 声明文件服务的基础依赖与 agent 搜索输入。path 必须已经获得读授权，可选开关把大小写、literal、glob 和上下文能力集中成稳定请求形状。
-  - snippet: |
+
       /** One grep hit, with nearby context lines and no line-number prefixes. */
       export interface GrepMatch {
         path: string;
@@ -45,8 +44,7 @@ segments:
         /** 流式 SHA-256（小写 hex）。 */
         sha256: string;
       }
-    note: GrepMatch 与 GrepResult 定义命中、上下文和 truncated 语义。UI 可以直接渲染这些字段，不需要了解原生 ripgrep 的 JSON 输出细节。
-  - snippet: |
+
       /** Arguments accepted by Tauri 2 raw/JSON invoke; limited to what the files commands use. */
       export type FilesInvokeArgs = Record<string, unknown> | Uint8Array;
 
@@ -62,8 +60,7 @@ segments:
         openDialog: () => Promise<string | null>;
         assetUrl: (path: string) => string;
       }
-    note: FilesInvokeArgs、FilesInvokeOptions 和 FilesDeps 概括 Tauri raw/JSON invoke 与事件、目录选择、asset URL 系统缝。服务依赖接口而不是直接绑定 SDK，使测试可以只替换一个边界。
-  - snippet: |
+
       /** Accept Tauri raw bytes while preserving numeric-array mocks for test compatibility. */
       function normalizeRawBytes(value: unknown): Uint8Array {
         if (value instanceof Uint8Array) return new Uint8Array(value);
@@ -73,8 +70,7 @@ segments:
         }
         throw new TypeError("Tauri IPC response is not raw bytes");
       }
-    note: normalizeRawBytes 接受真实 Tauri raw bytes，同时兼容测试中常见的整数数组 mock。非法形状立即抛 TypeError，防止二进制内容被静默误解。
-  - snippet: |
+
       /** Real Tauri bindings (the only sanctioned import site for these). */
       export const defaultFilesDeps: FilesDeps = {
         invoke,
@@ -82,124 +78,11 @@ segments:
         openDialog: () => open({ directory: true, multiple: false }) as Promise<string | null>,
         assetUrl: convertFileSrc,
       };
-    note: defaultFilesDeps 是唯一允许直接引入 Tauri 文件系统能力的默认装配点。四个绑定在这里集中，后续 FilesService 只依赖可替换接口。
-  - snippet: |
+
       /** Window-scoped service: the only file channel plugins may use. */
-      export class FilesService {
-        readonly #deps: FilesDeps;
-        readonly #events = createEmitter<{ "fs-changed": string }>();
-        #unlisten: (() => void) | null = null;
-
-        constructor(deps: FilesDeps = defaultFilesDeps) {
-          this.#deps = deps;
-        }
-
-        /** Bridge Rust `fs://changed` broadcasts into this window. */
-        async start(): Promise<void> {
-          this.#unlisten = await this.#deps.listen("fs://changed", (e) =>
-            this.#events.emit("fs-changed", String(e.payload)));
-        }
-
-        /** Stop bridging (window teardown). */
-        stop(): void {
-          this.#unlisten?.();
-          this.#unlisten = null;
-        }
-    note: FilesService 类从默认装配和私有事件流开始，随后提供 start/stop 控制 fs://changed 桥接生命周期。窗口 teardown 停止监听后，旧订阅不会再收到文件变更。
+    note: |
+      这里定义 grep、探测样本、依赖缝与默认绑定。FilesService 是插件唯一文件通道，注入 invoke/listen/dialog/assetUrl 四个接缝。
   - snippet: |
-      /** Window-scoped service: the only file channel plugins may use. */
-      export class FilesService {
-        readonly #deps: FilesDeps;
-        readonly #events = createEmitter<{ "fs-changed": string }>();
-        #unlisten: (() => void) | null = null;
-
-        constructor(deps: FilesDeps = defaultFilesDeps) {
-          this.#deps = deps;
-        }
-
-        /** Bridge Rust `fs://changed` broadcasts into this window. */
-        async start(): Promise<void> {
-          this.#unlisten = await this.#deps.listen("fs://changed", (e) =>
-            this.#events.emit("fs-changed", String(e.payload)));
-        }
-
-        /** Stop bridging (window teardown). */
-        stop(): void {
-          this.#unlisten?.();
-          this.#unlisten = null;
-        }
-
-        /** Full recursive tree of an opened root. */
-        readTree(root: string): Promise<FileNode[]> {
-          return this.#deps.invoke("read_tree", { root }) as Promise<FileNode[]>;
-        }
-
-        /** Whole-file UTF-8 read — the document data source. */
-        readText(path: string): Promise<string> {
-          return this.#deps.invoke("read_text_file", { path }) as Promise<string>;
-        }
-
-        /** Whole-file write; Rust broadcasts the change (including back to us). */
-        writeText(path: string, contents: string): Promise<void> {
-          return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
-        }
-    note: 完整类视窗前半段确认文件服务是插件唯一文件通道：读取树、读文本和写文本都经注入的 invoke 缝。写文本后由 Rust 广播变更，前端插件不需要自己实现写后通知。
-  - snippet: |
-      /** Window-scoped service: the only file channel plugins may use. */
-      export class FilesService {
-        readonly #deps: FilesDeps;
-        readonly #events = createEmitter<{ "fs-changed": string }>();
-        #unlisten: (() => void) | null = null;
-
-        constructor(deps: FilesDeps = defaultFilesDeps) {
-          this.#deps = deps;
-        }
-
-        /** Bridge Rust `fs://changed` broadcasts into this window. */
-        async start(): Promise<void> {
-          this.#unlisten = await this.#deps.listen("fs://changed", (e) =>
-            this.#events.emit("fs-changed", String(e.payload)));
-        }
-
-        /** Stop bridging (window teardown). */
-        stop(): void {
-          this.#unlisten?.();
-          this.#unlisten = null;
-        }
-
-        /** Full recursive tree of an opened root. */
-        readTree(root: string): Promise<FileNode[]> {
-          return this.#deps.invoke("read_tree", { root }) as Promise<FileNode[]>;
-        }
-
-        /** Whole-file UTF-8 read — the document data source. */
-        readText(path: string): Promise<string> {
-          return this.#deps.invoke("read_text_file", { path }) as Promise<string>;
-        }
-
-        /** Whole-file write; Rust broadcasts the change (including back to us). */
-        writeText(path: string, contents: string): Promise<void> {
-          return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
-        }
-
-        /** Whole-file binary read — the Excel service's byte source. */
-        async readBinary(path: string): Promise<Uint8Array> {
-          const bytes = await this.#deps.invoke("read_binary_file", new Uint8Array(0), {
-            headers: { "x-studywiki-path": encodeURIComponent(path) },
-          });
-          return normalizeRawBytes(bytes);
-        }
-
-        /** Whole-file binary write; Rust writes atomically and broadcasts the change. */
-        writeBinary(path: string, bytes: Uint8Array): Promise<void> {
-          return this.#deps.invoke("write_binary_file", bytes, {
-            headers: { "x-studywiki-path": encodeURIComponent(path) },
-          }) as Promise<void>;
-        }
-
-    note: binary read/write 使用 raw invoke 和路径 header，读回结果先归一化。写侧同样交给 Rust 原子写入并广播，Excel 编辑路径不直接触碰磁盘。
-  - snippet: |
-      /** Window-scoped service: the only file channel plugins may use. */
       export class FilesService {
         readonly #deps: FilesDeps;
         readonly #events = createEmitter<{ "fs-changed": string }>();
@@ -252,107 +135,9 @@ segments:
         }
 
         /** Run the agent grep tool over a read-authorized path; coded errors pass through unwrapped. */
-        grepFiles(req: GrepRequest): Promise<GrepResult> {
-          return this.#deps.invoke("grep_files", { req }) as Promise<GrepResult>;
-        }
-
-        /** Add an existing path to this window's dynamic read-only grants; write access stays root-only. */
-        authorizeReadPath(path: string): Promise<void> {
-          return this.#deps.invoke("authorize_read_path", { path }) as Promise<void>;
-        }
-
-        /** 探测源文件的大小/mtime/SHA-256；known 命中（size+mtimeMs 一致）时跳过哈希。
-         * @param path 绝对路径；库外路径与 `..` 组件被拒绝。
-         * @param known 上次探测样本（缓存快路径）。
-         * @returns 最新探测样本。 */
-        probeSourceFile(path: string, known?: ProbeSample): Promise<ProbeSample> {
-          return this.#deps.invoke("probe_source_file", { path, known }) as Promise<ProbeSample>;
-        }
-
-        /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
-        agentSessionPaths(root: string): Promise<string[]> {
-          return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;
-        }
-
-        /** Allocate the user-level per-root path for one new session. */
-        agentSessionPath(root: string, id: string): Promise<string> {
-          return this.#deps.invoke("agent_session_path", { root, id }) as Promise<string>;
-        }
-
-        /** Read one agent session file from the user-level per-root session domain. */
-        readAgentSessionFile(path: string): Promise<string> {
-          return this.#deps.invoke("read_agent_session_file", { path }) as Promise<string>;
-        }
-
-        /** Atomically rewrite one agent session file in the user-level per-root session domain. */
-        writeAgentSessionFile(path: string, contents: string): Promise<void> {
-          return this.#deps.invoke("write_agent_session_file", { path, contents }) as Promise<void>;
-        }
-
-        /** Append one newline-free JSONL session event inside the original authorized root. */
-        appendSessionEvent(path: string, line: string): Promise<void> {
-          return this.#deps.invoke("append_session_event", { path, line }) as Promise<void>;
-        }
-
-        /** Delete an agent session file confined to the user-level per-root session domain; success does not broadcast. */
-        deleteSessionFile(path: string): Promise<void> {
-          return this.#deps.invoke("delete_session_file", { path }) as Promise<void>;
-        }
-    note: 文件服务同时承载 grep、动态只读授权、会话路径分配和 agent 会话文件读写。编码错误原样透传，会话持久化继续受用户级 per-root 域约束。
+    note: |
+      这里实现窗口级文件服务：树读取、文本/二进制读写。start/stop 只桥接 fs://changed，不做业务判断。
   - snippet: |
-      /** Window-scoped service: the only file channel plugins may use. */
-      export class FilesService {
-        readonly #deps: FilesDeps;
-        readonly #events = createEmitter<{ "fs-changed": string }>();
-        #unlisten: (() => void) | null = null;
-
-        constructor(deps: FilesDeps = defaultFilesDeps) {
-          this.#deps = deps;
-        }
-
-        /** Bridge Rust `fs://changed` broadcasts into this window. */
-        async start(): Promise<void> {
-          this.#unlisten = await this.#deps.listen("fs://changed", (e) =>
-            this.#events.emit("fs-changed", String(e.payload)));
-        }
-
-        /** Stop bridging (window teardown). */
-        stop(): void {
-          this.#unlisten?.();
-          this.#unlisten = null;
-        }
-
-        /** Full recursive tree of an opened root. */
-        readTree(root: string): Promise<FileNode[]> {
-          return this.#deps.invoke("read_tree", { root }) as Promise<FileNode[]>;
-        }
-
-        /** Whole-file UTF-8 read — the document data source. */
-        readText(path: string): Promise<string> {
-          return this.#deps.invoke("read_text_file", { path }) as Promise<string>;
-        }
-
-        /** Whole-file write; Rust broadcasts the change (including back to us). */
-        writeText(path: string, contents: string): Promise<void> {
-          return this.#deps.invoke("write_text_file", { path, contents }) as Promise<void>;
-        }
-
-        /** Whole-file binary read — the Excel service's byte source. */
-        async readBinary(path: string): Promise<Uint8Array> {
-          const bytes = await this.#deps.invoke("read_binary_file", new Uint8Array(0), {
-            headers: { "x-studywiki-path": encodeURIComponent(path) },
-          });
-          return normalizeRawBytes(bytes);
-        }
-
-        /** Whole-file binary write; Rust writes atomically and broadcasts the change. */
-        writeBinary(path: string, bytes: Uint8Array): Promise<void> {
-          return this.#deps.invoke("write_binary_file", bytes, {
-            headers: { "x-studywiki-path": encodeURIComponent(path) },
-          }) as Promise<void>;
-        }
-
-        /** Run the agent grep tool over a read-authorized path; coded errors pass through unwrapped. */
         grepFiles(req: GrepRequest): Promise<GrepResult> {
           return this.#deps.invoke("grep_files", { req }) as Promise<GrepResult>;
         }
@@ -370,7 +155,17 @@ segments:
           return this.#deps.invoke("probe_source_file", { path, known }) as Promise<ProbeSample>;
         }
 
+        /** 轻量读取文件字节数（审批卡展示用），不计算哈希。
+         * @param path 绝对路径；库外路径与 `..` 组件被拒绝。
+         * @returns 文件字节数。 */
+        fileSize(path: string): Promise<number> {
+          return this.#deps.invoke("file_size", { path }) as Promise<number>;
+        }
+
         /** List session JSONL paths for the opened library; Rust migrates legacy in-root files. */
+    note: |
+      这里收口 grep、越权读授权、源探测与审批前大小读取。fileSize 只 stat，不读内容也不计算哈希，避免大视频在审批前多读一遍。
+  - snippet: |
         agentSessionPaths(root: string): Promise<string[]> {
           return this.#deps.invoke("agent_session_paths", { root }) as Promise<string[]>;
         }
@@ -414,5 +209,5 @@ segments:
         onFsChanged(fn: (path: string) => void): () => void {
           return this.#events.on("fs-changed", fn);
         }
-      }
-    note: 完整 FilesService 显示本地文件能力的统一出口：目录选择、媒体 asset URL 和类型化 fs-changed 订阅都在类尾收口。订阅者拿到路径并用返回闭包退订。
+    note: |
+      这里实现用户级会话 JSONL 命令、文件夹选择、asset URL 与 fs 变更订阅；会话域仍由 Rust 收口。

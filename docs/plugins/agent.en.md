@@ -16,12 +16,15 @@ UI-free `agent-core` injects the three host facades and publishes `ctx.agent`: l
 | `grep` | `pattern`; `path?`; `glob?`; `ignoreCase?`; `literal?`; `context?`; `limit?` | ripgrep sidecar; path defaults to root; default 100 hits and 20 MB/30-second budget |
 | `write` | `path`; `content` | Creates/replaces text in the root; after approval writes atomically and broadcasts |
 | `edit` | `path`; `old_string`; `new_string`; `replace_all?` | Exact replacement; zero/multiple matches without replacement error; approval comparison, then atomic write |
+| `transcribe` | `path`; `language?`; `model?` | Uploads root media to a kind=asr endpoint; one approval covers upload and write; output `.study-wiki/raw/<source without extension>/transcript.md` with `[HH:MM:SS]` segments, or degrades to `timestamps: none` |
 
 Oversized output is truncated and marked. Outside reads/searches ask first; approval registers the chosen file/directory read grant. Outside-root writes fail in every mode.
 
+The tool list is assembled per turn: `transcribe` is mounted only when a kind=asr endpoint with models exists. If all ASR configuration is removed mid-session, the tool disappears on the next turn; a model replaying a historical call gets an explicit "no ASR configured" error.
+
 ## Approval modes
 
-The durable default approval mode for new sessions is settings `agentApprovalMode` (default ask); in-session switches write only the session log. Approvals cover in-boundary write/edit and outside read/grep. `ask` waits for a human; `auto` uses the session model for independent history-free guardian review under a shared 90-second deadline and 3-attempt cap; JSON wrappers are extracted, parse failures and transient 408/429/5xx back off within that deadline, valid denials do not retry; expiry aborts and settles cancellation before timeout/final failure deny. Abort records pending items `unavailable`; decisions and reasons enter the log.
+The durable default approval mode for new sessions is settings `agentApprovalMode` (default ask); in-session switches write only the session log. Approvals cover in-boundary write/edit, outside read/grep and transcription uploads. `transcribe` is its own family: the card names the file, size, endpoint and model, and output path; the upload is bound to that target. `ask` waits for a human; `auto` uses the session model for independent history-free guardian review under a shared 90-second deadline and 3-attempt cap; JSON wrappers are extracted, parse failures and transient 408/429/5xx back off within that deadline, valid denials do not retry; expiry aborts and settles cancellation before timeout/final failure deny. Abort records pending items `unavailable`; decisions and reasons enter the log.
 
 ## Session format
 
@@ -38,4 +41,4 @@ The log keeps full text; compaction changes only the model view. Usage above 800
 
 ## AGENTS.md convention
 
-The system prompt is rebuilt each turn with root `AGENTS.md`, the active file and mode sentence. No notes location is preset; m2-04 constrains behavior through an in-library `AGENTS.md`.
+The system prompt is rebuilt each turn with root `AGENTS.md`, the active file and mode sentence; the in-library `AGENTS.md` sets where notes go.

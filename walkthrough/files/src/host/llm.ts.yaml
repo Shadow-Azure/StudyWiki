@@ -1,8 +1,11 @@
 kind: file-page
 source: src/host/llm.ts
-summary: LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream，能力门禁，deps 可注入）
+summary: LLM 服务：模型路由（MODEL_* 三码）+ 推理 facade（list/upsert/remove/probe/chat/chatStream/transcribe，能力门禁，deps 可注入）
 segments:
   - snippet: |
+      import { Channel, invoke } from "@tauri-apps/api/core";
+      import { ChunkQueue, StreamAssembler, type ChatStreamHandle, type StreamChunk } from "./llm-stream";
+
       /** Tauri channel factory for streaming callbacks; injectable with the invoke seam. */
       export type LlmChannel = { onmessage: ((chunk: StreamChunk) => void) | null };
 
@@ -13,8 +16,7 @@ segments:
         invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
         createChannel?: () => LlmChannel;
       }
-    note: LlmChannel 与 LlmDeps 定义流回调工厂和 invoke 缝，测试可以整体替换传输边界。默认装配仍留在本文件，部分注入时由服务提醒补齐假 channel 工厂。
-  - snippet: |
+
       /** Real Tauri binding (the only sanctioned import site). */
       export const defaultLlmDeps: LlmDeps = {
         invoke,
@@ -29,9 +31,9 @@ segments:
           this.name = "LlmError";
         }
       }
-    note: defaultLlmDeps 是唯一直接绑定 Tauri Channel 的默认缝。LlmError 固定携带 code，使 Rust 传输码和本层 MODEL_* 路由码能统一向上传递。
+    note: |
+      这里定义 LLM facade 的依赖缝与归一错误。invoke 是唯一 IPC 接缝，测试注入假实现即可覆盖路由；LlmError 保留稳定 code。
   - snippet: |
-      /** One model entry inside an endpoint (capabilities: text / vision / audio). */
       export interface ModelEntry {
         /** Model id sent as the OpenAI-compatible `model` field. */
         id: string;
@@ -47,11 +49,14 @@ segments:
         name: string;
         /** OpenAI-compatible base URL. */
         baseUrl: string;
+        /** Preset class: chat or asr. */
+        kind: string;
+        /** ASR wire protocol; null/absent means the transcriptions endpoint. */
+        protocol?: string | null;
         /** Editable template model list. */
         models: ModelEntry[];
       }
-    note: ModelEntry 与 LlmPreset 描述模型能力、厂商名、baseUrl 和可编辑模型表。能力词表为后续 tools、vision 和 audio 门禁提供依据。
-  - snippet: |
+
       /** Redacted endpoint projection — no full key ever crosses IPC. */
       export interface RedactedEndpoint {
         id: string;
@@ -62,6 +67,8 @@ segments:
         vendor: string;
         hasKey: boolean;
         keyPreview: string;
+        /** ASR wire protocol projection; null/absent means the transcriptions endpoint. */
+        protocol?: string | null;
         models: ModelEntry[];
       }
 
@@ -72,8 +79,7 @@ segments:
         /** Durable default for newly created agent sessions; existing sessions keep their own mode. */
         agentApprovalMode?: "ask" | "auto" | null;
       }
-    note: RedactedEndpoint 和 RedactedSettings 是列表与默认值的脱敏投影。hasKey/keyPreview 足够驱动界面状态，而完整密钥不跨 IPC。
-  - snippet: |
+
       /** Endpoint payload accepted by `llm_upsert_endpoint` (camelCase wire form). */
       export interface EndpointInput {
         id: string;
@@ -83,6 +89,8 @@ segments:
         apiKey: string;
         /** 编辑态 dirty：true = apiKey 为显式值（空串 = 显式清空）；缺省 = 空 apiKey 表示保留已存 key。 */
         apiKeyDirty?: boolean;
+        /** ASR wire protocol: transcriptions (default) or chat; only valid on kind=asr. */
+        protocol?: string | null;
         models: ModelEntry[];
       }
 
@@ -106,8 +114,7 @@ segments:
         /** JSON Schema object describing the tool arguments. */
         parameters: Record<string, unknown>;
       }
-    note: EndpointInput 定义编辑面，其中 apiKeyDirty 明确区分“空串表示清空”和“缺省表示保留已存 key”。ContentPart、MediaSource 和 ToolDeclaration 固定多模态与工具的 wire 形状。
-  - snippet: |
+
       /** Chat message wire shape, including the assistant tool-call and tool-result forms. */
       export interface ChatMessage {
         /** Provider role: user / assistant / tool / system. */
@@ -143,154 +150,43 @@ segments:
         finishReason: string;
         usage?: { promptTokens: number; completionTokens: number };
       }
-    note: ChatMessage、ChatInput 和 ChatResult 定义推理调用的公共消息契约。model 是路由键，signal 只在调用方路由层使用且不会序列化给 Rust；结果只保留第一个 choice。
-  - snippet: |
+
+      /** One timestamped transcript segment (seconds). */
+      export interface TranscriptionSegment {
+        /** Segment start in seconds. */
+        start: number;
+        /** Segment end in seconds. */
+        end: number;
+        /** Segment text. */
+        text: string;
+      }
+
+      /** Unified transcription result: an empty segments array means the server returned no timestamps. */
+      export interface TranscriptionResult {
+        /** Full transcript text. */
+        text: string;
+        /** Timestamped segments, possibly empty. */
+        segments: TranscriptionSegment[];
+      }
+
+      /** Resolved ASR destination shown in the approval card and bound to the upload. */
+      export interface AsrTarget {
+        /** Endpoint id sent to Rust. */
+        endpointId: string;
+        /** Human-facing endpoint name for the approval card. */
+        endpointName: string;
+        /** Model id sent as the upstream `model` field. */
+        model: string;
+        /** Wire protocol that Rust will use. */
+        protocol: "transcriptions" | "chat";
+      }
+
       /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
        * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
        * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */
-      export class LlmService {
-        readonly #deps: LlmDeps;
-
-        constructor(deps: LlmDeps = defaultLlmDeps) {
-          if (deps !== defaultLlmDeps && !deps.createChannel) {
-            console.warn(
-              "[llm] deps 未提供 createChannel，回落真实 Tauri Channel——测试环境请在 deps 注入假工厂",
-            );
-          }
-          this.#deps = { ...defaultLlmDeps, ...deps };
-        }
-
-        /** Single IPC seam; rejections normalize into LlmError(code). */
-        async #call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-          try {
-            return (await this.#deps.invoke(cmd, args)) as T;
-          } catch (e) {
-            const shape = e as { code?: unknown; message?: unknown };
-            if (shape && typeof shape.code === "string") {
-              throw new LlmError(shape.code, typeof shape.message === "string" ? shape.message : shape.code);
-            }
-            throw new LlmError("BAD_RESPONSE", e instanceof Error ? e.message : String(e));
-          }
-        }
-    note: LlmService 从类声明进入统一推理 facade，构造时合并默认依赖并提醒测试补齐假工厂。#call 是唯一 IPC 出口，把带 code 的错误归一成 LlmError，其余异常归一为 BAD_RESPONSE。
+    note: |
+      这里集中声明 endpoint/模型/预设投影、消息与工具 wire 形状、转录结果与 AsrTarget。AsrTarget 把审批卡展示的 endpoint 名称、模型与协议固定下来，后续上传绑定同一目标。
   - snippet: |
-      /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
-       * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
-       * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */
-      export class LlmService {
-        readonly #deps: LlmDeps;
-
-        constructor(deps: LlmDeps = defaultLlmDeps) {
-          if (deps !== defaultLlmDeps && !deps.createChannel) {
-            console.warn(
-              "[llm] deps 未提供 createChannel，回落真实 Tauri Channel——测试环境请在 deps 注入假工厂",
-            );
-          }
-          this.#deps = { ...defaultLlmDeps, ...deps };
-        }
-
-        /** Single IPC seam; rejections normalize into LlmError(code). */
-        async #call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-          try {
-            return (await this.#deps.invoke(cmd, args)) as T;
-          } catch (e) {
-            const shape = e as { code?: unknown; message?: unknown };
-            if (shape && typeof shape.code === "string") {
-              throw new LlmError(shape.code, typeof shape.message === "string" ? shape.message : shape.code);
-            }
-            throw new LlmError("BAD_RESPONSE", e instanceof Error ? e.message : String(e));
-          }
-        }
-
-        /** 厂商预设表（baseUrl 只在 Rust 侧定义）。 */
-        listPresets(): Promise<LlmPreset[]> {
-          return this.#call<LlmPreset[]>("llm_list_presets");
-        }
-
-        /** 脱敏 endpoint 列表 + 默认模型。 */
-        listEndpoints(): Promise<RedactedSettings> {
-          return this.#call<RedactedSettings>("llm_list_endpoints");
-        }
-
-        /** 新增或按 id 覆盖 endpoint（仅内置插件面；校验失败 INVALID_CONFIG）。 */
-        upsertEndpoint(endpoint: EndpointInput): Promise<void> {
-          return this.#call<void>("llm_upsert_endpoint", { endpoint });
-        }
-
-        /** 按 id 删除 endpoint（缺席 ENDPOINT_UNKNOWN）。 */
-        removeEndpoint(id: string): Promise<void> {
-          return this.#call<void>("llm_remove_endpoint", { id });
-        }
-
-        /** 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达；未知模型 INVALID_CONFIG）。 */
-        setDefaultModel(model: string | null): Promise<void> {
-          return this.#call<void>("llm_set_default_model", { model });
-        }
-
-        /** 设置新建 agent 会话的 durable 审批模式；当前会话不跟随改写。 */
-        setDefaultAgentApprovalMode(mode: "ask" | "auto"): Promise<void> {
-          return this.#call<void>("agent_set_default_approval_mode", { mode });
-        }
-
-        /** 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；
-         * 仅内置插件面——guard 外置白名单不含本方法）。 */
-        revealKey(id: string): Promise<string> {
-          return this.#call<string>("llm_reveal_key", { id });
-        }
-
-        /** 探测 endpoint（GET /models），成功返回延迟 ms。 */
-        probe(id: string): Promise<number> {
-          return this.#call<number>("llm_probe", { id });
-        }
-
-        /** 解析模型归属 endpoint：只路由 chat 类 endpoint，asr 配置不得误入推理命令。
-         * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
-        async #route(model?: string): Promise<{ endpointId: string; model: string; entry: ModelEntry }> {
-          const settings = await this.listEndpoints();
-          const resolved = model ?? settings.defaultModel;
-          if (!resolved) {
-            throw new LlmError("MODEL_UNSPECIFIED", "未指定 model 且未配置默认模型");
-          }
-          const owners = settings.endpoints.filter(
-            (e) => e.kind === "chat" && e.models.some((m) => m.id === resolved),
-          );
-          if (owners.length === 0) {
-            throw new LlmError("MODEL_UNKNOWN", `未找到模型：${resolved}`);
-          }
-          if (owners.length > 1) {
-            throw new LlmError("MODEL_AMBIGUOUS", `模型 ${resolved} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
-          }
-          const entry = owners[0].models.find((m) => m.id === resolved)!;
-          return { endpointId: owners[0].id, model: resolved, entry };
-        }
-
-        /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
-         * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）/
-         *   tools 不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
-        async chat(req: ChatInput): Promise<ChatResult> {
-          const { endpointId, model, entry } = await this.#route(req.model);
-          if (req.tools?.length && !entry.capabilities.includes("tools")) {
-            throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持工具调用");
-          }
-          if (req.signal) {
-            return await this.#consumeChatStream(await this.chatStream(req), req.signal);
-          }
-          return this.#call<ChatResult>("llm_chat", {
-            req: {
-              endpointId,
-              model,
-              messages: req.messages,
-              ...(req.tools?.length ? { tools: req.tools } : {}),
-              ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
-              ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-            },
-          });
-        }
-    note: 完整类视窗到非流式 chat：endpoint CRUD、默认模型、审批模式和 revealKey 都经同一个 IPC 缝；chat 先做模型路由和 tools 能力检查，带 signal 时转用流式消费以支持取消。
-  - snippet: |
-      /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
-       * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
-       * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */
       export class LlmService {
         readonly #deps: LlmDeps;
 
@@ -359,6 +255,9 @@ segments:
 
         /** 解析模型归属 endpoint：只路由 chat 类 endpoint，asr 配置不得误入推理命令。
          * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
+    note: |
+      这里装配 LlmService 并给设置面提供薄命令包装：列表只回脱敏投影，upsert/remove/probe/revealKey 都是单条 invoke。
+  - snippet: |
         async #route(model?: string): Promise<{ endpointId: string; model: string; entry: ModelEntry }> {
           const settings = await this.listEndpoints();
           const resolved = model ?? settings.defaultModel;
@@ -376,6 +275,33 @@ segments:
           }
           const entry = owners[0].models.find((m) => m.id === resolved)!;
           return { endpointId: owners[0].id, model: resolved, entry };
+        }
+
+        /** 解析转录模型归属：只路由 asr 类 endpoint，chat 配置不得误入转录命令。
+         * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
+        async #routeAsr(model?: string): Promise<AsrTarget> {
+          const settings = await this.listEndpoints();
+          const asr = settings.endpoints.filter((e) => e.kind === "asr" && e.models.length > 0);
+          const project = (e: RedactedEndpoint, modelId: string): AsrTarget => ({
+            endpointId: e.id,
+            endpointName: e.name,
+            model: modelId,
+            protocol: e.protocol === "chat" ? "chat" : "transcriptions",
+          });
+          if (model) {
+            const owners = asr.filter((e) => e.models.some((m) => m.id === model));
+            if (owners.length === 0) throw new LlmError("MODEL_UNKNOWN", `未找到 ASR 模型：${model}`);
+            if (owners.length > 1) {
+              throw new LlmError("MODEL_AMBIGUOUS", `模型 ${model} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
+            }
+            return project(owners[0]!, model);
+          }
+          const candidates = asr.flatMap((e) => e.models.map((m) => project(e, m.id)));
+          if (candidates.length === 0) throw new LlmError("MODEL_UNKNOWN", "未配置 ASR endpoint");
+          if (candidates.length > 1) {
+            throw new LlmError("MODEL_AMBIGUOUS", `存在多个 ASR 模型，请指定 model：${candidates.map((c) => c.model).join(", ")}`);
+          }
+          return candidates[0]!;
         }
 
         /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
@@ -399,149 +325,50 @@ segments:
               ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
             },
           });
+        }
+
+        /** 解析本次转录要用的 endpoint、模型与协议，供审批卡展示并绑定后续上传。
+         * @throws LlmError MODEL_UNKNOWN（无归属或无配置）/ MODEL_AMBIGUOUS（多归属或多候选未点名）。 */
+        resolveAsrTarget(model?: string): Promise<AsrTarget> {
+          return this.#routeAsr(model);
+        }
+
+        /** 转录库根内音视频：使用已解析并展示给用户的 target，Rust 按 protocol 分叉执行。
+         * @throws LlmError 目标 endpoint/模型在审批后消失时报 MODEL_UNKNOWN；传输词表原样透传。 */
+        async transcribe(req: {
+          path: string;
+          language?: string;
+          target: AsrTarget;
+        }): Promise<TranscriptionResult> {
+          const settings = await this.listEndpoints();
+          const endpoint = settings.endpoints.find((e) => e.id === req.target.endpointId);
+          if (!endpoint || endpoint.kind !== "asr" ||
+              !endpoint.models.some((m) => m.id === req.target.model)) {
+            throw new LlmError(
+              "MODEL_UNKNOWN",
+              `ASR endpoint 或模型已变更：${req.target.endpointId}/${req.target.model}`,
+            );
+          }
+          return this.#call<TranscriptionResult>("llm_transcribe", {
+            req: {
+              endpointId: req.target.endpointId,
+              model: req.target.model,
+              path: req.path,
+              ...(req.language ? { language: req.language } : {}),
+            },
+          });
+        }
+
+        /** 是否存在至少一条带模型的 asr endpoint（agent 工具动态挂载依据）。 */
+        async hasAsrCapability(): Promise<boolean> {
+          const settings = await this.listEndpoints();
+          return settings.endpoints.some((e) => e.kind === "asr" && e.models.length > 0);
         }
 
         /** Convert an abortable stream into the non-streaming result shape. */
-        async #consumeChatStream(handle: ChatStreamHandle, signal: AbortSignal): Promise<ChatResult> {
-          const abort = (): void => {
-            void handle.abort().catch(() => {});
-          };
-          signal.addEventListener("abort", abort, { once: true });
-          if (signal.aborted) abort();
-          try {
-            for await (const _chunk of handle.events) {
-              if (signal.aborted) abort();
-            }
-            await handle.settled;
-            const snapshot = handle.snapshot();
-            if (!snapshot.finishReason) {
-              throw new LlmError("BAD_RESPONSE", "模型响应缺少 finish reason");
-            }
-            return {
-              content: snapshot.text,
-              finishReason: snapshot.finishReason,
-              ...(snapshot.usage ? { usage: snapshot.usage } : {}),
-            };
-          } finally {
-            signal.removeEventListener("abort", abort);
-          }
-        }
-    note: #consumeChatStream 的路径包含在完整类视窗内：注册一次性 abort 监听、消费事件、等待 settled，并要求 finish reason 才返回非流式结果。finally 移除监听，保证正常与取消路径共用清理。
+    note: |
+      这里解析模型归属并开放 chat 与转录两条路由。resolveAsrTarget 只做本地路由，返回展示用目标；transcribe 再校验目标仍存在，才发 llm_transcribe，避免审批后 endpoint 被换掉。
   - snippet: |
-      /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
-       * 路由错误码（本层抛出）：MODEL_UNKNOWN / MODEL_AMBIGUOUS / MODEL_UNSPECIFIED；
-       * 传输错误码原样透传 Rust LlmError。key 永不经本层（list 只见脱敏投影）。 */
-      export class LlmService {
-        readonly #deps: LlmDeps;
-
-        constructor(deps: LlmDeps = defaultLlmDeps) {
-          if (deps !== defaultLlmDeps && !deps.createChannel) {
-            console.warn(
-              "[llm] deps 未提供 createChannel，回落真实 Tauri Channel——测试环境请在 deps 注入假工厂",
-            );
-          }
-          this.#deps = { ...defaultLlmDeps, ...deps };
-        }
-
-        /** Single IPC seam; rejections normalize into LlmError(code). */
-        async #call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-          try {
-            return (await this.#deps.invoke(cmd, args)) as T;
-          } catch (e) {
-            const shape = e as { code?: unknown; message?: unknown };
-            if (shape && typeof shape.code === "string") {
-              throw new LlmError(shape.code, typeof shape.message === "string" ? shape.message : shape.code);
-            }
-            throw new LlmError("BAD_RESPONSE", e instanceof Error ? e.message : String(e));
-          }
-        }
-
-        /** 厂商预设表（baseUrl 只在 Rust 侧定义）。 */
-        listPresets(): Promise<LlmPreset[]> {
-          return this.#call<LlmPreset[]>("llm_list_presets");
-        }
-
-        /** 脱敏 endpoint 列表 + 默认模型。 */
-        listEndpoints(): Promise<RedactedSettings> {
-          return this.#call<RedactedSettings>("llm_list_endpoints");
-        }
-
-        /** 新增或按 id 覆盖 endpoint（仅内置插件面；校验失败 INVALID_CONFIG）。 */
-        upsertEndpoint(endpoint: EndpointInput): Promise<void> {
-          return this.#call<void>("llm_upsert_endpoint", { endpoint });
-        }
-
-        /** 按 id 删除 endpoint（缺席 ENDPOINT_UNKNOWN）。 */
-        removeEndpoint(id: string): Promise<void> {
-          return this.#call<void>("llm_remove_endpoint", { id });
-        }
-
-        /** 设置/清除默认模型（写面：仅内置插件经宿主 facade 可达；未知模型 INVALID_CONFIG）。 */
-        setDefaultModel(model: string | null): Promise<void> {
-          return this.#call<void>("llm_set_default_model", { model });
-        }
-
-        /** 设置新建 agent 会话的 durable 审批模式；当前会话不跟随改写。 */
-        setDefaultAgentApprovalMode(mode: "ask" | "auto"): Promise<void> {
-          return this.#call<void>("agent_set_default_approval_mode", { mode });
-        }
-
-        /** 揭示 endpoint 的完整 apiKey 明文（编辑态眼睛按钮按需取用；
-         * 仅内置插件面——guard 外置白名单不含本方法）。 */
-        revealKey(id: string): Promise<string> {
-          return this.#call<string>("llm_reveal_key", { id });
-        }
-
-        /** 探测 endpoint（GET /models），成功返回延迟 ms。 */
-        probe(id: string): Promise<number> {
-          return this.#call<number>("llm_probe", { id });
-        }
-
-        /** 解析模型归属 endpoint：只路由 chat 类 endpoint，asr 配置不得误入推理命令。
-         * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）。 */
-        async #route(model?: string): Promise<{ endpointId: string; model: string; entry: ModelEntry }> {
-          const settings = await this.listEndpoints();
-          const resolved = model ?? settings.defaultModel;
-          if (!resolved) {
-            throw new LlmError("MODEL_UNSPECIFIED", "未指定 model 且未配置默认模型");
-          }
-          const owners = settings.endpoints.filter(
-            (e) => e.kind === "chat" && e.models.some((m) => m.id === resolved),
-          );
-          if (owners.length === 0) {
-            throw new LlmError("MODEL_UNKNOWN", `未找到模型：${resolved}`);
-          }
-          if (owners.length > 1) {
-            throw new LlmError("MODEL_AMBIGUOUS", `模型 ${resolved} 同时属于 ${owners.map((e) => e.id).join(", ")}`);
-          }
-          const entry = owners[0].models.find((m) => m.id === resolved)!;
-          return { endpointId: owners[0].id, model: resolved, entry };
-        }
-
-        /** 非流式 chat：按 model 解析归属 endpoint，tools 能力门禁在本层后交 Rust 传输。
-         * @throws LlmError MODEL_UNSPECIFIED（无 model 且无默认）/ MODEL_UNKNOWN（无归属）/ MODEL_AMBIGUOUS（多归属）/
-         *   tools 不满足 UNSUPPORTED_CONTENT，其余传输码原样透传。 */
-        async chat(req: ChatInput): Promise<ChatResult> {
-          const { endpointId, model, entry } = await this.#route(req.model);
-          if (req.tools?.length && !entry.capabilities.includes("tools")) {
-            throw new LlmError("UNSUPPORTED_CONTENT", "当前模型不支持工具调用");
-          }
-          if (req.signal) {
-            return await this.#consumeChatStream(await this.chatStream(req), req.signal);
-          }
-          return this.#call<ChatResult>("llm_chat", {
-            req: {
-              endpointId,
-              model,
-              messages: req.messages,
-              ...(req.tools?.length ? { tools: req.tools } : {}),
-              ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
-              ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-            },
-          });
-        }
-
-        /** Convert an abortable stream into the non-streaming result shape. */
         async #consumeChatStream(handle: ChatStreamHandle, signal: AbortSignal): Promise<ChatResult> {
           const abort = (): void => {
             void handle.abort().catch(() => {});
@@ -635,5 +462,5 @@ segments:
             abort: () => this.#call<void>("llm_chat_abort", { id: streamId }),
           };
         }
-      }
-    note: 完整 LlmService 类是插件唯一合法推理 facade：#route 抛出 MODEL_UNSPECIFIED/UNKNOWN/AMBIGUOUS，chatStream 再检查 tools、vision 和 audio。channel、queue、assembler 与 settled 共同表达流式成功、失败和按 streamId 取消。
+    note: |
+      这里实现流式 chat：先做 tools/vision/audio 能力门禁，再创建 channel 并交付 chunk，保留最终 finishReason 与 usage。

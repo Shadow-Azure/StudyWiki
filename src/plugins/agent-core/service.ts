@@ -6,6 +6,7 @@ import { runTurn, toChatMessages, type AgentEvent } from "./loop";
 import { buildSystemPrompt } from "./prompt";
 import { encodeLine, effectiveMessages, parseSession, sessionTitle } from "./session";
 import { executeTool, TOOL_DECLARATIONS, type ApprovalOutcome, type ApprovalRequest } from "./tools";
+import { TRANSCRIBE_DECLARATION } from "./transcribe";
 import type { AgentMessage, ApprovalMode, SessionHeader, SessionLine } from "./types";
 
 /** 会话列表中的一条元数据；正文与事件由 {@link AgentSession.messages} 按需加载。 */
@@ -303,6 +304,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
             if (section !== null && section.trim()) extraSections.push(section);
           }
           await compactIfNeeded(internal);
+          const asrAvailable = await deps.llm.hasAsrCapability();
           await runTurn(
             effectiveMessages(internal.lines),
             {
@@ -316,6 +318,13 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
                   authorizeRead: (path) => deps.files.authorizeReadPath(path),
                 },
                 ask: (request) => internal.gate.ask(request),
+                ...(asrAvailable ? {
+                  transcribe: {
+                    probeSize: (path) => deps.files.fileSize(path),
+                    pick: (model) => deps.llm.resolveAsrTarget(model),
+                    run: (request) => deps.llm.transcribe(request),
+                  },
+                } : {}),
               }),
               systemPrompt: () => buildSystemPrompt({
                 root: internal.currentRoot,
@@ -325,7 +334,7 @@ export function createAgentService(deps: AgentServiceDeps): AgentService {
                 now: new Date().toISOString(),
                 extraSections,
               }),
-              tools: TOOL_DECLARATIONS,
+              tools: asrAvailable ? [...TOOL_DECLARATIONS, TRANSCRIBE_DECLARATION] : TOOL_DECLARATIONS,
               model: internal.model ?? undefined,
               persist: (line) => void persist(internal, line),
               emit: (event) => emit(internal, event),

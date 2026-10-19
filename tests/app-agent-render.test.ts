@@ -12,6 +12,23 @@ const snapshot = (patch: Partial<PartialAssistant> = {}): PartialAssistant => ({
 const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve));
 
 describe("app-agent render", () => {
+  it("transcribe 审批卡：动词与上传说明", () => {
+    const h = renderApprovalPrompt(
+      {
+        id: "t1", kind: "transcribe", tool: "transcribe", path: "/lib/a.mp4",
+        summary: "上传转录 a.mp4（200.0 MB）",
+        preview: {
+          text: "文件：/lib/a.mp4\n大小：200.0 MB\n产物：/lib/.study-wiki/raw/a/transcript.md",
+          omitted: false, totalCharacters: 80, totalLines: 4,
+        },
+      },
+      () => {},
+    );
+    expect(h.root.textContent).toContain("上传音视频做语音识别");
+    expect(h.detail.textContent).toContain("上传到所选 ASR endpoint");
+    expect(h.detail.textContent).toContain("/lib/.study-wiki/raw/a/transcript.md");
+  });
+
   it("审批 prompt：批准/拒绝回传，详情含 diff 文本", () => {
     const outcomes: string[] = [];
     const h = renderApprovalPrompt(

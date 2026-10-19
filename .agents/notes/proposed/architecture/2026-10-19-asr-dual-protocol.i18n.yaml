@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/notes/proposed/architecture/2026-10-19-asr-dual-protocol.md
+2026-10-19-asr-dual-protocol.md: 970e5ef74bfd12499f86a20af355175645dc2fa3
+2026-10-19-asr-dual-protocol.en.md: d22a8973aa2ed4b85d82ef07b84f49d95471dcc3

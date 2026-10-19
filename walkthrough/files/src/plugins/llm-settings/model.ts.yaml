@@ -1,6 +1,6 @@
 kind: file-page
 source: src/plugins/llm-settings/model.ts
-summary: llm-settings 纯函数：预设 → 表单草稿 + 中文点名字段校验（空 apiKey 合法）
+summary: llm-settings 纯函数：预设 → 表单草稿（含 asr kind/protocol）+ 中文点名字段校验（空 apiKey 合法）
 segments:
   - snippet: |
       /** Endpoint 表单草稿（面板编辑态；apiKey 为明文，仅内存持有，保存即交 Rust）。 */
@@ -10,6 +10,8 @@ segments:
         kind: "chat" | "asr";
         baseUrl: string;
         apiKey: string;
+        /** ASR 接线协议：缺省 = transcriptions；仅 kind=asr 可携带。 */
+        protocol?: "transcriptions" | "chat";
         models: { id: string; capabilities: string[] }[];
       }
 
@@ -18,6 +20,10 @@ segments:
         vendor: string;
         name: string;
         baseUrl: string;
+        /** 预设类别：chat / asr；缺省按 chat 处理（兼容旧形状）。 */
+        kind?: string;
+        /** ASR 模板协议：chat = 聊天口；缺省 = transcriptions。 */
+        protocol?: string | null;
         models: { id: string; capabilities: string[] }[];
       }
 
@@ -31,9 +37,10 @@ segments:
         return {
           id: p.vendor,
           name: p.name,
-          kind: "chat",
+          kind: p.kind === "asr" ? "asr" : "chat",
           baseUrl: p.baseUrl,
           apiKey: "",
+          ...(p.kind === "asr" && p.protocol === "chat" ? { protocol: "chat" as const } : {}),
           models: p.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
         };
       }
@@ -52,6 +59,12 @@ segments:
         if (!d.name.trim()) return "name 不能为空";
         if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
           return "baseUrl 必须以 http:// 或 https:// 开头";
+        }
+        if (d.protocol !== undefined && d.protocol !== "transcriptions" && d.protocol !== "chat") {
+          return "protocol 只允许 transcriptions 或 chat";
+        }
+        if (d.kind === "chat" && d.protocol !== undefined) {
+          return "protocol 只允许出现在 kind=asr 的 endpoint 上";
         }
         if (d.models.length === 0) return "至少要有一个模型";
         const seen = new Set<string>();
@@ -72,6 +85,8 @@ segments:
         kind: "chat" | "asr";
         baseUrl: string;
         apiKey: string;
+        /** ASR 接线协议：缺省 = transcriptions；仅 kind=asr 可携带。 */
+        protocol?: "transcriptions" | "chat";
         models: { id: string; capabilities: string[] }[];
       }
 
@@ -80,46 +95,40 @@ segments:
         vendor: string;
         name: string;
         baseUrl: string;
+        /** 预设类别：chat / asr；缺省按 chat 处理（兼容旧形状）。 */
+        kind?: string;
+        /** ASR 模板协议：chat = 聊天口；缺省 = transcriptions。 */
+        protocol?: string | null;
         models: { id: string; capabilities: string[] }[];
       }
-
-      /** 自定义 vendor key：下拉里的"自定义 OpenAI 兼容"（Rust 预设表不含此项）。 */
-      export const CUSTOM_VENDOR = "custom";
     note: |
-      EndpointDraft 是内存中的可编辑形态，PresetLike 只对齐面板需要的预设字段；CUSTOM_VENDOR 是前端下拉里的合成选项，不是 Rust 预设表中的一行。
+      EndpointDraft 多出可选 protocol，只在 kind=asr 时有意义；PresetLike 的 kind/protocol 可选，是为了让旧预设形状仍然合法，同时能把 Rust 的 asr 模板投影到表单。
   - snippet: |
-      /** 预设 → 可编辑草稿：id/name/vendor 派生，key 留空，模型深拷贝防改坏预设表。
-       * @param p ctx.llm.listPresets 返回的一条预设。
-       * @returns 可直接进表单编辑的草稿。 */
       export function instantiatePreset(p: PresetLike): EndpointDraft {
         return {
           id: p.vendor,
           name: p.name,
-          kind: "chat",
+          kind: p.kind === "asr" ? "asr" : "chat",
           baseUrl: p.baseUrl,
           apiKey: "",
+          ...(p.kind === "asr" && p.protocol === "chat" ? { protocol: "chat" as const } : {}),
           models: p.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
         };
       }
     note: |
-      instantiatePreset 用 vendor 作为新 endpoint id，密钥始终留空，并对模型 capabilities 做浅拷贝数组。预设因此不会被后续表单编辑污染。
+      instantiatePreset 用 vendor 作新 endpoint id，密钥留空并按预设 kind 决定 chat/asr；只有 asr 且模板显式写 chat 时才带 protocol，缺省交给 transcriptions，模型 capabilities 数组做拷贝，避免表单改坏预设表。
   - snippet: |
-      /** 空白自定义草稿（用户从零填）。
-       * @returns 全空的 chat 草稿。 */
-      export function blankDraft(): EndpointDraft {
-        return { id: "", name: "", kind: "chat", baseUrl: "", apiKey: "", models: [] };
-      }
-    note: |
-      blankDraft 提供从零填写自定义 OpenAI 兼容端点的空形态，保持新增路径与预设实例化后的形状一致。
-  - snippet: |
-      /** 草稿校验：与 Rust validate_endpoint 同规则；错误消息点名字段（中文内联展示）。
-       * @param d 表单当前草稿。
-       * @returns null = 合法；否则返回错误消息。空 apiKey 合法（自托管/后填）。 */
       export function validateDraft(d: EndpointDraft): string | null {
         if (!d.id.trim()) return "id 不能为空";
         if (!d.name.trim()) return "name 不能为空";
         if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
           return "baseUrl 必须以 http:// 或 https:// 开头";
+        }
+        if (d.protocol !== undefined && d.protocol !== "transcriptions" && d.protocol !== "chat") {
+          return "protocol 只允许 transcriptions 或 chat";
+        }
+        if (d.kind === "chat" && d.protocol !== undefined) {
+          return "protocol 只允许出现在 kind=asr 的 endpoint 上";
         }
         if (d.models.length === 0) return "至少要有一个模型";
         const seen = new Set<string>();
@@ -131,4 +140,4 @@ segments:
         return null;
       }
     note: |
-      validateDraft 与 Rust 校验保持同一规则，并用中文字段名提示问题。空 apiKey 被显式接受，兼容自托管或稍后补 key；模型 id 必须非空且不重复。
+      validateDraft 与 Rust 校验保持同一规则：未知 protocol、chat kind 携带 protocol、空模型和重复模型 id 都在提交前拦下；空 apiKey 被显式接受，兼容自托管或稍后补 key。

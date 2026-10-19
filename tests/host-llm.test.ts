@@ -180,3 +180,67 @@ describe("LlmService", () => {
     ]);
   });
 });
+
+describe("LlmService transcribe", () => {
+  const asrRedacted = {
+    endpoints: [
+      { id: "nas", name: "NAS", kind: "asr", baseUrl: "http://192.168.1.10:8000", vendor: "speaches",
+        hasKey: false, keyPreview: "", protocol: null, models: [{ id: "whisper-large-v3", capabilities: [] }] },
+    ],
+    defaultModel: null,
+  };
+
+  it("resolves the sole asr endpoint with name/model/protocol and binds transcribe to it", async () => {
+    const calls: { cmd: string; args?: unknown }[] = [];
+    const llm = new LlmService({
+      invoke: (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === "llm_list_endpoints") return Promise.resolve(asrRedacted);
+        if (cmd === "llm_transcribe") return Promise.resolve({ text: "全文", segments: [{ start: 0, end: 4.2, text: "第一句" }] });
+        return Promise.resolve(null);
+      },
+    });
+    const target = await llm.resolveAsrTarget();
+    expect(target).toEqual({
+      endpointId: "nas", endpointName: "NAS", model: "whisper-large-v3", protocol: "transcriptions",
+    });
+    const r = await llm.transcribe({ path: "/lib/a.mp4", language: "zh", target });
+    expect(r.segments).toHaveLength(1);
+    expect(calls.at(-1)).toMatchObject({
+      cmd: "llm_transcribe",
+      args: { req: { endpointId: "nas", model: "whisper-large-v3", path: "/lib/a.mp4", language: "zh" } },
+    });
+  });
+
+  it("reports MODEL_AMBIGUOUS with multiple asr endpoints and no model", async () => {
+    const two = { endpoints: [...asrRedacted.endpoints,
+      { ...asrRedacted.endpoints[0]!, id: "mimo", models: [{ id: "mimo-v2.5-asr", capabilities: [] }] }], defaultModel: null };
+    const llm = new LlmService({ invoke: (cmd) =>
+      cmd === "llm_list_endpoints" ? Promise.resolve(two) : Promise.resolve(null) });
+    await expect(llm.resolveAsrTarget()).rejects.toMatchObject({ code: "MODEL_AMBIGUOUS" });
+    await expect(llm.resolveAsrTarget("mimo-v2.5-asr")).resolves.toMatchObject({ endpointId: "mimo" });
+  });
+
+  it("reports MODEL_UNKNOWN when no asr endpoint owns the model / none configured", async () => {
+    const llm = new LlmService({ invoke: (cmd) =>
+      cmd === "llm_list_endpoints" ? Promise.resolve({ endpoints: [], defaultModel: null }) : Promise.resolve(null) });
+    await expect(llm.resolveAsrTarget()).rejects.toMatchObject({ code: "MODEL_UNKNOWN" });
+  });
+
+  it("refuses a bound target whose endpoint or model changed after approval", async () => {
+    const llm = new LlmService({ invoke: (cmd) =>
+      cmd === "llm_list_endpoints" ? Promise.resolve(asrRedacted) : Promise.resolve(null) });
+    const target = { endpointId: "nas", endpointName: "NAS", model: "other-model", protocol: "transcriptions" as const };
+    await expect(llm.transcribe({ path: "/lib/a.mp4", target }))
+      .rejects.toMatchObject({ code: "MODEL_UNKNOWN" });
+  });
+
+  it("hasAsrCapability reflects asr endpoints with models", async () => {
+    const yes = new LlmService({ invoke: (cmd) =>
+      cmd === "llm_list_endpoints" ? Promise.resolve(asrRedacted) : Promise.resolve(null) });
+    await expect(yes.hasAsrCapability()).resolves.toBe(true);
+    const no = new LlmService({ invoke: (cmd) =>
+      cmd === "llm_list_endpoints" ? Promise.resolve({ endpoints: [], defaultModel: null }) : Promise.resolve(null) });
+    await expect(no.hasAsrCapability()).resolves.toBe(false);
+  });
+});

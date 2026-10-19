@@ -5,6 +5,8 @@ export interface EndpointDraft {
   kind: "chat" | "asr";
   baseUrl: string;
   apiKey: string;
+  /** ASR 接线协议：缺省 = transcriptions；仅 kind=asr 可携带。 */
+  protocol?: "transcriptions" | "chat";
   models: { id: string; capabilities: string[] }[];
 }
 
@@ -13,6 +15,10 @@ export interface PresetLike {
   vendor: string;
   name: string;
   baseUrl: string;
+  /** 预设类别：chat / asr；缺省按 chat 处理（兼容旧形状）。 */
+  kind?: string;
+  /** ASR 模板协议：chat = 聊天口；缺省 = transcriptions。 */
+  protocol?: string | null;
   models: { id: string; capabilities: string[] }[];
 }
 
@@ -26,9 +32,10 @@ export function instantiatePreset(p: PresetLike): EndpointDraft {
   return {
     id: p.vendor,
     name: p.name,
-    kind: "chat",
+    kind: p.kind === "asr" ? "asr" : "chat",
     baseUrl: p.baseUrl,
     apiKey: "",
+    ...(p.kind === "asr" && p.protocol === "chat" ? { protocol: "chat" as const } : {}),
     models: p.models.map((m) => ({ id: m.id, capabilities: [...m.capabilities] })),
   };
 }
@@ -47,6 +54,12 @@ export function validateDraft(d: EndpointDraft): string | null {
   if (!d.name.trim()) return "name 不能为空";
   if (!(d.baseUrl.startsWith("http://") || d.baseUrl.startsWith("https://"))) {
     return "baseUrl 必须以 http:// 或 https:// 开头";
+  }
+  if (d.protocol !== undefined && d.protocol !== "transcriptions" && d.protocol !== "chat") {
+    return "protocol 只允许 transcriptions 或 chat";
+  }
+  if (d.kind === "chat" && d.protocol !== undefined) {
+    return "protocol 只允许出现在 kind=asr 的 endpoint 上";
   }
   if (d.models.length === 0) return "至少要有一个模型";
   const seen = new Set<string>();

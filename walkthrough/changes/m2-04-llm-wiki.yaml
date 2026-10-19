@@ -1398,6 +1398,7 @@ codeMap:
                   read_tree,
                   read_text_file,
                   probe_source_file,
+                  file_size,
                   grep_files,
             note: |
               invoke 面注册 probe_source_file，插件仍无法直接触达系统。
@@ -1697,4 +1698,4 @@ touches:
   - file:src/plugins/app-wiki/service.ts
   - file:src/plugins/app-wiki/state.ts
   - feature:agent-chat
-skill_gen_commit_id: 9e95c02
+skill_gen_commit_id: e21b23c

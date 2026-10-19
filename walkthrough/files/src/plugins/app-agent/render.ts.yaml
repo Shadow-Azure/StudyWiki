@@ -12,6 +12,9 @@ segments:
        * `finalize` 立即落最后快照，避免流结束后尾部 delta 因等待动画帧丢失。
        * @param el Assistant stream container owned by the caller.
        * @returns Snapshot updater plus a final-paint flush for the stream loop. */
+    note: |
+      这里只引入 DOM 与 wire 类型，渲染器保持无框架、无全局状态。
+  - snippet: |
       export function createStreamRenderer(
         el: HTMLElement,
       ): { update: (snapshot: PartialAssistant) => void; finalize: () => void } {
@@ -36,9 +39,7 @@ segments:
           },
         };
       }
-    note: |
-      流渲染器把同一动画帧内的多次快照合并为一次重绘。finalize 会取消挂起帧并立即绘制最后快照，避免流结束后尾部内容丢失。
-  - snippet: |
+
       /** Paint one assistant snapshot: collapsible reasoning, markdown with headed code
        * blocks, a tool-call count, a model·usage footer, and errors.
        * Reasoning stays open while streaming and folds when finish or error is present.
@@ -90,9 +91,7 @@ segments:
           el.append(error);
         }
       }
-    note: |
-      paint 每次整体替换助手流容器。思考过程流式时展开、结束后折叠，正文经仓内 markdown 渲染，工具数量、模型用量和错误以独立区块显示。
-  - snippet: |
+
       /** Render one completed/pending tool invocation as a compact card whose result is
        * folded in a `<details>` element. Invalid or non-object argument JSON falls back
        * to the provider's raw `argumentsText`; failures additionally get the `error`
@@ -100,6 +99,9 @@ segments:
        * @param call Provider tool-call identity and raw argument text.
        * @param result Tool execution output; omitted means the result is still pending.
        * @returns Stateless card root owned by the caller. */
+    note: |
+      这里创建流式渲染器：把 partial 快照映射成文本/推理/思考状态，并处理滚动与完成态。
+  - snippet: |
       export function renderToolCard(
         call: AgentToolCall,
         result?: { content: string; isError: boolean },
@@ -133,6 +135,9 @@ segments:
        * remains out of the collapsed row, while expanding the `<details>` reveals it.
        * @param summary Human-readable summary of the compacted earlier conversation.
        * @returns Divider root owned by the caller. */
+    note: |
+      这里渲染工具调用卡片，参数摘要做有界截断，避免长 JSON 撑爆右栏。
+  - snippet: |
       export function renderCompactionDivider(summary: string): HTMLElement {
         const card = document.createElement("section");
         card.className = "agent-compaction";
@@ -146,9 +151,7 @@ segments:
         card.append(details);
         return card;
       }
-    note: |
-      工具卡用同一函数渲染等待和完成态，失败加错误样式，结果放在 details 中保持紧凑。压缩分隔同样用 details 折叠早期摘要。
-  - snippet: |
+
       /** Turn provider argument JSON into a one-line human summary without ever
        * throwing on provider-supplied malformed JSON. */
       function summarizeArguments(argumentsText: string): string {
@@ -220,13 +223,14 @@ segments:
           // 剪贴板不可用：保持原样，不打断对话
         }
       }
-    note: |
-      参数摘要容忍模型给出的坏 JSON，始终退回截断原文而不抛错。markdown 里的代码块被包上语言头和复制按钮，剪贴板不可用时静默失败。
-  - snippet: |
+
       /** One collapsible turn process group: live tool steps stay hidden until the
        * user expands the summary; settling hides the body again unless focus is
        * inside, so keyboard users never lose their place.
        * @returns Group facade owned by the caller; steps appended via addStep. */
+    note: |
+      这里渲染 compaction 分隔、参数摘要、文本截断与代码块包裹，保证历史重放与实时光标一致。
+  - snippet: |
       export function createProcessGroup(): {
         root: HTMLElement;
         body: HTMLElement;
@@ -299,13 +303,15 @@ segments:
         line.append(dot, text, source);
         return line;
       }
-    note: |
-      回合过程组提供运行态、完成态、耗时和折叠摘要，运行中的步骤默认收起，结束后保持键盘焦点位置。决定行用点和来源标注压缩记录一次审批结果。
-  - snippet: |
+
       /** Human summary of one pending approval request used by the composer prompt. */
+    note: |
+      这里实现过程折叠组与批准/拒绝决定行；决定行只展示结论与裁决者，不复述审批载荷。
+  - snippet: |
       function approvalVerb(req: ApprovalRequest): string {
         if (req.kind === "read-outside") return "读取库外文件";
         if (req.kind === "edit") return "修改文件";
+        if (req.kind === "transcribe") return "上传音视频做语音识别";
         return "写入文件";
       }
 
@@ -315,6 +321,9 @@ segments:
        * @param req Approval payload to display.
        * @param onRespond Sink for the user's decision.
        * @returns Prompt handle: composer body, detail popover, and toggle button. */
+    note: |
+      这里给审批族选人类可读动词：读库外、改文件、上传音视频做语音识别，默认写文件。
+  - snippet: |
       export function renderApprovalPrompt(
         req: ApprovalRequest,
         onRespond: (outcome: ApprovalOutcome) => void,
@@ -387,13 +396,14 @@ segments:
         root.append(summary, row);
         return { root, detail, toggle };
       }
-    note: |
-      审批提示按请求族生成问题文案，并在 composer 内显示路径和大小。越界读提供文件与目录两种授权，写与编辑只有批准或拒绝，详情默认收起。
-  - snippet: |
+
       /** Detail popover for one approval request: target path, change size, tool
        * signature, diff preview, and the grant-scope rule note. Read-only.
        * @param req Approval payload to explain.
        * @returns Popover root owned by the caller. */
+    note: |
+      这里构造 composer 接管卡：摘要、目标路径、预览和批准/拒绝按钮。transcribe 与 write 共用批准按钮，但文案明确说明会上传到 ASR endpoint。
+  - snippet: |
       export function renderApprovalDetail(req: ApprovalRequest): HTMLElement {
         const detail = document.createElement("div");
         detail.className = "agent-approval-detail";
@@ -441,10 +451,12 @@ segments:
         note.className = "agent-approval-note";
         note.textContent = req.kind === "read-outside"
           ? "本次批准仅作用于该次读取；“所在目录”授予会级目录读取。默认模式：Agent 面板 ⋯ → 默认设置。"
-          : "本次批准仅作用于这一次写入；拒绝后 Agent 收到拒绝原因并可继续对话。默认模式：Agent 面板 ⋯ → 默认设置。";
+          : req.kind === "transcribe"
+            ? "本次批准将把文件上传到所选 ASR endpoint 做语音识别，并写入 transcript.md；默认模式：Agent 面板 ⋯ → 默认设置。"
+            : "本次批准仅作用于这一次写入；拒绝后 Agent 收到拒绝原因并可继续对话。默认模式：Agent 面板 ⋯ → 默认设置。";
         rows.append(note);
         detail.append(rows);
         return detail;
       }
     note: |
-      审批详情是只读浮层，展示目标、变更规模、工具签名、预览 diff 和授权范围说明。文本用 textContent 注入，模型或文件内容不会变成 HTML。
+      这里构造详情弹层：目标、预览字数、工具与 kind、预览正文和边界说明。transcribe 的说明单独成句，避免被误读成普通写入。

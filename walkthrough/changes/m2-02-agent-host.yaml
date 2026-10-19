@@ -1,6 +1,6 @@
 kind: change
 issue: m2-02-agent-host
-skill_gen_commit_id: b6bb224
+skill_gen_commit_id: e21b23c
 title: #50 agent 宿主能力
 scale:
   files: 44
@@ -357,6 +357,8 @@ codeMap:
                 vendor: string;
                 hasKey: boolean;
                 keyPreview: string;
+                /** ASR wire protocol projection; null/absent means the transcriptions endpoint. */
+                protocol?: string | null;
                 models: ModelEntry[];
               }
 
@@ -379,6 +381,8 @@ codeMap:
                 apiKey: string;
                 /** 编辑态 dirty：true = apiKey 为显式值（空串 = 显式清空）；缺省 = 空 apiKey 表示保留已存 key。 */
                 apiKeyDirty?: boolean;
+                /** ASR wire protocol: transcriptions (default) or chat; only valid on kind=asr. */
+                protocol?: string | null;
                 models: ModelEntry[];
               }
 
@@ -444,6 +448,36 @@ codeMap:
                 content: string;
                 finishReason: string;
                 usage?: { promptTokens: number; completionTokens: number };
+              }
+
+              /** One timestamped transcript segment (seconds). */
+              export interface TranscriptionSegment {
+                /** Segment start in seconds. */
+                start: number;
+                /** Segment end in seconds. */
+                end: number;
+                /** Segment text. */
+                text: string;
+              }
+
+              /** Unified transcription result: an empty segments array means the server returned no timestamps. */
+              export interface TranscriptionResult {
+                /** Full transcript text. */
+                text: string;
+                /** Timestamped segments, possibly empty. */
+                segments: TranscriptionSegment[];
+              }
+
+              /** Resolved ASR destination shown in the approval card and bound to the upload. */
+              export interface AsrTarget {
+                /** Endpoint id sent to Rust. */
+                endpointId: string;
+                /** Human-facing endpoint name for the approval card. */
+                endpointName: string;
+                /** Model id sent as the upstream `model` field. */
+                model: string;
+                /** Wire protocol that Rust will use. */
+                protocol: "transcriptions" | "chat";
               }
 
               /** 模型路由 + 推理 facade：插件唯一合法的 LLM 通道。
