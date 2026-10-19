@@ -11,8 +11,16 @@ scope:
   - src/plugins/**
   - src/host/**
   - src-tauri/**
+  - src/preview.ts
+  - tests/**
   - docs/plugins/*
   - docs/architecture.*
+  - docs/commands.*
+  - plans/**
+  - scripts/**
+  - walkthrough/**
+  - .agents/flow/**
+  - .agents/notes/**
 adr:
   - ../../notes/proposed/architecture/2026-09-19-ai-inference-supply.md
 github:
