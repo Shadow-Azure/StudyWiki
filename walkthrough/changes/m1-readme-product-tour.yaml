@@ -1,0 +1,131 @@
+kind: change
+issue: m1-readme-product-tour
+skill_gen_commit_id: dcb2a57
+title: #65 README 产品化导览与中文介绍视频
+scale:
+  files: 12
+  additions: 315
+  deletions: 56
+feature: |
+  仓库访客可以从首页直接理解 StudyWiki 的学习工作流，查看真实应用工作区，并打开约一分钟的中文旁白视频。首页同时保留源码构建入口和离线边界，面向第一次接触项目的人建立准确预期。
+userFlow:
+  - 在 GitHub 打开 StudyWiki 仓库 → 首页先展示一句话定位与真实工作区 → 访客无需阅读架构文档即可判断产品形态。
+  - 沿首页“四类连续体验”阅读 → 页面汇总阅读、整理、Agent 协作与知识扩展 → 访客找到与自己相关的使用场景。
+  - 点击首页图片或视频链接 → 打开仓库内的 MP4 → 观看带中文字幕与旁白的 1080p 产品导览。
+  - 无法播放视频时 → 继续阅读首页功能摘要与快速开始 → 不依赖外部媒体服务也能获得核心信息。
+architectural: |
+  无应用结构变化；改动只涉及仓库首页、展示媒体、流程与决策记录，不触及应用模块、接口或数据通路。媒体作为仓库静态资源由 README 直接引用，运行中的 StudyWiki 不读取这些文件。
+
+  沿图「仓库首页与静态媒体导览」：仓库访客从 README 进入，首页图片通向中文介绍视频，功能摘要通向源码快速开始，两条路径都用于理解产品工作流。图只表达静态展示资源的引用关系，不表示应用内的数据流。
+architecturalFlowchart:
+  title: 仓库首页与静态媒体导览
+  direction: LR
+  nodes:
+    - id: visitor
+      label: 仓库访客
+      shape: stadium
+    - id: readme
+      label: README
+    - id: image
+      label: 首页图片
+    - id: summary
+      label: 功能摘要
+    - id: video
+      label: 中文介绍视频
+    - id: quickstart
+      label: 源码快速开始
+    - id: understand
+      label: 理解产品工作流
+      shape: rounded
+  edges:
+    - from: visitor
+      to: readme
+    - from: readme
+      to: image
+    - from: readme
+      to: summary
+    - from: image
+      to: video
+    - from: summary
+      to: quickstart
+    - from: video
+      to: understand
+    - from: quickstart
+      to: understand
+  explanation: |
+    本图只表达仓库访客的静态导览关系：README 是统一入口，首页图片与中文介绍视频、功能摘要与源码快速开始均为仓库内的展示或文档内容，运行中的 StudyWiki 不读取这些文件。采用一条 README 主入口，是因为两条了解路径都从首页出发：访客可沿首页图片进入中文介绍视频，直观理解产品工作流；也可先读功能摘要，再进入源码快速开始，从使用场景过渡到构建尝试。两条路径最终汇合，突出本 PR 只改善产品理解与上手引导，不涉及应用结构变化。
+codeMap:
+  - group: 首页叙事与决策
+    attention: skim
+    why: 文档决定访客如何理解产品，但不改变运行时行为，重点核对事实与双语一致性。
+    files:
+      - path: README.md
+        note: 中文首页，串联价值定位、真实工作区、四类体验、源码构建与离线边界。
+      - path: README.en.md
+        note: 英文镜像，保持相同信息层级、链接与代码围栏。
+      - path: .agents/notes/implemented/process/2026-10-30-readme-product-tour.md
+        note: 记录首页结构、视频媒介与隔离截图的选型理由。
+      - path: .agents/notes/implemented/process/2026-10-30-readme-product-tour.en.md
+        note: 上述决策的英文镜像。
+  - group: 展示媒体
+    attention: skim
+    why: 二进制资源需要人工检查内容与体积，无法通过逐行代码检视验证。
+    files:
+      - path: docs/assets/studywiki-hero.png
+        note: README 首屏图，使用隔离实例的真实 Agent 工作区并链接视频。
+      - path: docs/assets/studywiki-intro.mp4
+        note: 65.5 秒横屏导览，包含六个场景、中文字幕与 MiMo 中文旁白。
+  - group: 流程与检视记录
+    attention: skim
+    why: 这些文件说明交付目标、验收证据和检视路径，属于开发流程支撑面。
+    files:
+      - path: .agents/flow/issues/m1-readme-product-tour.md
+        note: #65 的背景、目标、验收与改动 scope。
+      - path: .agents/flow/issues/m1-readme-product-tour.en.md
+        note: #65 的英文镜像。
+      - path: walkthrough/changes/m1-readme-product-tour.yaml
+        note: 本变更页，提供访客操作路径、媒体风险与验证记录。
+  - group: 机械配对记录
+    attention: skip
+    why: 哈希由 record:i18n 生成，不需要逐行人工检视。
+    files:
+      - path: README.i18n.yaml
+        note: README 双语 blob 配对记录。
+      - path: .agents/flow/issues/m1-readme-product-tour.i18n.yaml
+        note: #65 双语 blob 配对记录。
+      - path: .agents/notes/implemented/process/2026-10-30-readme-product-tour.i18n.yaml
+        note: Agent Note 双语 blob 配对记录。
+reviewGuide:
+  order:
+    - 先读 README 中文与英文首页：核对价值表达、功能事实和双语结构。
+    - 再读 Agent Note：确认选择视频、拒绝徽章堆叠与隔离截图的理由。
+    - 打开首页图和 MP4：检查是否来自干净实例、字幕是否完整、旁白是否清晰。
+    - 最后核对 #65 与本页：确认 scope、验收条目和实际证据一致。
+  risks:
+    - 界面或功能演进后静态媒体可能过时并误导访客；Agent Note 已要求大版本变化时重录。
+    - MP4 增加仓库体积，当前文件约 5.4 MiB；后续更新应继续控制码率与时长，避免累积多个导览版本。
+  acceptance:
+    - item: README 中英镜像并通过预算、配对和链接门禁
+      evidence: `pnpm lint:docs` 14 叶全绿
+    - item: 截图来自当前 main 的隔离实例，视频含中文旁白与字幕
+      evidence: 当前 main 提交 dcb2a57 构建的 StudyWiki.app；最终抽帧接触表与六段 MiMo ASR 校验
+    - item: 文档、自测试与应用构建通过
+      evidence: `pnpm exec vitest run --maxWorkers=4` 777/777；`pnpm tauri build --bundles app`
+verification:
+  - 2026-10-31：`pnpm lint:docs` — 14 叶全绿。
+  - 2026-10-31：`npm_config_cache=/tmp/sw-npm-cache pnpm exec vitest run --maxWorkers=4` — 87 文件、777 用例全部通过。
+  - 2026-10-31：`pnpm tauri build --bundles app` — 当前 main 的 macOS 应用包构建成功。
+  - 2026-10-31：HyperFrames lint 0 错误 0 警告；18 个采样点 0 错误 0 警告；最终 MP4 为 1920×1080、65.5 秒、H.264 + AAC，八个代表时间点抽帧复核通过。
+touches:
+  - file:README.md
+  - file:README.en.md
+  - file:README.i18n.yaml
+  - file:docs/assets/studywiki-hero.png
+  - file:docs/assets/studywiki-intro.mp4
+  - file:.agents/notes/implemented/process/2026-10-30-readme-product-tour.md
+  - file:.agents/notes/implemented/process/2026-10-30-readme-product-tour.en.md
+  - file:.agents/notes/implemented/process/2026-10-30-readme-product-tour.i18n.yaml
+  - file:.agents/flow/issues/m1-readme-product-tour.md
+  - file:.agents/flow/issues/m1-readme-product-tour.en.md
+  - file:.agents/flow/issues/m1-readme-product-tour.i18n.yaml
+  - file:walkthrough/changes/m1-readme-product-tour.yaml
